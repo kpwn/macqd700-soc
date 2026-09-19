@@ -48,7 +48,9 @@
 // Only the selected instance is wired to the SPI master, and only it is
 // given `go`; the others sit in S_IDLE with their watchdogs unarmed.
 
-module tb_sd_ctrl (
+module tb_sd_ctrl #(
+    parameter integer READ_PIPELINE = 0
+) (
     input  wire        clk,
     input  wire        rst,
 
@@ -175,7 +177,7 @@ module tb_sd_ctrl (
                                       u_ship.dbg_block_idx;
 
     // Shipping parameters — the configuration that actually ships.
-    sd_ctrl u_ship (
+    sd_ctrl #(.READ_PIPELINE(READ_PIPELINE)) u_ship (
         .clk           (clk),
         .rst           (rst),
 
@@ -219,6 +221,7 @@ module tb_sd_ctrl (
     // Shipping tick BUDGET, 512x shorter prescaler.  Pins the shipped
     // REQ_WDOG_BASE_TICKS / REQ_WDOG_BLK_SHIFT.
     sd_ctrl #(
+        .READ_PIPELINE (READ_PIPELINE),
         .REQ_WDOG_TICK_LOG2 (3)
     ) u_fast_tick (
         .clk           (clk),

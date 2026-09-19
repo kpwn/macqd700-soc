@@ -560,7 +560,8 @@
         // At core=200 MHz this is 80 ns: four 50 MHz pb clocks, exceeding
         // the read toggle/data sampling window (three pb clocks). Lower
         // supported core frequencies only increase that margin.
-        .RD_FLUSH_PACE_CYCLES (16)
+        .RD_FLUSH_PACE_CYCLES (16),
+        .READ_PIPELINE        (1)
     ) u_sd_ctrl_scsi (
         .clk           (core_clk),
         // soc_full_rst — share bank [5] with sd_spi so a debug-full-

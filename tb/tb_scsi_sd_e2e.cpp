@@ -1645,6 +1645,19 @@ static bool c96_read10_measured(int blocks, bool reset = true) {
                 blocks, reset, (first_byte - start) / 1000.0,
                 (sim_time - start) / 1000.0,
                 blocks * 512.0 * 1000.0 / (sim_time - start));
+#ifdef SCSI_E2E_PERF_OPT
+    // Throughput gate against the identical ideal-card / C96 workload.
+    // Original 200 MHz implementation needs 12.156 ms for 64 sectors;
+    // overlap must keep this below 7 ms (4.68 MB/s). At 100 MHz allow
+    // twice the time, matching the halved physical SPI clock.
+#ifdef SCSI_E2E_CORE100
+    const uint64_t max_64_ns = 14000000;
+#else
+    const uint64_t max_64_ns = 7000000;
+#endif
+    if (blocks == 64)
+        CHECK_TRUE("pipelined read throughput budget", sim_time - start < max_64_ns);
+#endif
     return true;
 }
 

@@ -1610,8 +1610,10 @@ static bool test_wdog_fires_parked_in_tok_send() {
     uint64_t t0 = sim_time;
     kick(CT_CMD17, 0x00000010, 1);
 
-    // Let the un-gated prologue (dummy byte + 6-byte frame + R1) run.
-    for (int i = 0; i < 20000; i++) tick();
+    // Let the prologue and, with pipelining, the prefetched sector run.
+    // The latter parks in RD_DRAIN rather than before the token. Both
+    // must retain the watchdog until the consumer receives its bytes.
+    for (int i = 0; i < 200000; i++) tick();
     CHECK_TRUE("transport actually started", sp.mosi_bytes >= 8);
     CHECK_TRUE("still busy in the token park", dut->busy != 0);
     CHECK_TRUE("no done yet", dut->done == 0);
@@ -2070,6 +2072,89 @@ static bool test_crc_check_cmd18_aborts_on_bad_block() {
     return true;
 }
 
+static bool test_read_banks_backpressure_and_random_stalls() {
+    reset();
+    dut->crc_check_en = 1;
+    const uint32_t base = 0x423;
+    kick(CT_CMD18, base, 5);
+    const uint64_t first_start = sim_time;
+    while (g_rd_bytes.size() < 17 && sim_time - first_start < 1000000) tick();
+    CHECK_EQ("initial bytes arrived", g_rd_bytes.size(), 17u);
+    dut->rd_ready = 0;
+    // Allow the producer to fill all available banks, then verify it parks
+    // instead of overwriting unread bytes or consuming the next sector.
+    for (int i = 0; i < 200000; ++i) tick();
+    const uint64_t wire_bytes = sp.mosi_bytes;
+    for (int i = 0; i < 10000; ++i) tick();
+    CHECK_EQ("full banks stop SPI", sp.mosi_bytes, wire_bytes);
+    CHECK_EQ("stalled consumer sees no bytes", g_rd_bytes.size(), 17u);
+    CHECK_TRUE("no early completion while bytes buffered", dut->busy && !dut->done);
+
+    uint32_t rng = 0x53444344;
+    const uint64_t start = sim_time;
+    while (!dut->done && sim_time - start < 2000000) {
+        rng = rng * 1664525u + 1013904223u;
+        dut->rd_ready = (rng >> 29) == 0;
+        tick();
+    }
+    CHECK_TRUE("stalled transfer completes", dut->done && !dut->error);
+    CHECK_EQ("exactly five sectors before done", g_rd_bytes.size(), 5u * 512);
+    for (size_t i = 0; i < g_rd_bytes.size(); ++i)
+        CHECK_EQ("bank order and contents", g_rd_bytes[i],
+                 uint8_t((base + i / 512) * 37 + i % 512));
+    dut->rd_ready = 1;
+    for (int i = 0; i < 1000; ++i) tick();
+    CHECK_EQ("no bytes after done", g_rd_bytes.size(), 5u * 512);
+    return true;
+}
+
+static bool test_crc_later_bank_never_published() {
+    reset();
+    dut->crc_check_en = 1;
+    sd.corrupt_block_serial = 1;
+    const uint32_t base = 0x724;
+    kick(CT_CMD18, base, 4);
+    const uint64_t start = sim_time;
+    while (g_rd_bytes.size() < 17 && sim_time - start < 1000000) tick();
+    CHECK_EQ("first bank begins delivery", g_rd_bytes.size(), 17u);
+    dut->rd_ready = 0;
+    for (int i = 0; i < 200000; ++i) tick();
+    dut->rd_ready = 1;
+    while (!dut->done && sim_time - start < 2000000) tick();
+    CHECK_TRUE("bad second bank completes with error", dut->done && dut->error);
+    CHECK_EQ("CRC failure recorded", dut->err_cause, ERR_CRC_BAD);
+    CHECK_EQ("only validated first sector delivered", g_rd_bytes.size(), 512u);
+    CHECK_TRUE("card read session closed", sd.cmd12_count != 0);
+    for (size_t i = 0; i < g_rd_bytes.size(); ++i)
+        CHECK_EQ("good first sector intact", g_rd_bytes[i], uint8_t(base * 37 + i));
+    for (int i = 0; i < 1000; ++i) tick();
+    CHECK_EQ("bad bytes never escape after completion", g_rd_bytes.size(), 512u);
+    return true;
+}
+
+static bool test_reset_discards_queued_read_banks() {
+    reset();
+    dut->crc_check_en = 1;
+    kick(CT_CMD18, 0x824, 4);
+    const uint64_t start = sim_time;
+    while (g_rd_bytes.size() < 17 && sim_time - start < 1000000) tick();
+    CHECK_EQ("read was active", g_rd_bytes.size(), 17u);
+    dut->rd_ready = 0;
+    for (int i = 0; i < 200000; ++i) tick();
+    dut->rst = 1;
+    for (int i = 0; i < 8; ++i) tick();
+    dut->rst = 0;
+    dut->rd_ready = 1;
+    for (int i = 0; i < 1000; ++i) {
+        tick();
+        CHECK_TRUE("reset leaves no queued byte or completion", !dut->rd_valid && !dut->done);
+    }
+    CHECK_TRUE("controller idle after reset", !dut->busy);
+    // System reset reinitializes the card before another request. Model
+    // that separately; this test does not claim reset sends CMD12.
+    return test_cmd17_read();
+}
+
 static bool test_crc_write_sends_real_crc() {
     reset();
     // Write-side CRC generation is unconditional — exercise it with
@@ -2140,6 +2225,9 @@ int main(int argc, char** argv) {
     RUN(test_crc_check_cmd17_retry_then_succeed);
     RUN(test_crc_check_cmd17_exhausts_retries);
     RUN(test_crc_check_cmd18_aborts_on_bad_block);
+    RUN(test_read_banks_backpressure_and_random_stalls);
+    RUN(test_crc_later_bank_never_published);
+    RUN(test_reset_discards_queued_read_banks);
     RUN(test_crc_write_sends_real_crc);
 
     printf("\n%d/%d scenarios passed.\n", n_pass, n_pass + n_fail);

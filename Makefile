@@ -1067,6 +1067,11 @@ SDCTRL_RTL   := \
 	$(RTL_DIR)/board/sd_ctrl.v \
 	$(TB_DIR)/tb_sd_ctrl.v
 SDCTRL_BUILD := $(BUILD_DIR)/sd_ctrl
+SDCTRL_PIPELINE ?= 0
+
+.PHONY: tb-sd-ctrl-pipeline
+tb-sd-ctrl-pipeline:
+	$(MAKE) tb-sd-ctrl SDCTRL_BUILD=$(BUILD_DIR)/sd_ctrl_pipeline SDCTRL_PIPELINE=1
 
 .PHONY: tb-sd-ctrl
 tb-sd-ctrl: $(SDCTRL_BUILD)/Vtb_sd_ctrl
@@ -1083,6 +1088,7 @@ $(SDCTRL_BUILD)/Vtb_sd_ctrl: $(SDCTRL_RTL) $(TB_DIR)/tb_sd_ctrl.cpp
 		-I$(RTL_DIR)/soc -I$(RTL_DIR)/board -I$(RTL_DIR) \
 		-Mdir $(SDCTRL_BUILD) \
 		--top-module tb_sd_ctrl \
+		-GREAD_PIPELINE=$(SDCTRL_PIPELINE) \
 		$(SDCTRL_RTL) \
 		$(TB_DIR)/tb_sd_ctrl.cpp \
 		-CFLAGS "-std=c++17"
@@ -5033,7 +5039,7 @@ tb-scsi-sd-perf: $(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e
 
 $(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
 		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
-	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_PROD_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION -CFLAGS "-DSCSI_E2E_C96")
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_PROD_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION -CFLAGS "-DSCSI_E2E_C96 -DSCSI_E2E_PERF_OPT")
 
 .PHONY: tb-scsi-sd-perf-baseline tb-scsi-sd-perf-core100
 tb-scsi-sd-perf-baseline: $(SCSI_SD_E2E_PROD_BASE_BUILD)/Vtb_scsi_sd_e2e
@@ -5048,7 +5054,7 @@ tb-scsi-sd-perf-core100: $(SCSI_SD_E2E_PROD100_BUILD)/Vtb_scsi_sd_e2e
 
 $(SCSI_SD_E2E_PROD100_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
 		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
-	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_PROD100_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION +define+SCSI_E2E_CORE100 -CFLAGS "-DSCSI_E2E_C96 -DSCSI_E2E_CORE100")
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_PROD100_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION +define+SCSI_E2E_CORE100 -CFLAGS "-DSCSI_E2E_C96 -DSCSI_E2E_CORE100 -DSCSI_E2E_PERF_OPT")
 
 .PHONY: tb-scsi-sd-e2e-ra
 tb-scsi-sd-e2e-ra: $(SCSI_SD_E2E_RA_BUILD)/Vtb_scsi_sd_e2e

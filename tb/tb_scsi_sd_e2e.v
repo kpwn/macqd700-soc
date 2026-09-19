@@ -241,6 +241,7 @@ module tb_scsi_sd_e2e (
 `ifdef SCSI_E2E_PRODUCTION
 `ifndef SCSI_E2E_LEGACY_PACE
         .RD_FLUSH_PACE_CYCLES(16),
+        .READ_PIPELINE(1),
 `endif
 `endif
         .MULTI_WRITE_AS_CMD24(1)

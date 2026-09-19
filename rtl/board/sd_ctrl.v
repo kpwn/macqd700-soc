@@ -183,7 +183,10 @@ module sd_ctrl #(
     // Read replay spacing in core clocks (1..63). Callers using a toggle
     // CDC must keep the byte stable through its complete sampling window.
     // Default retains the legacy cadence for boot and provisioning users.
-    parameter integer RD_FLUSH_PACE_CYCLES = 32
+    parameter integer RD_FLUSH_PACE_CYCLES = 32,
+    // Two sector banks overlap SPI reception with CRC-validated delivery.
+    // Disabled by default for callers retaining the single-buffer behavior.
+    parameter integer READ_PIPELINE = 0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -532,7 +535,8 @@ module sd_ctrl #(
         S_AB_STOP_S   = 6'd42,
         S_AB_STOP_W   = 6'd43,
         S_AB_FBUSY_S  = 6'd44,
-        S_AB_FBUSY_W  = 6'd45;
+        S_AB_FBUSY_W  = 6'd45,
+        S_RD_DRAIN    = 6'd46;
 
     // Widened from [4:0] (5 bits, 0..31) to [5:0] to make room for the
     // new S_RD_FLUSH_S state above the pre-existing 0..30 range.
@@ -628,7 +632,9 @@ module sd_ctrl #(
     // failed block is never observed by the caller and a retry is
     // side-effect-free.  Reused per-block for CMD18 (validated/flushed
     // one block at a time — never holds more than one block).
-    (* ram_style = "block" *) reg [7:0] blk_buf [0:511];
+    (* ram_style = "block" *) reg [7:0] blk_buf [0:(READ_PIPELINE ? 1024 : 512)-1];
+    reg [1:0] rd_bank_valid;
+    reg rd_fill_bank, rd_drain_bank;
     reg [8:0] blk_flush_idx;
     reg [5:0] flush_pace_cnt;
     // Purely a CDC-margin safety pace for S_RD_FLUSH_S — see that
@@ -1011,6 +1017,9 @@ module sd_ctrl #(
             crc_retry_cnt   <= 3'd0;
             blk_flush_idx   <= 9'd0;
             flush_pace_cnt  <= 6'd0;
+            rd_bank_valid   <= 2'b00;
+            rd_fill_bank    <= 1'b0;
+            rd_drain_bank   <= 1'b0;
             wdog_rearm      <= 1'b0;
             wdog_rearmed_q  <= 1'b0;
         end else begin
@@ -1021,11 +1030,45 @@ module sd_ctrl #(
             done     <= 1'b0;
             wdog_rearm <= 1'b0;
 
+`ifdef VERILATOR
+            if (READ_PIPELINE && st == S_RD_WAIT && bdone &&
+                rd_bank_valid[rd_fill_bank])
+                $fatal(1, "sd_ctrl: overwriting an undrained read bank");
+            if (READ_PIPELINE && st == S_DONE && rd_bank_valid != 2'b00)
+                $fatal(1, "sd_ctrl: successful completion before read drain");
+`endif
+
+            // Independent consumer: only a CRC-validated sector is visible.
+            // A bank stays owned by the consumer until its last byte leaves;
+            // the SPI engine cannot start another sector in that bank yet.
+            if (READ_PIPELINE && busy && st != S_ERROR &&
+                rd_bank_valid[rd_drain_bank] && rd_ready) begin
+                if (flush_pace_cnt == FLUSH_PACE_CYCLES - 1) begin
+                    flush_pace_cnt <= 6'd0;
+                    rd_data <= blk_buf[{rd_drain_bank, blk_flush_idx}];
+                    rd_valid <= 1'b1;
+                    if (blk_flush_idx == 9'd511) begin
+                        blk_flush_idx <= 9'd0;
+                        rd_bank_valid[rd_drain_bank] <= 1'b0;
+                        rd_drain_bank <= ~rd_drain_bank;
+                    end else begin
+                        blk_flush_idx <= blk_flush_idx + 9'd1;
+                    end
+                end else begin
+                    flush_pace_cnt <= flush_pace_cnt + 6'd1;
+                end
+            end
+
             // Sample `go` only when idle; reject if cmd_type is unknown.
             case (st)
                 S_IDLE: begin
                     wr_valid <= 1'b0;
                     if (go) begin
+                        rd_bank_valid <= 2'b00;
+                        rd_fill_bank <= 1'b0;
+                        rd_drain_bank <= 1'b0;
+                        blk_flush_idx <= 9'd0;
+                        flush_pace_cnt <= 6'd0;
                         cmd_type_lat    <= cmd_type;
                         lba_lat         <= lba;
                         // Force block_count to 1 for single-block ops.
@@ -1165,7 +1208,7 @@ module sd_ctrl #(
                                         // S_CMD12_STUFF_S/_W before this
                                         // poll loop ever starts, so this
                                         // really is CMD12's real R1.
-                                        st <= S_DONE;
+                                        st <= READ_PIPELINE ? S_RD_DRAIN : S_DONE;
                                     end
                                     default: begin
                                         error     <= 1'b1;
@@ -1194,7 +1237,7 @@ module sd_ctrl #(
                 end
 
                 // ────────── READ PATH ──────────
-                // Consumer pacing: rd_ready low pauses the stream before
+                // Single-bank consumer pacing: rd_ready low pauses the stream before
                 // the next SPI byte is issued (SPI is host-clocked, so
                 // stalling between bytes — or before the next block's
                 // data token — is always legal for the card).  Gated at
@@ -1204,9 +1247,12 @@ module sd_ctrl #(
                 // the consumer has no room.  token_cnt only advances on
                 // completed polls, so the timeout is naturally frozen
                 // while paused.  Callers that tie rd_ready high (boot
-                // ROM load, JTAG/bulk writers) see no change.
+                // ROM load, JTAG/bulk writers) see no change. With READ_PIPELINE,
+                // reserve a free bank instead: consumer stalls can fill two
+                // banks, but never overwrite one still awaiting delivery.
                 S_TOK_SEND: begin
-                    if (bst == BS_IDLE && rd_ready) begin
+                    if (bst == BS_IDLE &&
+                        (READ_PIPELINE ? !rd_bank_valid[rd_fill_bank] : rd_ready)) begin
                         bt  <= 8'hFF;
                         bgo <= 1'b1;
                         st  <= S_TOK_WAIT;
@@ -1231,7 +1277,7 @@ module sd_ctrl #(
 
                 // Receive 512 bytes into the internal staging buffer
                 // (blk_buf) — NOT rd_valid/rd_data directly.  No rd_ready
-                // gating here: blk_buf is a single reused local buffer,
+                // gating here: the destination bank was reserved before its token,
                 // not the caller's structure, so the caller's readiness
                 // is irrelevant until the flush stage below actually
                 // hands bytes over.  SPI is still fully host-paced by
@@ -1245,7 +1291,7 @@ module sd_ctrl #(
                 end
                 S_RD_WAIT: begin
                     if (bdone) begin
-                        blk_buf[byte_idx] <= br;
+                        blk_buf[{(READ_PIPELINE ? rd_fill_bank : 1'b0), byte_idx[8:0]}] <= br;
                         rd_crc_calc       <= crc16_step(rd_crc_calc, br);
                         if (byte_idx == 10'd511) begin
                             byte_idx <= 10'd0;
@@ -1280,9 +1326,9 @@ module sd_ctrl #(
                             rd_crc_recv_latched <= {rd_crc_recv_hi, br};
                             if (crc_check_en &&
                                 ({rd_crc_recv_hi, br} != rd_crc_calc)) begin
-                                // CRC mismatch — nothing has reached the
-                                // caller yet (blk_buf was never flushed),
-                                // so recovery is fully safe.
+                                // CRC mismatch — no byte of THIS sector has
+                                // reached the caller. Earlier validated banks
+                                // may still be draining concurrently.
                                 if (cur_cmd == SC_CMD17 &&
                                     crc_retry_cnt < CRC_RETRY_MAX) begin
                                     // Single-block: retry the WHOLE
@@ -1340,9 +1386,28 @@ module sd_ctrl #(
                             end else begin
                                 // CRC OK (or checking disabled) — release
                                 // the validated block to the caller.
-                                blk_flush_idx  <= 9'd0;
-                                flush_pace_cnt <= 6'd0;
-                                st             <= S_RD_FLUSH_S;
+                                if (READ_PIPELINE) begin
+                                    rd_bank_valid[rd_fill_bank] <= 1'b1;
+                                    rd_fill_bank <= ~rd_fill_bank;
+                                    if (cur_cmd == SC_CMD18) begin
+                                        if (block_idx + 16'd1 >= block_count_lat) begin
+                                            cur_cmd <= SC_CMD12;
+                                            frame_idx <= 3'd0;
+                                            block_idx <= 16'd0;
+                                            st <= S_CMD_PRE_S;
+                                        end else begin
+                                            block_idx <= block_idx + 16'd1;
+                                            token_cnt <= 20'd0;
+                                            st <= S_TOK_SEND;
+                                        end
+                                    end else begin
+                                        st <= S_RD_DRAIN;
+                                    end
+                                end else begin
+                                    blk_flush_idx  <= 9'd0;
+                                    flush_pace_cnt <= 6'd0;
+                                    st             <= S_RD_FLUSH_S;
+                                end
                             end
                         end else begin
                             rd_crc_recv_hi <= br;
@@ -1783,6 +1848,12 @@ module sd_ctrl #(
                 end
 
                 // ────────── Terminal states ──────────
+                // Keep busy and the request watchdog armed until the final
+                // validated byte is delivered. CMD12 may finish before it.
+                S_RD_DRAIN: begin
+                    if (rd_bank_valid == 2'b00) st <= S_DONE;
+                end
+
                 S_DONE: begin
                     busy    <= 1'b0;
                     done    <= 1'b1;
@@ -1791,6 +1862,7 @@ module sd_ctrl #(
                 end
 
                 S_ERROR: begin
+                    rd_bank_valid <= 2'b00;
                     busy    <= 1'b0;
                     done    <= 1'b1;
                     cur_cmd <= SC_NONE;
