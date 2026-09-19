@@ -45,8 +45,11 @@ set_property PACKAGE_PIN AB14 [get_ports sd_miso]
 set_property PACKAGE_PIN AB15 [get_ports sd_cs_n]
 set_property IOSTANDARD LVCMOS33 [get_ports {sd_clk sd_mosi sd_miso sd_cs_n}]
 set_property PULLUP true [get_ports sd_miso]
-set_false_path -to   [get_ports {sd_clk sd_mosi sd_cs_n}]
-set_false_path -from [get_ports sd_miso]
+# Match the full SoC's FPGA-side SPI latency allocation, not an external
+# card timing guarantee. Leave the synchronizer interstage path timed.
+set sd_spi_tx_q [get_pins -hier -filter {NAME =~ */spi_clk_reg/Q || NAME =~ */spi_mosi_reg/Q || NAME =~ */spi_cs_n_reg/Q}]
+set_max_delay -datapath_only 4.000 -from $sd_spi_tx_q -to [get_ports {sd_clk sd_mosi sd_cs_n}]
+set_max_delay -datapath_only 3.000 -from [get_ports sd_miso]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration / bitstream settings (same as fpga_top)

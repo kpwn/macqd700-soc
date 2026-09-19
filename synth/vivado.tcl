@@ -48,7 +48,7 @@
 set mode       [lindex $argv 0]
 set output_dir [lindex $argv 1]
 
-set_param general.maxThreads 16
+set_param general.maxThreads 4
 
 if {$mode ne "synth_only" && $mode ne "full_impl" && $mode ne "dry_run" && $mode ne "clock_report" && $mode ne "ddr_pincheck"} {
     puts stderr "ERROR: mode must be one of {synth_only, full_impl, dry_run, clock_report, ddr_pincheck}, got: $mode"
@@ -2772,10 +2772,22 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
             puts [format "=== POST-ROUTE PHYS_OPT: hold repaired (WHS %.3f), WNS now %.3f; continuing ===" $pr_hold $pr_now]
         }
         if {$pr_now <= $pr_prev + 0.001} {
-            puts "=== POST-ROUTE PHYS_OPT: no further improvement, stopping ==="
-            break
+            # One directive plateau does not predict the next directive.
+            # Preserve the best setup state if this pass regressed it, but
+            # still try the remaining bounded schedule (including fanout).
+            if {$pr_now < $pr_prev - 0.001 && [file exists $pr_ckpt]} {
+                close_design
+                open_checkpoint $pr_ckpt
+                puts "=== POST-ROUTE PHYS_OPT: setup regressed; restored prior checkpoint ==="
+            }
+            puts "=== POST-ROUTE PHYS_OPT: no gain; trying next directive ==="
+            continue
         }
         set pr_prev $pr_now
+        if {$pr_now >= 0.0 && $pr_hold >= 0.0} {
+            puts "=== POST-ROUTE PHYS_OPT: setup and hold closed ==="
+            break
+        }
     }
     # Final hold repair: if the netlist we started from was ALREADY hold-negative
     # (routing can leave it so -- the 2026-09-15 200 MHz route handed us WHS
@@ -2792,6 +2804,27 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
 }
 
 write_checkpoint -force $output_dir/checkpoints/route.dcp
+
+# The SPI pads used to be false-pathed. Fail loudly if they disappear from
+# analysis again, and preserve explicit reports for the physical IO budget.
+foreach sd_output {sd_clk sd_mosi sd_cs_n} {
+    set sd_paths [get_timing_paths -to [get_ports $sd_output] -delay_type max -max_paths 1]
+    if {[llength $sd_paths] == 0} {error "SPI output $sd_output is not timed"}
+    if {abs([get_property REQUIREMENT $sd_paths] - 4.0) > 0.001} {
+        error "SPI output $sd_output lost its 4ns latency allocation"
+    }
+    puts "SPI_IO_BUDGET $sd_output slack=[get_property SLACK $sd_paths]"
+}
+set sd_input_paths [get_timing_paths -from [get_ports sd_miso] -delay_type max -max_paths 1]
+if {[llength $sd_input_paths] == 0} {error "SPI input sd_miso is not timed"}
+if {abs([get_property REQUIREMENT $sd_input_paths] - 3.0) > 0.001} {
+    error "SPI input sd_miso lost its 3ns latency allocation"
+}
+puts "SPI_IO_BUDGET sd_miso slack=[get_property SLACK $sd_input_paths]"
+report_timing -from [get_ports sd_miso] -delay_type max -max_paths 4 \
+    -file $output_dir/reports/sd_miso_timing.rpt
+report_timing -to [get_ports {sd_clk sd_mosi sd_cs_n}] -delay_type max -max_paths 6 \
+    -file $output_dir/reports/sd_output_timing.rpt
 
 # Incremental-compile reuse report + stash for the next iteration.  Vivado's
 # report_incremental_reuse summarises how much placement+routing was carried

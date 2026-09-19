@@ -75,7 +75,7 @@ module sd_spi #(
     // (pulled-up); explicit reset keeps the first 1-2 SPI clocks of a
     // post-umbrella-reset boot deterministic instead of inheriting
     // whatever the FFs latched at the previous boot's last edge.
-    reg [1:0] miso_sync;
+    (* ASYNC_REG = "TRUE", SHREG_EXTRACT = "NO" *) reg [1:0] miso_sync;
     always @(posedge clk) begin
         if (rst) miso_sync <= 2'b11;
         else     miso_sync <= {miso_sync[0], spi_miso};
