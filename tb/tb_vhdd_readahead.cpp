@@ -188,6 +188,12 @@ struct Provider {
         }
 
         case WSTREAM: {
+            if (fail_after_blocks >= 0 &&
+                bytes_done >= uint64_t(fail_after_blocks) * 512) {
+                dut->p_error = 1;
+                st = FINISH;
+                break;
+            }
             if (!dut->p_wr_avail) break;
             if (byte_gap) { byte_gap--; break; }
             dut->p_wr_ready = 1;      // pulse: "give me a byte"
@@ -560,6 +566,97 @@ int main(int argc, char** argv) {
     }
 
     // ═════════════════════════════════════════════════════════════════
+    CASE("unrelated_write_preserves_both_cached_runs");
+    {
+        Harness h(dut);
+        h.reset();
+        const uint32_t a = 310000, b = 320000;
+        h.request(false, a, 1); h.expect_blocks(a, 1, "warm A"); h.drain();
+        h.request(false, b, 1); h.expect_blocks(b, 1, "warm B"); h.drain();
+        std::vector<uint8_t> payload(512, 0x6d);
+        h.write_request(330000, 1, payload);
+        check(!h.saw_error, "unrelated write succeeds");
+        uint32_t commands = h.prov.commands;
+        h.request(false, a, 1); h.expect_blocks(a, 1, "A survives unrelated write");
+        h.request(false, b, 1); h.expect_blocks(b, 1, "B survives unrelated write");
+        if (RA_ON) check(h.prov.commands == commands,
+                         "unrelated write must not cause either run to be refetched");
+    }
+
+    CASE("write_invalidates_only_overlapping_run");
+    {
+        Harness h(dut);
+        h.reset();
+        const uint32_t a = 340000, b = 350000;
+        h.request(false, a, 1); h.drain();
+        h.request(false, b, 1); h.drain();
+        std::vector<uint8_t> payload(512, 0x96);
+        h.write_request(a, 1, payload);
+        uint32_t commands = h.prov.commands;
+        h.request(false, b, 1); h.expect_blocks(b, 1, "untouched run survives");
+        if (RA_ON) check(h.prov.commands == commands,
+                         "overlapping write should retain the other way");
+        h.request(false, a, 1);
+        check(h.rx == payload, "overlapping way must return the written bytes");
+        check(h.prov.commands > commands, "overlapping way was invalidated");
+    }
+
+    CASE("write_overlap_half_open_boundaries");
+    {
+        const uint32_t base = 360000;
+        for (int offset : {-2, -1, 0, int(RUN) - 1, int(RUN), int(RUN) + 1}) {
+            for (uint32_t count : {1u, 2u, RUN + 4}) {
+                Harness h(dut);
+                h.reset();
+                h.request(false, base, 1); h.drain();
+                const uint32_t write_lba = base + offset;
+                const bool overlap = write_lba < base + RUN && write_lba + count > base;
+                std::vector<uint8_t> payload(count * 512, 0x72);
+                h.write_request(write_lba, count, payload);
+                check(!h.saw_error, "boundary write succeeds");
+                const uint32_t commands = h.prov.commands;
+                h.request(false, base, 1);
+                h.expect_blocks(base, 1, "boundary write/read contents");
+                if (RA_ON)
+                    check((h.prov.commands != commands) == overlap,
+                          "half-open overlap exactly determines invalidation");
+            }
+        }
+    }
+
+    CASE("failed_partial_write_cannot_leave_stale_cache");
+    {
+        Harness h(dut);
+        h.reset();
+        const uint32_t base = 370000;
+        h.request(false, base, 1); h.drain();
+        h.prov.fail_after_blocks = 1;
+        std::vector<uint8_t> payload(1024, 0xb7);
+        h.write_request(base, 2, payload);
+        check(h.saw_error, "partial write reports failure");
+        h.prov.fail_after_blocks = -1;
+        const uint32_t commands = h.prov.commands;
+        h.request(false, base, 1);
+        h.expect_blocks(base, 1, "partial write invalidates old bytes");
+        check(h.prov.commands > commands, "failed write still invalidates cache");
+    }
+
+    CASE("unrelated_write_preserves_in_flight_fill");
+    {
+        Harness h(dut);
+        h.reset();
+        const uint32_t base = 380000;
+        h.request(false, base, 1); // deliberately do not drain the tail
+        std::vector<uint8_t> payload(512, 0x21);
+        h.write_request(base + RUN + 1, 1, payload);
+        check(!h.saw_error, "unrelated write following live fill succeeds");
+        const uint32_t commands = h.prov.commands;
+        h.request(false, base, 1);
+        h.expect_blocks(base, 1, "in-flight fill survives unrelated write");
+        if (RA_ON) check(h.prov.commands == commands,
+                         "unrelated write must not poison a live fill");
+    }
+
     CASE("write_multi_coherency");
     {
         Harness h(dut);

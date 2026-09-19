@@ -116,13 +116,12 @@
 //
 // CORRECTNESS — this is a CACHE, so coherency is the whole job
 // ════════════════════════════════════════════════════════════
-//  * WRITES.  ANY write request invalidates BOTH ways, unconditionally,
-//    on the req_go cycle — no overlap arithmetic, no partial update, no
-//    way to get it subtly wrong.  Writes are rare on this path (boot
-//    blocks, the desktop DB) and a cold cache after one costs one run.
-//    Silently serving a pre-write copy of a block would corrupt the
-//    user's disk image from the OS's point of view, so this errs as far
-//    as it can toward "forget everything".
+//  * WRITES. Invalidate every overlapping way on req_go, including a
+//    fill in progress. Non-overlapping streams survive metadata writes.
+//    Invalidate the whole affected way, not individual bytes; even a
+//    failed/partial write must never leave an old cached copy available.
+//    Use 33-bit half-open extents so end-LBA arithmetic cannot wrap.
+//    Malformed write extents conservatively invalidate both ways.
 //  * STRADDLING READS.  A hit requires the WHOLE extent
 //    [lba, lba+count) to be inside one way's FILLED region.  A read that
 //    straddles two ways, or runs off the end of a partially filled way,
@@ -402,6 +401,18 @@ end else begin : g_ra
     wire hit0 = way_valid[0] && in0 && (need0 <= blocks0);
     wire hit1 = way_valid[1] && in1 && (need1 <= blocks1);
 
+    wire write_request = req_go && req_write;
+    wire [32:0] write_blocks = req_multi ? {17'd0, req_block_count} : 33'd1;
+    wire [32:0] write_end = {1'b0, req_lba} + write_blocks;
+    wire write_extent_bad = (write_blocks == 33'd0) || write_end[32];
+    wire [32:0] way_end0 = {1'b0, way_base[0]} + BLOCKS_PER_WAY;
+    wire [32:0] way_end1 = {1'b0, way_base[1]} + BLOCKS_PER_WAY;
+    wire [1:0] write_kill;
+    assign write_kill[0] = write_request && (write_extent_bad ||
+        (({1'b0, req_lba} < way_end0) && (write_end > {1'b0, way_base[0]})));
+    assign write_kill[1] = write_request && (write_extent_bad ||
+        (({1'b0, req_lba} < way_end1) && (write_end > {1'b0, way_base[1]})));
+
     // IN-FLIGHT hit: the extent is inside the run the card is STILL
     // delivering.  This is the sequential case, and it is the one that
     // matters — it lets the block after the one just served be answered
@@ -418,7 +429,7 @@ end else begin : g_ra
     // tail would be followed by a read served from the pre-write copy the
     // card is still delivering — which is precisely the silent
     // disk-corruption case this module is not allowed to have.
-    wire hit_fly = fill_active && !f_poison && !cache_kill &&
+    wire hit_fly = fill_active && !f_poison && !cache_kill && !write_kill[f_way] &&
                    inf && (needf <= {1'b0, f_count});
 
     wire        hit_any = hit0 || hit1 || hit_fly;
@@ -540,14 +551,11 @@ end else begin : g_ra
         end else begin
             last_num_lbas <= num_lbas;
 
-            // ── Global invalidation ───────────────────────────────────
-            // ANY write kills BOTH ways on the cycle it is requested — no
-            // overlap arithmetic, no partial update, no way to get it
-            // subtly wrong.  So does a peer reset and a medium change.
-            if (cache_kill || (req_go && req_write)) begin
-                for (w = 0; w < 2; w = w + 1) way_valid[w] <= 1'b0;
-                f_poison <= 1'b1;
-            end
+            // Resets/medium changes kill everything. A write only kills
+            // overlapping ways, including the speculative tail of a fill.
+            for (w = 0; w < 2; w = w + 1)
+                if (cache_kill || write_kill[w]) way_valid[w] <= 1'b0;
+            if (cache_kill || write_kill[f_way]) f_poison <= 1'b1;
 
             case (fst)
                 F_IDLE: ;   // launched by fill_start below
@@ -569,7 +577,7 @@ end else begin : g_ra
                         // run that errored is USED (the serve may already
                         // have taken good blocks off the head of it) but
                         // never KEPT.
-                        if (!p_error && !f_poison && !cache_kill &&
+                        if (!p_error && !f_poison && !cache_kill && !write_kill[f_way] &&
                             (way_bytes[f_way][CW:BLK_LG2] != 0)) begin
                             way_valid[f_way] <= 1'b1;
                             lru              <= ~f_way;
