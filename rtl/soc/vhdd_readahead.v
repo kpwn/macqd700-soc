@@ -20,6 +20,12 @@
 // scsi.v's (correct) CMD17/CMD18 choice cannot amortise anything.  This
 // module amortises it instead: on a miss it fetches a RUN of sequential
 // blocks with one CMD18 and serves the following requests out of BRAM.
+// With ADAPTIVE_READAHEAD enabled, an unfamiliar request fetches only
+// max(requested blocks, 2), capped at the volume boundary. A miss exactly
+// after a clean cached run fetches the full window. This limits unused
+// speculative tails on scattered reads; two cached ways independently
+// recognize continuation of two streams. The historical figures below
+// describe fixed-window mode, not measured adaptive hardware performance.
 // Mac OS boot reads are overwhelmingly sequential, which is the whole
 // premise — and it is the same premise boot_fsm already validates on
 // this card.
@@ -186,6 +192,9 @@ module vhdd_readahead #(
     // no BRAM, no state, no added cycle.  Used by the testbenches to get
     // a true "before" baseline from the identical netlist.
     parameter integer ENABLE          = 1,
+    // Small cold fetches avoid making a seek wait for an unused full run.
+    // A request immediately after a clean cached run grows to a full way.
+    parameter integer ADAPTIVE_READAHEAD = 0,
     // Consumer-stall bound for the SERVE phase only (see above).
     parameter integer SERVE_WDOG_BITS = 24
 ) (
@@ -441,9 +450,15 @@ end else begin : g_ra
     // ── Is this a request the cache may handle at all? ────────────────
     wire [31:0] lbas_left = num_lbas - req_lba;
     wire        in_volume = (req_lba < num_lbas);
-    wire [15:0] fetch_len = (lbas_left >= BLOCKS_PER_WAY)
-                              ? {{(16-(BW+1)){1'b0}}, BPW_C}
-                              : lbas_left[15:0];
+    wire follows_run =
+        (way_valid[0] && ({1'b0, req_lba} == {1'b0, way_base[0]} + {16'd0, blocks0})) ||
+        (way_valid[1] && ({1'b0, req_lba} == {1'b0, way_base[1]} + {16'd0, blocks1}));
+    localparam [15:0] COLD_BLOCKS = (BLOCKS_PER_WAY < 2) ? BLOCKS_PER_WAY[15:0] : 16'd2;
+    wire [15:0] desired_fetch = (ADAPTIVE_READAHEAD == 0) || follows_run ?
+        {{(16-(BW+1)){1'b0}}, BPW_C} :
+        ((req_block_count > COLD_BLOCKS) ? req_block_count : COLD_BLOCKS);
+    wire [15:0] fetch_len = (lbas_left >= {16'd0, desired_fetch})
+                              ? desired_fetch : lbas_left[15:0];
     wire cacheable = !req_write &&
                      (req_block_count != 16'd0) &&
                      ({{(16-(BW+1)){1'b0}}, req_block_count[BW:0]}

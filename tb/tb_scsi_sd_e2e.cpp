@@ -1720,6 +1720,20 @@ static bool c22_c96_small_read_workloads() {
                     workload == 0 ? "sequential" : workload == 1 ? "two-stream" : "scattered",
                     requests, (sim_time - start) / 1000.0, worst_ns / 1000.0,
                     requests * 512.0 * 1000.0 / (sim_time - start));
+#ifdef SCSI_E2E_PERF_OPT
+#ifdef SCSI_E2E_CORE100
+        const uint64_t clock_scale = 2;
+#else
+        const uint64_t clock_scale = 1;
+#endif
+        // Fixed 32-sector prefetch takes 3.18 ms per scattered request.
+        // Keep a wide margin above adaptive's 239 us without accepting
+        // that regression, and retain the established sequential gain.
+        if (workload == 2)
+            CHECK_TRUE("adaptive scattered-read latency", worst_ns < 500000 * clock_scale);
+        if (workload == 0)
+            CHECK_TRUE("adaptive sequential throughput", sim_time - start < 7000000 * clock_scale);
+#endif
     }
     return true;
 }

@@ -135,12 +135,23 @@ module tb_scsi_sd_e2e (
     localparam TB_RA_BLOCKS = 4;
 `endif
 
+`ifdef SCSI_E2E_PRODUCTION
+`ifndef SCSI_E2E_LEGACY_PACE
+    localparam TB_RA_ADAPTIVE = 1;
+`else
+    localparam TB_RA_ADAPTIVE = 0;
+`endif
+`else
+    localparam TB_RA_ADAPTIVE = 0;
+`endif
+
     tb_scsi_vhdd_sd #(
         .TARGET_ID     (3'd0),
         .SD_LBA_BIAS   (32'd8192),
         .TURBOSCSI_C96 (TB_TURBOSCSI_C96),
         .READAHEAD     (TB_READAHEAD),
-        .RA_BLOCKS     (TB_RA_BLOCKS)
+        .RA_BLOCKS     (TB_RA_BLOCKS),
+        .RA_ADAPTIVE   (TB_RA_ADAPTIVE)
     ) u_scsi (
         // Write-protect is a vhdd_ctrl runtime setting (CTRL bit 2), not a
         // property of the SCSI target; these harnesses predate it and test

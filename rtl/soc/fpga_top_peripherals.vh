@@ -2396,6 +2396,7 @@
         // 2 ways x 32 blocks = 32 KiB = 8 RAMB36.  See the module header
         // for the amortisation this buys and why two ways.
         .BLOCKS_PER_WAY(32),
+        .ADAPTIVE_READAHEAD(1),
         .ENABLE        (1)
     ) u_vhdd_readahead (
         .clk              (pb_clk),

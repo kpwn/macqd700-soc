@@ -38,7 +38,8 @@ module tb_scsi_vhdd_sd #(
     // so every existing harness still runs THROUGH it and proves the
     // bypass really is transparent, without changing a single assertion.
     parameter integer READAHEAD     = 0,
-    parameter integer RA_BLOCKS     = 8
+    parameter integer RA_BLOCKS     = 8,
+    parameter integer RA_ADAPTIVE   = 0
 ) (
     input  wire        clk,
     // vhdd CTRL[2] equivalent: lock the volume so WRITE commands are
@@ -332,6 +333,7 @@ module tb_scsi_vhdd_sd #(
 
     vhdd_readahead #(
         .BLOCKS_PER_WAY(RA_BLOCKS),
+        .ADAPTIVE_READAHEAD(RA_ADAPTIVE),
         .ENABLE        (READAHEAD)
     ) u_vhdd_readahead (
         .clk              (clk),
