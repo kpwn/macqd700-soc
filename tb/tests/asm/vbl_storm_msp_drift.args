@@ -1,0 +1,62 @@
+# vbl_storm_msp_drift.args — Schedule 50 vec-25 IRQs to detect any
+# per-IRQ MSP/SSP leak (regression catch for the HW Q700 boot bug
+# where SSP drifts -4 bytes across ~4000 IRQs).
+#
+# Each +ipl=cycle:1 fires once; cpu_ipl_ack clears cur_ipl_ext after
+# IRQ entry, so events must be spaced beyond handler execution time
+# (~12K cycles per IRQ at ~0.25 IPC) for each to land.
+#
+# 5K spacing → ~250K cycles total + main-loop final write.
+
++timeout=2000000
+
++ipl=15000:1
++ipl=20000:1
++ipl=25000:1
++ipl=30000:1
++ipl=35000:1
++ipl=40000:1
++ipl=45000:1
++ipl=50000:1
++ipl=55000:1
++ipl=60000:1
++ipl=65000:1
++ipl=70000:1
++ipl=75000:1
++ipl=80000:1
++ipl=85000:1
++ipl=90000:1
++ipl=95000:1
++ipl=100000:1
++ipl=105000:1
++ipl=110000:1
++ipl=115000:1
++ipl=120000:1
++ipl=125000:1
++ipl=130000:1
++ipl=135000:1
++ipl=140000:1
++ipl=145000:1
++ipl=150000:1
++ipl=155000:1
++ipl=160000:1
++ipl=165000:1
++ipl=170000:1
++ipl=175000:1
++ipl=180000:1
++ipl=185000:1
++ipl=190000:1
++ipl=195000:1
++ipl=200000:1
++ipl=205000:1
++ipl=210000:1
++ipl=215000:1
++ipl=220000:1
++ipl=225000:1
++ipl=230000:1
++ipl=235000:1
++ipl=240000:1
++ipl=245000:1
++ipl=250000:1
++ipl=255000:1
++ipl=260000:1

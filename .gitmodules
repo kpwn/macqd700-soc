@@ -1,0 +1,4 @@
+[submodule "cpu040"]
+	path = cpu040
+	url = https://github.com/kpwn/m68k-core-040-ooo.git
+	branch = master

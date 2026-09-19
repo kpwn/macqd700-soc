@@ -1,0 +1,77 @@
+# macos_q700.syms — Quadra 700 ROM + RAM symbols discovered by THIS project.
+#
+# Every address in this file was found by direct disassembly/debugging of
+# files/420dbff3.rom (or of the RAM patches the ROM installs at boot) on
+# this project's Verilator sim / real KU5P hardware — not copied from a
+# generic Mac OS symbol table.  Names are chosen to be greppable; the
+# routine's actual purpose (and provenance, for anything sourced from a
+# project note rather than the project owner's own list) lives in the
+# trailing `;` comment.
+#
+# Two regions: the 1 MB Quadra 700 ROM, and low RAM excluding the
+# low-memory-global page (that lives in lowmem.syms's own :data region so
+# the two regions don't overlap).
+region rom    40800000 40900000
+region lowram 00001000 00100000
+
+# ── Project-owner-supplied addresses (authoritative) ───────────────────
+
+0002E938  _FSDispatch            ; File System trap dispatcher
+0002E8A4  _VSyncWaitPoll         ; vSyncWait poll loop
+0002CCCE  _DevMgrEntry           ; Device Manager entry
+0002CD1E  _DCEAcquire            ; DCE acquire
+0002CD26  _DevMgrBusyEscape      ; Device Manager busy-escape
+0002CD98  _DCERelease            ; DCE release
+0002CDAE  _DevMgrIOResultWrite   ; Device Manager ioResult write
+0002EEDC  _FSIOResultWrite       ; File System ioResult write
+00009C74  _SCSIGet               ; SCSIGet
+00009C9E  _SCSISelect            ; SCSISelect
+00009CBA  _SCSICmd               ; SCSICmd
+00009CF2  _SCSIRBlind            ; SCSIRBlind
+00009D2C  _SCSIComplete          ; SCSIComplete
+00014716  _FSCacheSearch         ; File Manager cache search
+
+# ── Additional addresses found in this project's own debugging notes ──
+#
+# Each entry below cites the doc it was pulled from.  Only included when
+# the source text states plainly what the address is — no addresses were
+# guessed from the PRM or from adjacency to a confirmed one.
+
+# --- vSyncWait / ioResult stall chain (RAM), the same mechanism the
+#     project-owner-supplied _FSDispatch/_VSyncWaitPoll belong to ------
+0002E874  _FSSyncIOCall          ; synchronous FS I/O call setup: ioResult=1, qType=5 (fsQType), ioCompletion=0, then bsr _FSDispatch [project_finder_event_loop_reached_2026_07_26.md]
+0002E9EA  _IOCompletionDeferredTask ; the Deferred Task Manager task that actually writes ioResult via the FS handler chain [project_finder_event_loop_reached_2026_07_26.md]
+4080F000  _ROMFSDispatchOrig     ; unpatched ROM original of which RAM _FSDispatch (0x2E938) is a patched copy, same busy-lock/_SCSIDispatch/_DTInstall shape [project_finder_event_loop_reached_2026_07_26.md]
+
+# --- VBL guard / Deferred Task Manager (ROM 0x4080A1xx-0x4080A3xx) ----
+# ROM-verified by direct disassembly, not inferred.  This is the
+# mechanism that gates ALL deferred-task completion (including the FS
+# I/O completion above) behind one flag bit at low-mem $0160 bit 6.
+4080A296  _VBLHandlerEntry       ; VBL (VIA1 CA1) handler entry: Ticks++ and ack VIA1 CA1 happen BEFORE the guard bit is even tested [project_vbl_guard_strands_deferred_tasks_2026_07_26.md, project_finder_event_loop_reached_2026_07_26.md]
+4080A2A0  _VBLGuardSet           ; bset bit6,$0160 -- SETS the VBL-queue-walk guard (the ONLY set site) [same docs]
+4080A2CA  _VBLQueueWalk          ; walks VBLQueue.qHead ($0162), jsr's arbitrary VBL task code, runs at IPL=0 (preemptible) [same docs; also project_swapmmumode_rob_head_wedge_2026_07_25.md, project_via2_ca1_slot_irq_dead_2026_07_25.md]
+4080A2F4  _VBLGuardRelease       ; bclr bit6,(a1) -- CLEARS the guard (the ONLY clear site; a stranded guard here strands every deferred task in the machine) [same docs]
+4080A332  _VBLWalkSlotFEntry     ; second entry into the SAME walk, reached from the slot-$F (DAFB) interrupt handler via low-mem $0D28; tail braw's into the middle of _VBLQueueWalk [project_vbl_guard_strands_deferred_tasks_2026_07_26.md]
+4080A1EE  _DeferredTaskMgr       ; Deferred Task Manager: btst bit6,$0160 (the VBL guard) -- returns immediately, running nothing, if the guard is set; else walks DTQueue ($0D92/$0D94) and jsr's the task [project_vbl_guard_strands_deferred_tasks_2026_07_26.md]
+
+# --- ROM slot-interrupt (VIA2 secondary) dispatcher -------------------
+40806ECA  _ROMSlotIRQDispatcher  ; VIA2 slot secondary-interrupt dispatcher entry; walks the slot handler chain, loops while any pending-mask bit remains set [project_scsi_drq_stuck_wedges_via2_dispatcher_2026_07_25.md, project_swapmmumode_rob_head_wedge_2026_07_25.md]
+4088BC44  _SlotDispatchPALoopTest ; the dispatcher's own loop-exit test: re-reads VIA2 port A, loops while any of PA[6:0] reads low [same docs]
+
+# --- System Error handler (the Mac "bomb" dialog) ---------------------
+408029EC  _SysErrorAlertDraw     ; System Error alert draw + button hit-test routine, called via bsrw from 0x408028E0 [project_system_error_bomb_dialog_2026_07_25.md]
+40802A38  _SysErrorModalWait     ; bomb-dialog modal wait-for-click loop: tst.b $0172 (MBState) / bne [project_system_error_bomb_dialog_2026_07_25.md, project_ioresult_stall_still_open_2026_07_25.md]
+
+# --- VIA1 level-1 autovector dispatch ----------------------------------
+40809BC0  _Level1IRQDispatch     ; VIA1 level-1 (vec 0x19) autovector handler: masks IFR&IER&0x7F, jumps through a dispatch table on the result [project_spurious_level1_irq_storm_2026_07_25.md -- note: that doc's "spurious storm" THEORY was later retracted, but the disassembly of this dispatch routine itself is unaffected]
+
+# --- JCrsrTask target (the routine low-mem $08EE points at) ------------
+4082DF94  _JCrsrTaskRoutine      ; ROM cursor-task routine reached via the JCrsrTask ($08EE) vector [project_spurious_level1_irq_storm_2026_07_25.md, project_via2_ca1_slot_irq_dead_2026_07_25.md, project_swapmmumode_rob_head_wedge_2026_07_25.md]
+
+# --- ROM SCC RX poll ----------------------------------------------------
+4084AF9C  _ROMSCCRxPoll          ; SCC RX poll: btst bit17,%d7 / beq -> return [docs/BUG_macsbug_repl_unreached.md, docs/scc_hw_runbook.md]
+
+# --- FPSP (F-line vec-11 handler) --------------------------------------
+4088D9FE  _FPSPKernelEntry       ; ROM FPSP F-line (vec 11) kernel entry: linkw fp,imm(-192); fsave -(sp) [docs/uarch_decisions.md item 19, docs/isa_status.md "Vec 11 (F-line)", docs/BUG_low_ram_corruption_post_dafb.md]
+4088DB1E  _FPSPFrameFmtCheck     ; later point in the SAME FPSP handler body: checks the FSAVE frame's format byte, branches to FSF (FScc cc=F) handling if not UNIMP ($40) [docs/bug_b_atrap_divergence.md, docs/isa_status.md "FMOVEM.X FPn-list" and "FSF (xxx).L" rows]
+4088DB52  _FPSPFPCRFPSRClear     ; FPSP's own FPSR/FPCR-clear housekeeping; a confirmed F-line self-recursion site [docs/isa_status.md "FMOVE.L <ea>,FPCR / FPSR" row]

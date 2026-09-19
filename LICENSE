@@ -1,0 +1,53 @@
+macqd700-soc — licensing
+========================
+
+Original project contributions are offered under the MIT License below.
+The project also includes third-party components under their own licenses.
+This grant does not replace third-party licenses or grant rights we do not
+hold. See THIRD_PARTY_NOTICES.md for attribution and component-specific terms.
+
+Ethernet-enabled bitstreams are subject to CERN-OHL-S-2.0. Component notices,
+source obligations, and separate firmware/vendor-IP terms still apply.
+
+MAME excerpts/adaptations retain BSD-3-Clause terms and credited authors.
+Taxi Ethernet retains CERN-OHL-S-2.0, including its applicable source and
+notice obligations. For combined designs incorporating Taxi, this project's
+original contributions are additionally offered under CERN-OHL-S-2.0;
+its complete text is in vendor/rk5-eth/third_party/taxi/LICENSE.
+Disabling Ethernet does not remove obligations for other third-party code.
+
+The cpu040 submodule has its own MIT contributions and third-party terms,
+including SoftFloat Release 2b adaptations. Do not describe the entire
+recursive checkout or generated hardware as exclusively MIT.
+
+The VIA implementation drew inspiration from Shachar Shemesh’s CompuSAR/6522 project.
+
+Apple firmware is not supplied in source Git. The next release bitstream
+will also exclude the ADB modem firmware. Users insert their own ROM into
+the blank bitstream locally; see docs/adb_firmware_bitstream.md.
+Firmware is not covered by this project's licenses. FPGA vendor IP is
+separately licensed as well.
+
+
+MIT License
+-----------
+
+Copyright (c) 2026 qwertyoruiop
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

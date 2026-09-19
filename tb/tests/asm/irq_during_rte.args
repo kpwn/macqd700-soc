@@ -1,0 +1,15 @@
+# Per-test plusargs for irq_during_rte.
+#
+# This test exercises audit bug #3 — an IRQ that fires during an
+# in-flight RTE pop sequence (between take_rte and take_rte_finalize)
+# would preempt the inject µops because arch_sr.I is still the
+# pre-RTE supervisor level (so ipl_above_mask is still true).  The
+# fix in exception.v + commit.v gates take_irq on `!inject_active`.
+#
+# Without IPL injection the test passes by-construction (HANDLER_SR
+# stays 0, branches to _no_irq_yet → _pass).  With +ipl=260:1 the
+# IRQ fires at the boundary right after the synthetic RTE returns to
+# _target — exercising both the inject_active gate (during the RTE
+# pop itself) and the rob_is_store/store-drain gate (the TARGET_HIT
+# store must drain through commit_store_en before the IRQ takes).
++ipl=260:1

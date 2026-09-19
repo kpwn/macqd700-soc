@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# tools/pm/status — one-paste PM session dashboard.
+#
+# Collapses all the repetitive Bash/Grep state queries the PM makes at the
+# start of every session tick into a single compact block (<30 lines).
+# Caches expensive results (make test / make fuzz) under /tmp/m68k-pm-cache/.
+
+set -uo pipefail
+
+PROG="${0##*/}"
+usage() {
+    echo "usage: $PROG [--help] [--refresh] [--no-test] [--no-fuzz]"
+    echo "  compact PM session dashboard (branch, tests, fuzz, vivado, agents)"
+}
+
+REFRESH=0
+DO_TEST=1
+DO_FUZZ=1
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help)    usage; exit 0 ;;
+        --refresh)    REFRESH=1 ;;
+        --no-test)    DO_TEST=0 ;;
+        --no-fuzz)    DO_FUZZ=0 ;;
+        *) echo "$PROG: unknown arg '$arg'" >&2; usage >&2; exit 1 ;;
+    esac
+done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CACHE_DIR="/tmp/m68k-pm-cache"
+mkdir -p "$CACHE_DIR" || { echo "$PROG: cannot mkdir $CACHE_DIR" >&2; exit 1; }
+
+CACHE_MAX_AGE=300   # 5 min
+TEST_CACHE="$CACHE_DIR/make-test.log"
+FUZZ_CACHE="$CACHE_DIR/make-fuzz.log"
+BUILD_DIR="/tmp/m68k-ooo-build"
+
+cache_fresh() {
+    local f="$1"
+    [ -f "$f" ] || return 1
+    [ "$REFRESH" -eq 1 ] && return 1
+    local age now mtime
+    now=$(date +%s)
+    mtime=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+    age=$((now - mtime))
+    [ "$age" -lt "$CACHE_MAX_AGE" ]
+}
+
+age_str() {
+    local f="$1"
+    [ -f "$f" ] || { echo "n/a"; return; }
+    local now mtime age
+    now=$(date +%s); mtime=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+    age=$((now - mtime))
+    if   [ "$age" -lt 60 ];   then echo "${age}s ago"
+    elif [ "$age" -lt 3600 ]; then echo "$((age/60))m ago"
+    else                          echo "$((age/3600))h ago"
+    fi
+}
+
+run_test_if_stale() {
+    cache_fresh "$TEST_CACHE" && return 0
+    [ -d "$BUILD_DIR" ] || return 1
+    ( cd "$BUILD_DIR" && MAKEFLAGS="-j1" make test ) > "$TEST_CACHE" 2>&1 || true
+}
+
+run_fuzz_if_stale() {
+    cache_fresh "$FUZZ_CACHE" && return 0
+    [ -d "$BUILD_DIR" ] || return 1
+    ( cd "$BUILD_DIR" && make fuzz N=50 ) > "$FUZZ_CACHE" 2>&1 || true
+}
+
+# --- 1. Git state --------------------------------------------------------
+cd "$REPO_ROOT"
+branch=$(git branch --show-current 2>/dev/null || echo "?")
+head_sha=$(git rev-parse --short HEAD 2>/dev/null || echo "?")
+head_sub=$(git log -1 --pretty=format:'%s' 2>/dev/null | cut -c1-60)
+status_raw=$(git status --short 2>/dev/null || true)
+n_staged=$(printf '%s\n' "$status_raw" | grep -cE '^[MARCD]' || true)
+n_mod=$(printf '%s\n'    "$status_raw" | grep -cE '^.[MD]'   || true)
+n_untracked=$(printf '%s\n' "$status_raw" | grep -cE '^\?\?' || true)
+n_stashes=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
+
+# --- 2. Tests ------------------------------------------------------------
+test_line="n/a"
+if [ "$DO_TEST" -eq 1 ]; then
+    run_test_if_stale
+    if [ -f "$TEST_CACHE" ]; then
+        s=$(grep -E '^summary: ' "$TEST_CACHE" | tail -1)
+        [ -n "$s" ] && test_line="$s"
+    fi
+fi
+test_age=$(age_str "$TEST_CACHE")
+
+# --- 3. Fuzz -------------------------------------------------------------
+fuzz_line="n/a"
+if [ "$DO_FUZZ" -eq 1 ]; then
+    run_fuzz_if_stale
+    if [ -f "$FUZZ_CACHE" ]; then
+        # gen_program-style scripts print lines like "fuzz: PASS=X MISMATCH=Y TIMEOUT=Z"
+        s=$(grep -E 'PASS=[0-9]+.*MISMATCH=[0-9]+' "$FUZZ_CACHE" | tail -1)
+        [ -z "$s" ] && s=$(grep -E 'MISMATCH|TIMEOUT|PASS' "$FUZZ_CACHE" | tail -3 | head -1)
+        [ -n "$s" ] && fuzz_line=$(echo "$s" | sed -E 's/^\s+//' | cut -c1-76)
+    fi
+fi
+fuzz_age=$(age_str "$FUZZ_CACHE")
+
+# --- 4. Vivado lock ------------------------------------------------------
+viv_lock="/var/tmp/m68k-ooo-vivado.lock"
+viv_state="free"
+viv_holder=""
+if [ -f "$viv_lock" ]; then
+    if command -v flock >/dev/null 2>&1; then
+        if ! ( flock -n 9 ) 9<"$viv_lock" 2>/dev/null; then
+            viv_state="HELD"
+        fi
+    fi
+    if [ "$viv_state" = "HELD" ] && command -v lsof >/dev/null 2>&1; then
+        viv_holder=$(lsof "$viv_lock" 2>/dev/null | awk 'NR==2 {print $1"("$2")"}')
+    fi
+fi
+
+# --- 5. Bitstream --------------------------------------------------------
+bit_line="none"
+for bd in "$REPO_ROOT/build/vivado" "$BUILD_DIR/build/vivado"; do
+    if [ -d "$bd" ]; then
+        b=$(ls -t "$bd"/*.bit 2>/dev/null | head -1)
+        if [ -n "$b" ]; then
+            sz=$(du -h "$b" 2>/dev/null | awk '{print $1}')
+            ag=$(age_str "$b")
+            bit_line="$(basename "$b") ${sz} (${ag})"
+            break
+        fi
+    fi
+done
+
+# --- 6. In-flight agents (best effort) -----------------------------------
+inflight="0"
+if [ -d /tmp/claude-1000 ]; then
+    # files written to in the last 2 minutes under tasks/*.output
+    n=$(find /tmp/claude-1000 -maxdepth 5 -path '*/tasks/*.output' \
+        -newermt '2 minutes ago' 2>/dev/null | wc -l | tr -d ' ')
+    inflight="$n"
+fi
+# active worktrees (agent branches)
+n_wt=$(ls -d "$REPO_ROOT"/.claude/worktrees/agent-* 2>/dev/null | wc -l | tr -d ' ')
+
+# --- 7. IPC peak from bench_baseline.md ----------------------------------
+ipc_peak="n/a"
+bb="$REPO_ROOT/docs/bench_baseline.md"
+if [ -f "$bb" ]; then
+    # pull the largest IPC in the table lines of shape "| name | cyc | cmt | 0.xxx | ... |"
+    ipc_peak=$(awk -F'|' '
+        /^\|[^-|].*\|/ {
+            for (i=1;i<=NF;i++) {
+                if ($i ~ /^[ \t]*0\.[0-9]+[ \t]*$/) {
+                    v=$i; gsub(/[ \t]/,"",v);
+                    name=$2; gsub(/[ \t]/,"",name);
+                    if (v+0 > best+0) { best=v; bn=name }
+                }
+            }
+        }
+        END { if (best != "") printf("%s @ %s", best, bn) }' "$bb")
+    [ -z "$ipc_peak" ] && ipc_peak="n/a"
+fi
+
+# --- 8. Emit dashboard ---------------------------------------------------
+printf '=== m68k-ooo PM dashboard (%s) ===\n' "$(date +'%F %T')"
+printf 'branch : %s @ %s — %s\n' "$branch" "$head_sha" "$head_sub"
+printf 'git    : staged=%d modified=%d untracked=%d stashes=%d worktrees=%d\n' \
+    "$n_staged" "$n_mod" "$n_untracked" "$n_stashes" "$n_wt"
+printf 'test   : %s  [%s]\n' "$test_line" "$test_age"
+printf 'fuzz   : %s  [%s]\n' "$fuzz_line" "$fuzz_age"
+if [ -n "$viv_holder" ]; then
+    printf 'vivado : %s — %s\n' "$viv_state" "$viv_holder"
+else
+    printf 'vivado : %s\n' "$viv_state"
+fi
+printf 'bitstr : %s\n' "$bit_line"
+printf 'agents : %d writing in last 2m\n' "$inflight"
+printf 'IPC pk : %s\n' "$ipc_peak"
+
+if [ "$n_stashes" -gt 0 ]; then
+    printf -- '--- stashes ---\n'
+    git stash list | head -5
+fi
+if [ -n "$status_raw" ]; then
+    printf -- '--- git status (first 8) ---\n'
+    printf '%s\n' "$status_raw" | head -8
+fi

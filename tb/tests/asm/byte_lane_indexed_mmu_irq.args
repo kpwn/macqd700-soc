@@ -1,0 +1,7 @@
+# Per-test plusargs for byte_lane_indexed_mmu_irq.
+#
+# Inject IPL=1 at cycle 600 — chosen to land INSIDE the dbf loop after
+# at least one or two iterations have completed.  The cycle window for
+# the loop is roughly 250..1000 based on the no-IRQ MMU-on variant
+# completing at ~1004 cycles total.
++ipl=600:1

@@ -1,0 +1,22 @@
+# Per-test plusargs for exc_priority_irq_vs_sync.
+#
+# This test exercises sync-exception (TRAP #0) vs IRQ priority arbitration.
+# The test asm itself cannot raise an external IPL — that's a peripheral
+# action.  Inject IPL=1 from the testbench at cycle 250 (chosen so the
+# TRAP handler has had time to retire its `addq.l #1, COUNTER` and
+# `move.l #1, ORDER` stores before the IRQ takes the boundary on the
+# way back to mainline).  The handler order check then validates that
+# the TRAP ran first (ORDER==1 when IRQ checks) and the IRQ ran second
+# (final ORDER==2, COUNTER==2).
+#
+# +ipl=cycle:level — single-shot IPL pulse.  Cleared on cpu_ipl_ack
+# (i.e. when the CPU dispatches the IRQ exception, the irq_agg-style
+# acknowledge pulse from commit.v drops cur_ipl_ext back to 0).
+#
+# Cycle bumped 250 → 280 (2026-05-06): the I-side MMU translator
+# (rtl/core/fetch/if_mmu_xlate.v) added 2-3 cycles of latency to
+# each fetch handshake.  The original 250 was tuned for the pre-
+# walker fetch path and now lands before the TRAP handler retires
+# its ORDER=1 store.  280 puts the IPL inject just after that
+# store retires under the new latency.
++ipl=280:1

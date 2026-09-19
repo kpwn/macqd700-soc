@@ -1,0 +1,18 @@
+# Per-test plusargs for irq_after_rts_a7_shadow.
+#
+# IRQ injection cycle MUST land precisely at the RTS retire that
+# exposes the A7-shadow race.  The window is narrow (~5 cycles wide)
+# and shifts with every pipeline-latency change in the LSU/cache.
+# Re-tune whenever a pipeline timing change perturbs cycle counts.
+#
+# History:
+#   - Original tuning: +ipl=160:1 (pre dcache snoop pipelining).
+#   - 2026-05-20 retune to +ipl=175:1 after dcache snoop got a
+#     2-cycle pipeline stage (commit e8e44d80).  The +15-cycle shift
+#     matches the snoop-pipeline-stage latency reflected in cache
+#     fills along the JSR/RTS path.
+#
+# If this test ever fails after a future pipeline change, sweep
+# +ipl cycles 100..300 step 5 and pick the smallest value where the
+# test PASSes for ≥3 consecutive runs.
++ipl=175:1

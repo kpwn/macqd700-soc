@@ -1,0 +1,25 @@
+# Per-test plusargs for byte_lane_indexed_mmu_irq_storm.
+#
+# IRQ storm — inject at many cycles spanning the 16x outer-loop run.
+# Cycles chosen to hit different points: store-buffer-drain windows,
+# cracked-uop-mid-EA-compute, cmpb/notb RMW boundaries.
+#
+# Per-iter the inner dbf loop runs ~50 cycles, outer loop runs 16x →
+# total ~800 cycles for the test body.  We inject at 300, 350, 400,
+# 450, 500, 550, 600, 700, 800, 900 — fine-grained sweep.
++ipl=300:1
++ipl=350:1
++ipl=400:1
++ipl=450:1
++ipl=500:1
++ipl=550:1
++ipl=600:1
++ipl=700:1
++ipl=800:1
++ipl=900:1
++ipl=1000:1
++ipl=1100:1
++ipl=1200:1
++ipl=1300:1
++ipl=1400:1
++ipl=1500:1

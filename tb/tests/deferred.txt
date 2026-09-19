@@ -1,0 +1,241 @@
+# Deferred tests — known-failing, tracked but not regression-gated.
+#
+# Format: one test name per line (matching basename of .s file,
+# without .s extension).  Anything after '#' on a line is ignored.
+# Blank lines ignored.  `make test` reports these as [DEFER] instead
+# of [FAIL] and the build does NOT fail on them.
+#
+# To promote a test OUT of deferred (fix landed): delete its line
+# here.  If it then fails on a future run, that's a real regression.
+#
+# Each entry below is classified per task #193 test-story-cleanup audit
+# (2026-04-24):
+#   (A) real RTL bug, fixable now — removed and fixed
+#   (B) real RTL bug, hard — kept DEFER with concrete repro
+#   (C) stale test-side — fixed and un-DEFER'd
+#   (D) environmental / feature unimplemented — kept DEFER
+
+# ---------------------------------------------------------------------
+# Classification (A/C) un-DEFER'd as part of task #193:
+#   alu_basic            — C — moveq #0xFF out-of-range + stale sentinel;
+#                              rewrote .s, now PASSes
+#   bench_loop_branch    — C — same-Dn add+sub loop-carry idiom never
+#                              decrements the counter; switched to D1
+#                              counter, now PASSes
+#   exc_addr_error       — C — asserted 68000 vector-3 on misaligned
+#                              data access; 68040 does NOT raise that.
+#                              Rewrote to assert 68040-correct (unaligned
+#                              long load split into two aligned beats and
+#                              completes).  Now PASSes.
+#
+# Also un-DEFER'd (found PASSING during audit — stale DEFER entries):
+#   addq_subq_mem_rmw    — stale; fixed somewhere between the DEFER note
+#                              and 2026-04-24, not un-DEFER'd
+#   move_full_memind_dst — stale; same history
+#   phase2_bootstrap     — stale; now PASSes at 09cdd8f
+# ---------------------------------------------------------------------
+
+# divide_test un-DEFER'd by task #204 / B3 — DIV.L SZ=1 (64÷32) now
+# routes through V2 with has_src_c=1 (Dr high dividend) + uop_size
+# SZ_QUAD so mul_div runs the 64-iter FSM.  Legacy binutils rejection
+# of `divs.l %a0,%d6:%d7` was a test-source bug (An divisor invalid
+# per PRM); the un-DEFER edit keeps the valid cases.
+
+# control_full_memind_siblings — FIXED task #214 / D3 (2026-04-24):
+#   (a) test-side: MOVE.L before LEA wrote CCR.Z=0 independently of what
+#       LEA did, so the test's CCR-preservation check couldn't actually
+#       observe LEA's CCR behaviour.  Reordered the test to set CCR
+#       AFTER the MOVE.L so LEA gets to prove it preserves Z.
+#   (b) decoder: added a JMP ([bd,An,Xn],od) full-format memory-indirect
+#       row in decode_0100.vh, symmetric to the existing JSR memind rows
+#       but emitting BR_JMP on TMP1 instead of push+JMP.
+
+# rom_frontier_decode_matrix — FIXED task #214 / D3 (2026-04-24).
+# Root cause: test-side typo in the MOVEM.L D0-D7/A0-A7 check.
+# MOVEM predecrement-order to 0x7040 stores 16 longs; A7 is index 15
+# (offset 15*4 = 0x3C → address 0x707c) and D7 is index 7 (offset
+# 7*4 = 0x1C → address 0x705c).  The check at line 544 was reading
+# 0x705c (D7's slot, value 0x77778888) but comparing against 0x10ff00
+# (the expected A7 value), so it always failed regardless of µarch
+# behaviour.  Musashi was also "failing" this test in the same way.
+# Changed 0x705c → 0x707c.
+
+# mmu_nested_fault — FIXED task #214 / D3 (2026-04-24).
+# Two-part root cause:
+#   (a) MMU `last_fault` is a 1-cycle sticky bit from the most recent
+#       walker completion, and the old `assign fault = ... | last_fault`
+#       would surface that stale bit on any subsequent probe -- even
+#       ones hitting a TTR/ATC and therefore not using the walker at
+#       all.  Guard with `need_walk` so TTR-hits can't inherit a
+#       prior walker's fault.  Fix in rtl/core/mem/mmu.v.
+#   (b) The exception sequencer needs exclusive AXI access while it
+#       pushes frames / reads vectors, but speculative LSU issues
+#       dispatched past the faulting uop can re-arm the walker after
+#       flush_en cleared iq_mem, stalling the sequencer's push.
+#       Gate LSU-side mmu_req_valid with !exc_active in
+#       m68k_core_memory.vh so the walker never picks up a stranded
+#       speculative load.
+
+# ---------------------------------------------------------------------
+# Test-author agent additions (2026-05-03) — feature-gap probes.
+# Classified (D) — environmental / feature unimplemented.  Each
+# probe is a sanity check for a feature listed as "NOT YET
+# IMPLEMENTED" in CLAUDE.md.  Entries below are kept in the corpus
+# so the gate flips from FAIL→PASS the moment the feature lands.
+# ---------------------------------------------------------------------
+
+# FPU body — full register-register arithmetic + FMOV/FABS/FNEG +
+# FSAVE/FRESTORE NULL frame + FCMP/FBcc + FMOVE.S Dn,FPn / FPn,(An) +
+# FMOVE.L Dn,FPCR/FPSR / FPCR,Dn / FPSR,Dn + FDIV-DZ exception (vec 49).
+# All 4 originally-deferred FPU tests now PASS:
+#   fpu_divbyzero_exception           — FPCR/FPSR arch state + FDIV-DZ
+#                                       cmpl3 exception path (vec 49)
+#   fpu_fsave_frestore_idle_roundtrip — FPCR/FPSR arch state +
+#                                       SYS_FSAVE_STASH/SYS_FRESTORE_RELOAD
+#                                       side-channel (memory-side NULL
+#                                       frame stays 4 bytes, so
+#                                       fsave_frestore_basic also still PASSes)
+#   fpu_fmove_dn_fpn_roundtrip        — FMOVE.S FPn,(An) 3-µop crack
+#                                       (FPU_X2S → SYS_X2S_TO_INT → STORE.L)
+#                                       with x2s_stash side-channel from
+#                                       fpu_top to commit (read at SYS retire,
+#                                       broadcast on cdb1 to write int phys
+#                                       reg the trailing STORE.L reads)
+#   fpu_fadd_exact_single             — same FMOVE.S FPn,(An) bridge +
+#                                       fixed test-side encoding bug (PRM:
+#                                       FP→EA source FPn lives in ext[12:10],
+#                                       not ext[9:7])
+
+# exc_trace_t1 — SR.T1 trace bit not implemented.  Decode + commit
+# need a "trace pending" latch that fires vec 9 (fmt-2) at the
+# next user-mode instruction boundary.  Phase 3 polish (no Mac OS
+# boot dependency on T1 today).  Note: a prior agent hypothesised
+# a store-fire+SYS_MOVE_SR a7_mirror_pending deadlock as the root
+# cause; investigation 2026-05-03 (a7_mirror-deadlock-bisect agent)
+# confirmed there is no such deadlock in current RTL.  See the
+# permanent regression test tb/tests/asm/a7_mirror_store_sr_deadlock.s
+# which exercises the conjectured race window and PASSes.  The test
+# also fails up-front because of test-side design: it pre-writes
+# 0xDEAD0C99 to 0xFFFF0000 (the testbench PASS sentinel), which the
+# harness treats as immediate FAIL — so even if T1 dispatch lands,
+# the test would FAIL until the .s is rewritten to use a separate
+# "fail marker" address.
+
+# exc_double_fault_halt — UN-DEFER'd 2026-05-14 (task #33).
+# Existing cpu_halted-on-store-exc-during-inject path in commit.v
+# already covers the STORE-frame-push-fault case the test exercises.
+# Task #33 (commit-priority arbiter rework) added an additional
+# detection wire `double_fault_now = would_take_exc && inject_active`
+# that catches rob_exc-on-head-during-inject (a different µop-inject
+# fault path) and pulses dbl_fault_fire → debug_stop_manager →
+# debug_ctrl (HALT_REASON bit 8, OFF_DBL_FAULT_PC, OFF_DBL_FAULT_VEC).
+# Both paths converge on cpu_halted=1; tb_top.cpp HALT-detect writes
+# the PASS sentinel on cpu_halted.
+
+# exc_priority_irq_vs_sync — UN-DEFER'd 2026-05-03.  The actual
+# RTL priority is correct (take_exc / sync gates take_irq via
+# !rob_exc).  What was missing was a testbench harness to inject
+# IPL synchronously: cpu_ipl_ext exposed on mac_top + a
+# +ipl=cycle:level plusarg in tb_top.cpp + a per-test args file
+# that cooks the right injection cycle (250 — chosen so the
+# TRAP handler retires its ORDER=1 store before the IRQ is taken
+# at the boundary on the way back to mainline).  See
+# tb/tests/asm/exc_priority_irq_vs_sync.args.
+
+# ---------------------------------------------------------------------
+# IRQ-audit follow-up tests (2026-05-03; docs/irq_audit.md).
+# All gated on (a) +ipl=cycle:level harness landing in tb_top.cpp,
+# AND (b) cpu_ipl_ext exposed on mac_top.v (audit bug #8), AND
+# (c) the corresponding RTL fix landing.  Promote out of DEFER as
+# each fix ships; expect FAIL on the bug and PASS once fixed.
+# ---------------------------------------------------------------------
+
+# irq_during_movem — UN-DEFER'd 2026-05-03.  Audit bug #1 fixed by
+# adding `rob_is_last_uop` gate to take_irq in commit.v — interrupts
+# now defer to instruction (macro) boundaries, not µop boundaries,
+# matching PRM §8.1.1.  The +ipl=200:1 sidecar in
+# tb/tests/asm/irq_during_movem.args drives the harness to actually
+# inject IPL during the MOVEM crack so the gate is exercised.
+# Still PASSes if the .args file is removed (legacy by-construction
+# pass via no-IRQ-injection).
+
+# irq_during_bsr — UN-DEFER'd 2026-05-03 (test-side fixes; passes
+# by-construction without IRQ injection).  The cmpa.l/D2 line 103
+# syntax error was fixed (cmpa requires An destination), and the
+# `_post_bsr` label was relocated to the actual fall-through PC
+# immediately after `bsr _subr` (was at the end of the file, well
+# past _subr — the runtime cmp `RETPC_SNAP == _post_bsr` would
+# always FAIL with the original layout).  The test now PASSes
+# without IPL injection (no IRQ fires).  Note: a +ipl= sidecar
+# would still cause a re-execute-corruption since the rob_is_last_uop
+# gate alone doesn't make BSR re-execution idempotent (A7 predec +
+# memory store is irreversible).  The full fix is to save the
+# fall-through PC instead of the macro PC at IRQ entry — left as
+# a follow-up.
+
+# irq_during_rte — UN-DEFER'd 2026-05-03.  Audit bug #3 fixed.
+# Two RTL changes:
+# (1) exception.v exposes a new `inject_active` continuous output
+#     (= state != S_IDLE).  Wired through m68k_core_commit.vh into
+#     commit.v's take_irq predicate so a fresh IRQ cannot preempt
+#     an in-flight exception entry / RTE pop sequence.  Without
+#     this, take_irq's flush_en squashes the still-pending inject
+#     µops mid-sequence (between take_rte and take_rte_finalize,
+#     arch_sr.I is still the supervisor level so ipl_above_mask
+#     remains true; same hazard in the IRQ-entry inject path).
+# (2) take_irq additionally blocks when the ROB head is a STORE
+#     (rob_is_store=1) so the dedicated store-fire path can pulse
+#     commit_store_en before the IRQ flush; otherwise the LSU
+#     would still be in S_ST_BUF and the flush would discard the
+#     buffered store entirely (S_ST_BUF + flush_en → S_IDLE in
+#     lsu.v).  Two test-side touch-ups: initialise HANDLER_SR=0
+#     so a stale BRAM read can't confuse the no-IRQ branch, and
+#     mask the saved-SR check to the supervisor half (CCR low byte
+#     varies per injection cycle based on which CMP last ran).
+
+# ---------------------------------------------------------------------
+# Partial-macro replay (sync-exception sibling of Bug B) — UN-DEFER'd
+# 2026-05-04.  Path A (atomic-commit cracks via deferred-rat/ccr-commit
+# macro-buffer drain) landed in commit.v.  Both repros now PASS:
+#   - exc_partial_macro_move_mem_mem: silicon-correct A0 += 4 (handler
+#     patches A1 → mapped, retried macro completes cleanly).
+#   - exc_partial_macro_movem_predec: A3 stays unchanged (delta=0 →
+#     Path A "atomic restart" leaves A3 at its pre-macro value when
+#     the handler can't patch the unmapped target).  Test was
+#     widened to accept delta=0 as valid Path-A semantics alongside
+#     the Path-B (silicon continuation) delta=-12.
+#
+# See docs/sync_exc_partial_macro.md for the design.
+
+# stop_wait_for_irq — UN-DEFER'd 2026-05-03.  Audit bug #4 fixed.
+# Decode now emits SYS_STOP carrying imm[15:0] = the 16-bit SR-load
+# value.  Commit retires it as an SR-load + ccr_restore + sets a
+# `stop_pending` latch that gates can_commit until take_irq fires
+# (the IRQ-take path uses can_commit_irq, a relaxed gate that drops
+# the !stop_pending term).  The +ipl=400:1 sidecar in
+# tb/tests/asm/stop_wait_for_irq.args drives the harness to inject
+# IPL=1 well after STOP retires; the test then verifies SR was
+# loaded from imm AND the handler ran in the correct order.
+# decode_uop_assemble.v + commit.v + decode.v.
+
+# prm_trace_t1_before_next — UN-DEFER'd 2026-05-14 (task #34).
+# Fix has three parts:
+#   (a) RTL: add `!trace_pend` to normal-retire + store-retire gates
+#       in commit.v so neither path retires past the traced macro's
+#       last_uop while trace_pend is armed.
+#   (b) RTL: clear arch_sr[15:14] (T1/T0) at take_trace itself (not
+#       at take_finalize).  The inject µops retire through
+#       normal-retire during the entry sequence; with T1 still set
+#       they would re-arm trace_pend mid-inject and the chain would
+#       infinite-loop.  Saved-SR (frame push) captures the pre-trace
+#       SR before this clear so the handler sees T1=1 on the stack.
+#   (c) Test: handler validates COUNTER==1 (proves the second addq
+#       didn't pre-execute) and writes the PASS sentinel from inside
+#       the handler.  Original handler RTE'd back, but RTE returns
+#       to the second addq which then runs (correct PRM behaviour)
+#       and the outer `cmp.l #1, %d0` mis-flags it.  The test isn't
+#       about RTE semantics; it's about trace priority at the macro
+#       boundary.
+#
+# Also re-enables `exc_trace_t1` and `prm_super_eori_sr_sets_t1`
+# which were collateral damage of the same arm-priority bug.

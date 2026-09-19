@@ -1,0 +1,5 @@
+# IPL=1 injected mid A-line handler.  Test completes in ~600 cycles
+# total; A-line trap entry happens around cycle 80, handler NOPs run
+# through ~150.  Cycle 100 lands the IRQ mid-handler so it's pending
+# at the next macro boundary while in supervisor + odd-SP.
++ipl=100:1

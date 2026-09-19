@@ -1,0 +1,16 @@
+# RTL8211F RGMII pinout proven by the rk5-eth physical-link image.
+# Keep the board's PHY-added TX delay: q700_eth_link uses Taxi USE_CLK90=0.
+set_property -dict {PACKAGE_PIN K22 IOSTANDARD LVCMOS18} [get_ports phy_rx_clk]
+set_property -dict {PACKAGE_PIN L24 IOSTANDARD LVCMOS18} [get_ports {phy_rxd[0]}]
+set_property -dict {PACKAGE_PIN L25 IOSTANDARD LVCMOS18} [get_ports {phy_rxd[1]}]
+set_property -dict {PACKAGE_PIN K25 IOSTANDARD LVCMOS18} [get_ports {phy_rxd[2]}]
+set_property -dict {PACKAGE_PIN K26 IOSTANDARD LVCMOS18} [get_ports {phy_rxd[3]}]
+set_property -dict {PACKAGE_PIN K23 IOSTANDARD LVCMOS18} [get_ports phy_rx_ctl]
+set_property -dict {PACKAGE_PIN M25 IOSTANDARD LVCMOS18 SLEW FAST DRIVE 12} [get_ports phy_tx_clk]
+set_property -dict {PACKAGE_PIN L23 IOSTANDARD LVCMOS18 SLEW FAST DRIVE 12} [get_ports {phy_txd[0]}]
+set_property -dict {PACKAGE_PIN L22 IOSTANDARD LVCMOS18 SLEW FAST DRIVE 12} [get_ports {phy_txd[1]}]
+set_property -dict {PACKAGE_PIN L20 IOSTANDARD LVCMOS18 SLEW FAST DRIVE 12} [get_ports {phy_txd[2]}]
+set_property -dict {PACKAGE_PIN K20 IOSTANDARD LVCMOS18 SLEW FAST DRIVE 12} [get_ports {phy_txd[3]}]
+set_property -dict {PACKAGE_PIN M26 IOSTANDARD LVCMOS18 SLEW FAST DRIVE 12} [get_ports phy_tx_ctl]
+create_clock -period 8.000 -name phy_rx_clk [get_ports phy_rx_clk]
+set_property UNAVAILABLE_DURING_CALIBRATION TRUE [get_ports {phy_txd[1]}]

@@ -1,0 +1,10 @@
+# Per-test plusargs for stop_wait_for_irq.
+#
+# This test exercises audit bug #4 — STOP #imm should load SR from the
+# immediate and halt the pipeline until an IRQ ≥ new SR.IPL fires.
+# Without IPL injection, the test would FAIL_NOIRQ (handler never
+# runs).  Inject IPL=1 at cycle 400 — well after the STOP retires
+# (which takes ~250 cycles in this small test) but before the
+# 200k-cycle timeout.  STOP loads SR=0x2000 (IPL=0), so IPL=1 is
+# above-mask and fires take_irq.
++ipl=400:1

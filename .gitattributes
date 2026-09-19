@@ -1,0 +1,11 @@
+# Private development journals/coordination are not part of source snapshots.
+# This affects git archive only; it does NOT sanitize a normal Git push.
+/.claude export-ignore
+/CLAUDE.md export-ignore
+/docs/BUG_calibration_word_misplaced_0d00.md export-ignore
+/docs/handoff_shutdown_check_frontier.md export-ignore
+/docs/handoff_2026_08_20.md export-ignore
+/docs/branch_triage.md export-ignore
+/docs/wip_branches.md export-ignore
+/docs/release_audit.md export-ignore
+/docs/evidence export-ignore

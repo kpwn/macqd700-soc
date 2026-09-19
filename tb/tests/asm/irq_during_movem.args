@@ -1,0 +1,13 @@
+# Per-test plusargs for irq_during_movem.
+#
+# This test exercises audit bug #1 (IRQ at sub-µop boundary inside a
+# MOVEM crack).  Without IPL injection the test passes by-construction
+# (the MOVEM completes without IRQ ever firing).  With +ipl= the test
+# actually exercises the bug — the rob_is_last_uop gate on take_irq
+# (added in this commit) defers the IRQ to the post-MOVEM boundary so
+# no µop gets squashed mid-crack.
+#
+# Inject IPL=1 at cycle 200 — well inside MOVEM's store µop sequence
+# but before the finalize µop retires.  With the fix landed the IRQ
+# is held off until MOVEM completes.
++ipl=200:1

@@ -1,0 +1,76 @@
+# lowmem.syms — classic Mac OS low-memory globals used by this project's
+# debugging (and the FPGA debugger).
+#
+# Correctness-over-coverage: every entry below has its address AND byte
+# WIDTH checked against this project's own live-hardware/ROM-disassembly
+# notes (the debugger uses the width to decide whether to read 1, 2 or 4
+# bytes).  Anything I could not independently confirm a width for is left
+# out — see the omission list at the end of this file, which a human
+# should extend from a real Mac OS low-memory-global reference.
+#
+# Region: the classic low-memory-global page.  Kept BELOW macos_q700.syms's
+# "lowram" region (which starts at 0x1000) so the two regions never
+# overlap.
+region lowmem 00000000 00001000 :data
+
+# --- Mouse / cursor ------------------------------------------------------
+0828  MTemp        4  :data ; low-level interrupt mouse location (verbatim task spec)
+082C  RawMouse      4  :data ; raw (unclamped) mouse location
+0830  Mouse         4  :data ; cooked mouse location (screen coords)
+08CE  CrsrNew       1  :data ; cursor-needs-redraw flag; consumed by JCrsrTask
+08CF  CrsrCouple    1  :data ; cursor coupled to mouse-tracking flag; also used by the System Error handler to couple the cursor for the modal click [project_system_error_bomb_dialog_2026_07_25.md]
+08EE  JCrsrTask     4  :data ; cursor-task jump vector; ROM-verified target is 0x4082DF94 (see macos_q700.syms _JCrsrTaskRoutine) [project_spurious_level1_irq_storm_2026_07_25.md, project_via2_ca1_slot_irq_dead_2026_07_25.md, project_swapmmumode_rob_head_wedge_2026_07_25.md]
+
+# --- System state / error --------------------------------------------------
+0172  MBState       1  :data ; mouse-button state; also the wait-for-click test in the System Error modal loop (tst.b $0172/bne) [project_system_error_bomb_dialog_2026_07_25.md]
+0AF0  DSErrCode     2  :data ; System Error code (the bomb-dialog number). ROM clears it with clr.b (top byte only, error codes are small) but a live 32-bit read at $0AF0 returning 0x00280000 (high word = 0x0028 = dsGreeting) confirms it is read back as a WORD [project_system_error_bomb_dialog_2026_07_25.md, project_via2_cb2_interrupt_hang_2026_07_22.md, project_two_failures_are_one_root_cause_2026_07_25.md]
+03F8  DSAlertRect   8  :data ; System Error alert's Rect (4 words: top/left/bottom/right); source of the alert's double-frame draw [project_system_error_bomb_dialog_2026_07_25.md]
+
+# --- File System / Deferred Task queues ------------------------------------
+0360  FSQHdr        2  :data ; File System busy-lock/queue-state qFlags word (bit0=busy lock, bit1=_SCSIDispatch error, bit2=deferred-task-installed guard) [project_finder_event_loop_reached_2026_07_26.md]
+0362  FSQHead       4  :data ; File System request queue head
+0366  FSQTail       4  :data ; File System request queue tail
+0D92  DTQueue       2  :data ; Deferred Task queue qFlags word (bit6 = "DT dispatch in progress") [project_vbl_guard_strands_deferred_tasks_2026_07_26.md]
+0D94  DTQHead       4  :data ; Deferred Task queue head
+0D98  DTQTail       4  :data ; Deferred Task queue tail
+0D9C  JDTInstall    4  :data ; _DTInstall jump vector
+
+# --- VBL --------------------------------------------------------------------
+016A  Ticks         4  :data ; tick counter, incremented at 60 Hz by the VBL (VIA1 CA1) handler BEFORE it even tests the VBL guard bit -- so Ticks advancing is NOT proof the VBL queue is being walked [project_vbl_guard_strands_deferred_tasks_2026_07_26.md]
+0160  VBLQueue     10  :data ; VBL queue header (QHdr: qFlags word + qHead long + qTail long). qFlags bit 6 is the VBL-queue-walk guard: set at ROM 0x4080A2A0, cleared ONLY at ROM 0x4080A2F4 -- see macos_q700.syms _VBLGuardSet/_VBLGuardRelease. A stranded guard here silently stalls every deferred task in the machine [project_vbl_guard_strands_deferred_tasks_2026_07_26.md]
+
+# --- Event Manager ------------------------------------------------------------
+014A  EventQueue   10  :data ; main event queue header (QHdr, same shape as VBLQueue); walked by the Event Manager main loop at ROM 0x4080B418 [project_finder_event_loop_reached_2026_07_26.md]
+
+# --- VIA / video --------------------------------------------------------------
+01D4  VIA           4  :data ; pointer to the VIA1 base address (0x50F00000 on this platform). This is what the ROM's OWN level-1 IRQ handler dispatches through (0x40809BC0: moveal 0x1d4,a1) -- always read the base from here, not by analogy with VIA2's fixed 0x50002000 [project_spurious_level1_irq_storm_2026_07_25.md]
+0824  ScrnBase      4  :data ; main screen base address (0xF9001000 on this platform) [project_finder_event_loop_reached_2026_07_26.md, project_scsi_drq_stuck_wedges_via2_dispatcher_2026_07_25.md]
+0106  ScreenRow     2  :data ; main screen rowBytes (1024 on this platform) [project_finder_event_loop_reached_2026_07_26.md, project_scsi_drq_stuck_wedges_via2_dispatcher_2026_07_25.md]
+
+# --- Device Manager unit table --------------------------------------------
+# These two are the only entries in this file placed by ADJACENCY rather than
+# by a direct observation in a project note, so the reasoning is spelled out.
+#
+# The doc-verified anchors are VIA $01D4 (read straight out of the ROM's own
+# level-1 dispatcher, above) and, in the earlier block, ScreenRow $0106 /
+# EventQueue $014A / VBLQueue $0160 / Ticks $016A.  All five sit exactly where
+# the classic low-memory map puts them, which pins that map to this ROM at
+# five independent points.  In that same map Lvl2DT (32 bytes) ends at $01D2,
+# so UnitNtryCnt is the word immediately before the doc-verified VIA pointer,
+# and TheZone/UTableBase are the longs at $0118/$011C -- i.e. the $0118
+# recollection that kept UTableBase out of this file was TheZone, one slot
+# earlier.
+#
+# `monitor dce` validates what it finds: a zero or odd unit-table pointer is
+# reported as unusable rather than walked, so a wrong address here fails
+# loudly instead of printing plausible garbage.
+01D2  UnitNtryCnt   2  :data ; count of entries in the Device Manager unit table; the word immediately preceding the doc-verified VIA pointer at $01D4
+011C  UTableBase    4  :data ; base of the Device Manager unit table (array of Handles to DCEs, indexed by unit number; refNum = ~unitNum). Placed by adjacency -- see the note above
+
+# ── Deliberately OMITTED (could not confirm address/width; add later) ──
+#
+# The following well-known globals were considered but are NOT included
+# because I could not find a project note (or hold high enough confidence
+# from memory alone) pinning down both the exact address and byte width:
+#   MemTop, BufPtr, SysZone, ApplZone, HeapEnd, ROMBase, RAMBase,
+#   SysEvtMask, KeyMap, SCCRd, SCCWr, SCSIBase, SysVersion, CurApName

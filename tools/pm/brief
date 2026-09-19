@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# tools/pm/brief — emit a standardized sub-agent brief template to stdout.
+#
+# Usage: tools/pm/brief <task-id> <track> <subject>
+#   <track> ∈ core | peripheral | platform | testing
+# PM pipes output into Agent prompt parameter, fills <SCOPE>/<GATES>/<REPORT>.
+
+set -euo pipefail
+
+PROG="${0##*/}"
+usage() {
+    echo "usage: $PROG <task-id> <track> <subject>"
+    echo "  <track> ∈ {core, peripheral, platform, testing}"
+    echo "  emits an agent-brief template to stdout with boilerplate prefilled."
+}
+
+[ $# -eq 0 ] && { usage >&2; exit 1; }
+case "$1" in -h|--help) usage; exit 0 ;; esac
+[ $# -lt 3 ] && { usage >&2; exit 1; }
+
+TASK_ID="$1"
+TRACK="$2"
+shift 2
+SUBJECT="$*"
+
+case "$TRACK" in
+    core|peripheral|platform|testing) : ;;
+    *) echo "$PROG: unknown track '$TRACK' (want core|peripheral|platform|testing)" >&2; exit 1 ;;
+esac
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# --- recently-touched files on main (1h) for "forbidden files" boilerplate
+cd "$REPO_ROOT"
+live_files=$(git log --since='1 hour ago' --name-only --pretty=format: 2>/dev/null \
+    | grep -vE '^$' | sort -u | head -15)
+
+cat <<EOF
+You are an m68k-ooo sub-agent on the **${TRACK}** track.
+
+**Read first** (in this order):
+1. \`docs/agent_policy.md\` — shared invariants (~600 tokens).
+2. \`docs/tracks/${TRACK}.md\` — your track brief.
+Do NOT read \`CLAUDE.md\`; the policy + track docs are sufficient.
+
+---
+
+**Task ${TASK_ID}: ${SUBJECT}**
+
+<SCOPE>
+  - Describe the surgical change and its ONE-LINE motivation.
+  - List modules you expect to touch.
+  - Note explicit non-goals (e.g. "no synth", "no decode changes").
+</SCOPE>
+
+<GATES>
+  - \`make test\` — list specific new-test names to grep for in the PASS list.
+  - \`make fuzz N=200\` — must report PASS=200 MISMATCH=0 TIMEOUT=0.
+  - \`make tb-<module>\` — relevant unit tb must pass.
+  - \`make lint\` — 0 warnings on main, must remain 0.
+  - No synth. No impl. Do not touch \`/var/tmp/m68k-ooo-vivado.lock\`.
+</GATES>
+
+<REPORT>
+  ≤300 words, covering:
+  - Files + rough LoC changed.
+  - Gate results by NAME (not just counts) — grep-verified.
+  - Honest caveats — "should work" is not a number.
+  - Follow-up tasks worth filing.
+</REPORT>
+
+---
+
+## Concurrency notes (currently-touched files on main, last 1h)
+
+These are the files PM has recently merged to main — ASSUME a concurrent
+agent may still be working in adjacent areas. Prefer to stay out of them
+unless your scope explicitly requires them; if you must touch them, rebase
+before merge and expect PM to mediate any conflict:
+
+EOF
+
+if [ -n "$live_files" ]; then
+    echo "$live_files" | sed 's/^/  /'
+else
+    echo "  (none in last 1h)"
+fi
+
+cat <<'EOF'
+
+## Branch + build discipline
+
+- Work on your OWN worktree branch (the harness already put you on one).
+- Build in an ISOLATED dir: `rsync -a --delete --exclude='.git'
+  --exclude='build' --exclude='.claude/worktrees' ./ /tmp/<your-task>-build/`
+  then `cd /tmp/<your-task>-build && MAKEFLAGS="-j1" make sim`.
+- DO NOT push to main. DO NOT run `git merge` from a worktree (targets the
+  wrong branch — a known PM footgun).
+- Commit on your branch; PM will merge.
+- Co-Authored-By footer ONLY if this brief explicitly asks for it.
+
+## Budget
+
+- Report back within 300 words.
+- If scope needs to cross tracks, STOP and ask PM — do not auto-expand.
+EOF

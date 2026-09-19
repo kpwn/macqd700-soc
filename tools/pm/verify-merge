@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# tools/pm/verify-merge — pre-merge safety checks for a worktree branch.
+#
+# Usage: tools/pm/verify-merge <branch>
+#   - Confirms current shell cwd is the main repo on branch 'main'.
+#   - Shows the SINGLE commit diff vs the branch's parent.
+#   - Lists files touched by that single commit.
+#   - Warns on overlap with files touched in the last 3 main commits.
+#   - Exit 0 if safe to merge, 1 if overlap/conflict risk.
+
+set -uo pipefail
+
+PROG="${0##*/}"
+MAIN_REPO="/home/qwertyoruiop/m68k-ooo"
+
+usage() {
+    echo "usage: $PROG <branch>"
+    echo "  safety-check a worktree branch before merging to main."
+}
+
+[ $# -eq 0 ] && { usage >&2; exit 1; }
+case "$1" in -h|--help) usage; exit 0 ;; esac
+BRANCH="$1"
+
+# --- 1. cwd must be main repo, branch main ------------------------------
+cd "$MAIN_REPO" 2>/dev/null || { echo "$PROG: cannot cd $MAIN_REPO" >&2; exit 1; }
+cur_branch=$(git branch --show-current 2>/dev/null || echo "?")
+if [ "$cur_branch" != "main" ]; then
+    echo "FAIL: main repo cwd is on branch '$cur_branch', expected 'main'" >&2
+    exit 1
+fi
+echo "[ok] cwd=$MAIN_REPO  branch=main"
+
+# --- 2. branch must exist -----------------------------------------------
+if ! git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
+    echo "FAIL: branch '$BRANCH' not found" >&2
+    exit 1
+fi
+
+# --- 3. single commit on the branch? ------------------------------------
+# find fork-point vs main
+fork=$(git merge-base main "$BRANCH" 2>/dev/null || true)
+if [ -z "$fork" ]; then
+    echo "FAIL: no merge-base between main and $BRANCH" >&2
+    exit 1
+fi
+
+n_commits=$(git rev-list --count "$fork..$BRANCH" 2>/dev/null || echo 0)
+echo "[info] branch has $n_commits commit(s) ahead of fork ($fork)"
+if [ "$n_commits" -eq 0 ]; then
+    echo "FAIL: branch has no commits ahead of main" >&2
+    exit 1
+fi
+
+# --- 4. show the commit(s) + their diff ---------------------------------
+echo "--- commit log ($BRANCH vs $fork) ---"
+git log --oneline "$fork..$BRANCH"
+
+echo "--- files touched on $BRANCH ---"
+branch_files=$(git diff --name-only "$fork..$BRANCH")
+if [ -z "$branch_files" ]; then
+    echo "FAIL: no file changes in $BRANCH diff" >&2
+    exit 1
+fi
+echo "$branch_files"
+
+# --- 5. overlap with last 3 main commits --------------------------------
+echo "--- last 3 main commits ---"
+git log -3 --oneline main
+
+main_files=$(git log -3 --name-only --pretty=format: main 2>/dev/null | \
+    grep -vE '^$' | sort -u)
+
+overlap=$(comm -12 <(printf '%s\n' "$branch_files" | sort -u) \
+                   <(printf '%s\n' "$main_files"   | sort -u) 2>/dev/null || true)
+
+if [ -n "$overlap" ]; then
+    echo "WARN: overlap with recent main commits — merge may conflict:"
+    printf '%s\n' "$overlap" | sed 's/^/  !! /'
+    # still show full diff so PM can decide
+    echo "--- diff (summary) ---"
+    git diff --stat "$fork..$BRANCH" | tail -20
+    exit 1
+fi
+
+echo "[ok] no overlap with last 3 main commits"
+echo "--- diff (summary) ---"
+git diff --stat "$fork..$BRANCH" | tail -20
+echo "[ok] safe to merge"
+exit 0

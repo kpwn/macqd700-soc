@@ -1,0 +1,15 @@
+# Per-test plusargs for exc_irq_ccr_settle.
+#
+# Inject a level-1 IRQ at cycle 83.  This is timing-tuned so the IRQ
+# arms at the CMP -> BCS boundary and take_irq_fire_q samples the CCR
+# in the CMP's commit-settle window.  On a pre-fix build the race
+# window is +ipl cycles 82..84 (verified by sweep); 83 is the centre.
+#
+# If front-end latency shifts and the IRQ stops landing on that
+# boundary the test will false-PASS — re-tune by sweeping +ipl and
+# finding the cycle that FAILs on a build without the
+# ccr_settle_in_flight gate.  The +irq_at_cycle ROM repro
+# (docs / task #41) is the authoritative cross-check.
+#
+# +ipl=cycle:level — single-shot IPL pulse, cleared on cpu_ipl_ack.
++ipl=83:1

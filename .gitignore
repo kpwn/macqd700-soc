@@ -1,0 +1,82 @@
+build/
+
+# Simulation outputs
+*.fst
+*.fst.hier
+*.vcd
+sim.log
+cfg/
+nvram/
+snap/
+
+# Vivado
+synth/timing_reports/*.rpt
+*.jou
+*.log
+vivado_*.backup.jou
+vivado_*.backup.log
+.Xil/
+.tmpCRC/
+iter_*_CongestedCLBsAndNets.txt
+tight_setup_hold_pins.txt
+*_CongestedCLBsAndNets.txt
+FinalUnmatchedCellsToUnplace.txt
+clockInfo.txt
+cong/
+
+# Live-capture stills/video (regenerable via tools/fpga_video_capture.sh)
+captures/
+
+# Agent scratch/worktrees
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+
+# OS
+.DS_Store
+._*
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Apple-copyrighted firmware blobs — not redistributable, must not enter
+# a public release. Currently tracked in this working repo (see
+# docs/release_audit.md Sev-1); this entry is forward-looking prep for
+# the fresh no-history publish and has no effect on already-tracked
+# files. See files/README.md (to be added at publish time) for
+# provenance, expected checksums, and where to source your own copy.
+files/420dbff3.rom
+files/342s0440-b.bin
+files/pmuv2.bin
+
+# ── 2026-09-12 pre-publication sweep ────────────────────────────────────────
+# COPYRIGHTED FIRMWARE — never track these. They are Apple's, not ours:
+#   files/420dbff3.rom    Quadra 700 ROM (1 MB)
+#   files/pmuv2.bin       PMU firmware ("Copyright Apple Computer Inc 1987-1990")
+#   files/342s0440-b.bin  ADB modem ROM
+# They were stripped from history on 2026-09-12. Supply your own dumps, exactly
+# as MAME requires you to; see README.md ("ROMs you must supply").
+files/*.rom
+files/342s0440-b.bin
+files/pmuv2.bin
+*.rom
+# Generated from the user's ADB dump, never a redistributable RTL source.
+/rtl/mac/adb_pic_fw.hex
+*.bit
+*.ltx
+*.dcp
+*.mcs
+*.prm
+
+# Build artifacts, at any depth. build_early_vipt/ (a whole Verilator output
+# tree, 395 MB including two ~116 MB precompiled headers) had been committed
+# and was the bulk of a 2.2 GB .git. Stripped 2026-09-12; these stop a repeat.
+build_early_vipt/
+*.o
+*.d
+*.gch
+*.a
+*.out
+*.stdout
+logs/

@@ -1,0 +1,8 @@
+# Per-test plusargs for move_a7_a7_with_irq.
+#
+# Inject level-1 IRQ at the MOVE.L (A7),A7 commit window.  The exact
+# cycle depends on front-end + LSU latency; pick a value tuned to land
+# in the post-MOVE.L-commit / pre-RTS-AGU window.  Sweep range during
+# tuning: cycles 80..200 typically cover that boundary at default
+# pipeline params.
++ipl=120:1

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# tools/pm/summarize-fuzz-fails — one-line summary per BUG_*.md under tb/fuzz_fails/.
+#
+# Usage: tools/pm/summarize-fuzz-fails [fuzz-fails-dir]
+# Prints a columnar table: NAME | SYMPTOM | TASK-ID (if present).
+
+set -euo pipefail
+
+PROG="${0##*/}"
+usage() {
+    echo "usage: $PROG [dir]"
+    echo "  summarize BUG_*.md files under tb/fuzz_fails/ (or given dir)."
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+DIR="${1:-$REPO_ROOT/tb/fuzz_fails}"
+
+if [ ! -d "$DIR" ]; then
+    echo "$PROG: no such dir $DIR" >&2
+    exit 1
+fi
+
+files=$(ls "$DIR"/BUG_*.md 2>/dev/null || true)
+if [ -z "$files" ]; then
+    echo "(no BUG_*.md files in $DIR)"
+    exit 0
+fi
+
+# Emit header
+printf '%-52s  %-66s  %s\n' "BUG" "SYMPTOM" "TASK"
+printf '%-52s  %-66s  %s\n' "---" "-------" "----"
+
+for f in $files; do
+    name=$(basename "$f" .md)
+    name=${name#BUG_}
+    # symptom: first non-header non-blank line under "## Summary"
+    symptom=$(awk '
+        /^## *Summary/ {in_sum=1; next}
+        in_sum && /^## / {exit}
+        in_sum && NF {print; exit}
+    ' "$f" 2>/dev/null | tr -s ' ' | cut -c1-66)
+    [ -z "$symptom" ] && symptom=$(head -1 "$f" | sed 's/^# *//' | cut -c1-66)
+    # task id: look for "task #NNN" or "Task #NNN" anywhere
+    task=$(grep -oE -i 'task[ ]*#?[0-9]+' "$f" 2>/dev/null | head -1 || true)
+    [ -z "$task" ] && task="-"
+    # truncate name
+    shortname=$(echo "$name" | cut -c1-52)
+    printf '%-52s  %-66s  %s\n' "$shortname" "$symptom" "$task"
+done
+
+n=$(echo "$files" | wc -w)
+echo ""
+echo "$n open bug repro(s) under $DIR"

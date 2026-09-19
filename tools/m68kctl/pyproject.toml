@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "m68kctl"
+version = "0.1.0"
+description = "Host-side control and debug CLI for the m68k-ooo FPGA target"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "m68k-ooo host-infra agent" }]
+dependencies = []
+
+[project.scripts]
+m68kctl = "m68kctl.cli:main"
+
+[tool.setuptools]
+packages = ["m68kctl"]
+package-dir = { m68kctl = "." }

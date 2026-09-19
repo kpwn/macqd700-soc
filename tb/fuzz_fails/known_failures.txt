@@ -1,0 +1,20 @@
+# Known-failing seeds excluded from `make fuzz-deep`.
+# Each entry MUST link to an OPEN BUG_md.  Once the underlying RTL bug
+# is fixed, remove the entry — the deep-fuzz gate will then re-include
+# the seed and re-validate the fix automatically on the next run.
+#
+# Format: one seed per line; comments after `#` allowed.
+#
+# When adding a new entry: capture the .s/.bin/.rtl.txt/.musashi.txt
+# files alongside under tb/fuzz_fails/seed_<NNNN>.* and write a
+# BUG_md describing the symptom + hypothesis.
+
+# 2026-05-20 — dual brief-indexed MOVE.L with disp=0/scale=1 corner.
+# See BUG_seed_999_1391_move_idx_idx_disp0_scale1_long.md.  Both seeds
+# hit the same `.word 0x21b1, 0x2000, 0x2000` instruction
+# (MOVE.L (0,An,Dn.W*1),(0,Am,Dn.W*1)).  Crack from commit 50fd5abf
+# handles dual-indexed MOVE.B/W with non-zero scales correctly, but
+# drops the STORE in this corner.  Bisect: 476fcdca → vec-4 (no crack),
+# 50fd5abf+ → store dropped (partial crack).  Fix tracked in the MD.
+999
+1391
