@@ -89,6 +89,10 @@ static int pb_phase_ns = 0;
 static int core_phase = 0;
 static int core_phase_ns = 0;
 static int initial_pb_offset_ns = 0;
+// Synthetic card profiles, specified in SPI byte polls, not host wall time.
+static int card_command_gap_bytes = 0;
+static int card_interblock_gap_bytes = 0;
+static int card_write_busy_bytes = 4;
 
 // ─────────────────────────────────────────────────────────────────────
 // Host-side SD card model (driven on the SPI pin interface)
@@ -237,6 +241,8 @@ struct SdCard {
                        ((uint32_t)mosi_frame[2] << 16) |
                        ((uint32_t)mosi_frame[3] <<  8) |
                        ((uint32_t)mosi_frame[4]);
+        if (cmd == 17 || cmd == 18 || cmd == 24 || cmd == 25)
+            for (int i = 0; i < card_command_gap_bytes; ++i) push(0xFF);
         switch (cmd) {
             case 17:    // READ_SINGLE_BLOCK
                 push(0xFF);
@@ -310,7 +316,7 @@ struct SdCard {
                     // observe_mosi() saw the completed token.  The next byte
                     // is therefore the first busy poll and must come from
                     // w_busy_ticks, not from a queued idle byte.
-                    w_busy_ticks = 4;
+                    w_busy_ticks = card_write_busy_bytes;
                     wstate = W_BUSY;
                     w_expected_cmd = 0;
                     w_multiblock = false;
@@ -650,6 +656,8 @@ static void apply_reset() {
 
     // Reset internal state of host-side SD card and SPI observer
     sd = SdCard();
+    sd.slow_gap_bytes = card_interblock_gap_bytes;
+    sd.gap_left = card_interblock_gap_bytes;
     spi = SpiObs();
 
     run_ns(200);   // ample for both clocks
@@ -1689,6 +1697,26 @@ static bool c20_c96_read_clock_phase_sweep() {
     return true;
 }
 
+static bool c21_c96_card_latency_profiles() {
+    bool ok = true;
+    for (int command_gap : {512, 4096}) {
+        card_command_gap_bytes = command_gap;
+        card_interblock_gap_bytes = 128;
+        card_write_busy_bytes = 4096;
+        std::printf("[CARD] command_gap_bytes=%d interblock_gap_bytes=%d write_busy_bytes=%d\n",
+                    card_command_gap_bytes, card_interblock_gap_bytes, card_write_busy_bytes);
+        // Cold, cached and long reads, plus a fully acknowledged write.
+        // The fast-card throughput budget deliberately does not apply here.
+        ok = c96_read10_measured(2) && c96_read10_measured(2, false) &&
+             c96_read10_measured(32) &&
+             c96_write10_multi(900, 4, 16, -1, 0, "latency-profile");
+        if (!ok) break;
+    }
+    card_command_gap_bytes = card_interblock_gap_bytes = 0;
+    card_write_busy_bytes = 4;
+    return ok;
+}
+
 // c2 — RED-A (Bug 1, producer overruns the ring).
 //      WRITE(10) LBA 200, 4 blocks (one CMD25), 2048 bytes pushed as
 //      fast as the DRQ gate allows.  The initiator moves a byte every
@@ -2041,6 +2069,7 @@ int main(int argc, char** argv) {
     RUN(c1_c96_read10_2blocks_control);
     RUN(c19_c96_read_performance);
     RUN(c20_c96_read_clock_phase_sweep);
+    RUN(c21_c96_card_latency_profiles);
     RUN(c2_c96_write10_4blocks_full_tilt);
     RUN(c3_c96_write10_4blocks_stall_mid_block2);
     RUN(c4_c96_write6_2blocks_nondma);

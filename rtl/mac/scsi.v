@@ -1310,9 +1310,14 @@ module scsi #(
     // legitimate mid-stream inter-byte gap (sd_ctrl's own per-block token
     // timeouts bound a slow-but-clocking card); only a fully stalled
     // supply reaches it.  Shortened under Verilator so the repro exercises
-    // the recovery path within a test's tick budget.
+    // the recovery path within a test's tick budget. Performance/card-latency
+    // simulations define SCSI_REAL_TIMEOUTS to retain the hardware bound.
 `ifdef VERILATOR
+`ifdef SCSI_REAL_TIMEOUTS
+    localparam [23:0] VH_STUCK_TIMEOUT = 24'd8_000_000;
+`else
     localparam [23:0] VH_STUCK_TIMEOUT = 24'd50000;
+`endif
 `else
     localparam [23:0] VH_STUCK_TIMEOUT = 24'd8_000_000;   // ~160 ms @50 MHz
 `endif
