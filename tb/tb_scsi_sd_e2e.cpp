@@ -88,6 +88,7 @@ static int pb_phase = 0;
 static int pb_phase_ns = 0;
 static int core_phase = 0;
 static int core_phase_ns = 0;
+static int initial_pb_offset_ns = 0;
 
 // ─────────────────────────────────────────────────────────────────────
 // Host-side SD card model (driven on the SPI pin interface)
@@ -217,9 +218,16 @@ struct SdCard {
         push(0xFF);
         push(0xFE);
         auto data = sector_for(lba);
+        uint16_t crc = 0;
+        for (auto b : data) {
+            crc ^= uint16_t(b) << 8;
+            for (int bit = 0; bit < 8; ++bit)
+                crc = (crc & 0x8000) ? uint16_t((crc << 1) ^ 0x1021)
+                                     : uint16_t(crc << 1);
+        }
         for (auto b : data) push(b);
-        push(0x00);
-        push(0x00);
+        push(uint8_t(crc >> 8));
+        push(uint8_t(crc));
     }
 
     void handle_cmd_frame() {
@@ -635,7 +643,9 @@ static void apply_reset() {
     dut->pb_rd     = 0;
     dut->spi_miso  = 1;
 
-    pb_phase = 0; pb_phase_ns = 0;
+    pb_phase = initial_pb_offset_ns / PB_HALF_NS;
+    pb_phase_ns = initial_pb_offset_ns % PB_HALF_NS;
+    dut->pb_clk = pb_phase;
     core_phase = 0; core_phase_ns = 0;
 
     // Reset internal state of host-side SD card and SPI observer
@@ -1591,32 +1601,35 @@ static bool c17_c96_write10_3blocks_provider_fails_first_block() {
 //      identical C96 + pseudo-DMA front end.  If this fails, the harness
 //      cannot see the target at all and every write result below is
 //      meaningless.
-static bool c1_c96_read10_2blocks_control() {
-    apply_reset();
-    std::vector<std::vector<uint8_t>> blks(2, std::vector<uint8_t>(512));
-    for (int b = 0; b < 2; b++) {
+static bool c96_read10_measured(int blocks, bool reset = true) {
+    if (reset) apply_reset();
+    std::vector<std::vector<uint8_t>> blks(blocks, std::vector<uint8_t>(512));
+    for (int b = 0; b < blocks; b++) {
         for (int i = 0; i < 512; i++)
             blks[b][i] = (uint8_t)((b << 5) ^ (i * 7) ^ 0x3C);
         preload_sd_lba(SD_LBA_BIAS + 300 + b, blks[b]);
     }
     const uint8_t cdb[10] = {0x28, 0x00, 0x00, 0x00, 0x01, 0x2C,
-                             0x00, 0x00, 0x02, 0x00};
+                             0x00, uint8_t(blocks >> 8), uint8_t(blocks), 0x00};
+    const uint64_t start = sim_time;
+    uint64_t first_byte = 0;
     CHECK_TRUE("c1: select", c96_select_with_cdb(cdb, 10));
     CHECK_EQ("c1: post-select phase = DATA IN", reg_r(0x4) & 0x07, 0x01);
 
-    std::vector<uint8_t> got(1024, 0);
-    for (int off = 0; off < 1024; off += 16) {
+    std::vector<uint8_t> got(blocks * 512, 0);
+    for (int off = 0; off < blocks * 512; off += 16) {
         reg_w(0x0, 0x10);
         reg_w(0x1, 0x00);
         reg_w(0x3, 0x80 | CI_XFER);
         for (int i = 0; i < 16; i++) {
             CHECK_TRUE("c1: DRQ for in byte", c96_wait_drq());
             got[off + i] = shim_r();
+            if (off == 0 && i == 0) first_byte = sim_time;
         }
         CHECK_TRUE("c1: in chunk completes", c96_wait_intr());
         (void)reg_r(0x5);
     }
-    for (int b = 0; b < 2; b++) {
+    for (int b = 0; b < blocks; b++) {
         for (int i = 0; i < 512; i++) {
             if (got[b * 512 + i] != blks[b][i]) {
                 std::printf("  FAIL c1: blk%d byte%d got=0x%02x want=0x%02x\n",
@@ -1628,6 +1641,38 @@ static bool c1_c96_read10_2blocks_control() {
     uint8_t status = 0xFF, msg = 0xFF;
     CHECK_TRUE("c1: finish", c96_finish(status, msg));
     CHECK_EQ("c1: status GOOD", status, 0x00);
+    std::printf("[PERF] READ10 blocks=%d reset=%d first_us=%.3f total_us=%.3f MBps=%.3f\n",
+                blocks, reset, (first_byte - start) / 1000.0,
+                (sim_time - start) / 1000.0,
+                blocks * 512.0 * 1000.0 / (sim_time - start));
+    return true;
+}
+
+static bool c1_c96_read10_2blocks_control() {
+    return c96_read10_measured(2);
+}
+
+static bool c19_c96_read_performance() {
+    for (int blocks : {1, 2, 8, 32, 64}) {
+        if (!c96_read10_measured(blocks)) return false;
+        // Same extent again: covers cached data, fill-in-progress and bypass.
+        if (!c96_read10_measured(blocks, false)) return false;
+    }
+    return true;
+}
+
+static bool c20_c96_read_clock_phase_sweep() {
+    // Vary the 50 MHz sampling phase across an entire period. This checks
+    // deterministic CDC delivery; it does not simulate metastability.
+    for (int offset = 0; offset < 2 * PB_HALF_NS; ++offset) {
+        initial_pb_offset_ns = offset;
+        if (!c96_read10_measured(8)) {
+            std::printf("  FAIL read CDC at pb offset %d ns\n", offset);
+            initial_pb_offset_ns = 0;
+            return false;
+        }
+    }
+    initial_pb_offset_ns = 0;
     return true;
 }
 
@@ -1968,7 +2013,9 @@ static bool s12_read10_cmd18_starved_supply() {
 }
 
 #define RUN(fn) do {                                                          \
+    const uint64_t start_ns = sim_time;                                       \
     bool ok = fn();                                                           \
+    std::printf("[TIME] " #fn " %.3f us\n", (sim_time - start_ns) / 1000.0); \
     if (ok) { std::printf("[PASS] " #fn "\n"); n_pass++; }                    \
     else    { std::printf("[FAIL] " #fn "\n"); n_fail++; }                    \
 } while (0)
@@ -1979,6 +2026,8 @@ int main(int argc, char** argv) {
 
 #ifdef SCSI_E2E_C96
     RUN(c1_c96_read10_2blocks_control);
+    RUN(c19_c96_read_performance);
+    RUN(c20_c96_read_clock_phase_sweep);
     RUN(c2_c96_write10_4blocks_full_tilt);
     RUN(c3_c96_write10_4blocks_stall_mid_block2);
     RUN(c4_c96_write6_2blocks_nondma);

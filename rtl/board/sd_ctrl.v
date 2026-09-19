@@ -179,7 +179,11 @@ module sd_ctrl #(
     // fully closed CMD24 per block.  The SCSI volume enables this so a reset
     // or producer failure cannot strand later traffic inside CMD25.  The
     // staged and verified provisioning path retains CMD25 throughput.
-    parameter integer MULTI_WRITE_AS_CMD24 = 0
+    parameter integer MULTI_WRITE_AS_CMD24 = 0,
+    // Read replay spacing in core clocks (1..63). Callers using a toggle
+    // CDC must keep the byte stable through its complete sampling window.
+    // Default retains the legacy cadence for boot and provisioning users.
+    parameter integer RD_FLUSH_PACE_CYCLES = 32
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -629,11 +633,10 @@ module sd_ctrl #(
     reg [5:0] flush_pace_cnt;
     // Purely a CDC-margin safety pace for S_RD_FLUSH_S — see that
     // state's comment.  Needs only to comfortably clear the
-    // sd_scsi_bridge toggle-sync window (~12 core_clk cycles); 32 is a
-    // generous multiple of that with a still-small fixed per-block
-    // latency add (512 * 32 core cycles, a small fraction of the SPI
-    // reception time it follows).
-    localparam [5:0] FLUSH_PACE_CYCLES = 6'd32;
+    // sd_scsi_bridge toggle-sync window (~12 core_clk cycles at 200 MHz).
+    // The shared default is 32; SCSI selects 16 (80 ns at 200 MHz) to
+    // reduce the non-overlapped replay cost while retaining CDC margin.
+    localparam [5:0] FLUSH_PACE_CYCLES = RD_FLUSH_PACE_CYCLES;
 
     // ── Write-session close classification (see the S_AB_* block above) ─
     //
@@ -1364,9 +1367,9 @@ module sd_ctrl #(
                 // (caught by test_cmd18_multi_read regressing during
                 // development). FLUSH_PACE_CYCLES only needs to clear
                 // the sd_scsi_bridge CDC's toggle-sync margin (2-3
-                // pb_clk cycles, ~12 core_clk cycles) — 32 gives
-                // generous headroom while keeping the added per-block
-                // latency small and bounded.
+                // pb_clk cycles, ~12 core_clk cycles at 200 MHz). The
+                // caller selects a pace appropriate to its clock ratio;
+                // this delay is not a substitute for a FIFO handshake.
                 S_RD_FLUSH_S: begin
                     if (rd_ready) begin
                         if (flush_pace_cnt == FLUSH_PACE_CYCLES - 1) begin

@@ -129,12 +129,18 @@ module tb_scsi_sd_e2e (
     localparam TB_READAHEAD = 0;
 `endif
 
+`ifdef SCSI_E2E_PRODUCTION
+    localparam TB_RA_BLOCKS = 32;
+`else
+    localparam TB_RA_BLOCKS = 4;
+`endif
+
     tb_scsi_vhdd_sd #(
         .TARGET_ID     (3'd0),
         .SD_LBA_BIAS   (32'd8192),
         .TURBOSCSI_C96 (TB_TURBOSCSI_C96),
         .READAHEAD     (TB_READAHEAD),
-        .RA_BLOCKS     (4)
+        .RA_BLOCKS     (TB_RA_BLOCKS)
     ) u_scsi (
         // Write-protect is a vhdd_ctrl runtime setting (CTRL bit 2), not a
         // property of the SCSI target; these harnesses predate it and test
@@ -232,14 +238,23 @@ module tb_scsi_sd_e2e (
     // sd_ctrl + sd_spi on core_clk
     // ══════════════════════════════════════════════════════════════════
     sd_ctrl #(
+`ifdef SCSI_E2E_PRODUCTION
+`ifndef SCSI_E2E_LEGACY_PACE
+        .RD_FLUSH_PACE_CYCLES(16),
+`endif
+`endif
         .MULTI_WRITE_AS_CMD24(1)
     ) u_sd_ctrl (
         .clk           (core_clk),
         .rst           (rst),
 
-        // Legacy behaviour for this e2e tb — CRC16 checking is exercised
-        // by tb_sd_ctrl.cpp's own dedicated scenarios instead.
+        // Production-shaped tests validate CRC across the entire path;
+        // legacy variants retain the original CRC-disabled configuration.
+`ifdef SCSI_E2E_PRODUCTION
+        .crc_check_en  (1'b1),
+`else
         .crc_check_en  (1'b0),
+`endif
         .cmd_type      (core_sd_cmd_type),
         .lba           (core_sd_lba),
         .block_count   (core_sd_block_count),
@@ -280,13 +295,16 @@ module tb_scsi_sd_e2e (
     wire _unused_core_wr_valid = core_sd_wr_valid;
     /* verilator lint_on UNUSED */
 
-    // Keep SCK at 25 MHz in both timing variants.  The production build is
-    // core=100 MHz/divider=2; the legacy performance configuration is
-    // core=200 MHz/divider=4.
+    // Legacy variants retain 25 MHz SPI. Production variants match hardware:
+    // divider=2 gives 50 MHz at core=200 MHz and 25 MHz at core=100 MHz.
 `ifdef SCSI_E2E_CORE100
     localparam [8:0] TB_SPI_HALF = 9'd2;
 `else
+`ifdef SCSI_E2E_PRODUCTION
+    localparam [8:0] TB_SPI_HALF = 9'd2;
+`else
     localparam [8:0] TB_SPI_HALF = 9'd4;
+`endif
 `endif
     sd_spi #(
         .SLOW_HALF (TB_SPI_HALF),

@@ -5021,6 +5021,34 @@ $(SCSI_SD_E2E_C96_CORE100_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
 # ----------------------------------------------------------------------------
 SCSI_SD_E2E_RA_BUILD     := $(BUILD_DIR)/scsi_sd_e2e_ra
 SCSI_SD_E2E_C96_RA_BUILD := $(BUILD_DIR)/scsi_sd_e2e_c96_ra
+SCSI_SD_E2E_PROD_BUILD := $(BUILD_DIR)/scsi_sd_e2e_production
+SCSI_SD_E2E_PROD_BASE_BUILD := $(BUILD_DIR)/scsi_sd_e2e_production_baseline
+SCSI_SD_E2E_PROD100_BUILD := $(BUILD_DIR)/scsi_sd_e2e_production100
+
+# Performance baseline matching the shipping 200 MHz / 50 MHz clocks,
+# 50 MHz SPI, CRC-checked reads, 32-block read-ahead ways and CMD24 writes.
+.PHONY: tb-scsi-sd-perf
+tb-scsi-sd-perf: $(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e
+	$(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e
+
+$(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
+		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_PROD_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION -CFLAGS "-DSCSI_E2E_C96")
+
+.PHONY: tb-scsi-sd-perf-baseline tb-scsi-sd-perf-core100
+tb-scsi-sd-perf-baseline: $(SCSI_SD_E2E_PROD_BASE_BUILD)/Vtb_scsi_sd_e2e
+	$(SCSI_SD_E2E_PROD_BASE_BUILD)/Vtb_scsi_sd_e2e
+
+$(SCSI_SD_E2E_PROD_BASE_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
+		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_PROD_BASE_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION +define+SCSI_E2E_LEGACY_PACE -CFLAGS "-DSCSI_E2E_C96")
+
+tb-scsi-sd-perf-core100: $(SCSI_SD_E2E_PROD100_BUILD)/Vtb_scsi_sd_e2e
+	$(SCSI_SD_E2E_PROD100_BUILD)/Vtb_scsi_sd_e2e
+
+$(SCSI_SD_E2E_PROD100_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
+		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_PROD100_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION +define+SCSI_E2E_CORE100 -CFLAGS "-DSCSI_E2E_C96 -DSCSI_E2E_CORE100")
 
 .PHONY: tb-scsi-sd-e2e-ra
 tb-scsi-sd-e2e-ra: $(SCSI_SD_E2E_RA_BUILD)/Vtb_scsi_sd_e2e
