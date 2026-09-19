@@ -1609,15 +1609,18 @@ static bool c17_c96_write10_3blocks_provider_fails_first_block() {
 //      identical C96 + pseudo-DMA front end.  If this fails, the harness
 //      cannot see the target at all and every write result below is
 //      meaningless.
-static bool c96_read10_measured(int blocks, bool reset = true) {
+static bool c96_read10_measured(int blocks, bool reset = true,
+                                uint32_t lba = 300, bool preload = true) {
     if (reset) apply_reset();
     std::vector<std::vector<uint8_t>> blks(blocks, std::vector<uint8_t>(512));
     for (int b = 0; b < blocks; b++) {
         for (int i = 0; i < 512; i++)
             blks[b][i] = (uint8_t)((b << 5) ^ (i * 7) ^ 0x3C);
-        preload_sd_lba(SD_LBA_BIAS + 300 + b, blks[b]);
+        if (preload) preload_sd_lba(SD_LBA_BIAS + lba + b, blks[b]);
+        else blks[b] = sd.sector_for(SD_LBA_BIAS + lba + b);
     }
-    const uint8_t cdb[10] = {0x28, 0x00, 0x00, 0x00, 0x01, 0x2C,
+    const uint8_t cdb[10] = {0x28, 0x00, uint8_t(lba >> 24), uint8_t(lba >> 16),
+                             uint8_t(lba >> 8), uint8_t(lba),
                              0x00, uint8_t(blocks >> 8), uint8_t(blocks), 0x00};
     const uint64_t start = sim_time;
     uint64_t first_byte = 0;
@@ -1694,6 +1697,30 @@ static bool c20_c96_read_clock_phase_sweep() {
         }
     }
     initial_pb_offset_ns = 0;
+    return true;
+}
+
+static bool c22_c96_small_read_workloads() {
+    // Do not mutate backing sectors after prefetch has started. Expected
+    // bytes come from the stable, LBA-dependent card pattern instead.
+    for (int workload = 0; workload < 3; ++workload) {
+        apply_reset();
+        const int requests = workload == 0 ? 64 : 16;
+        const uint64_t start = sim_time;
+        uint64_t worst_ns = 0;
+        for (int n = 0; n < requests; ++n) {
+            const uint32_t lba = workload == 0 ? 1024 + n :
+                workload == 1 ? 1024 + (n & 1) * 4096 + n / 2 :
+                                1024 + n * 257;
+            const uint64_t req_start = sim_time;
+            if (!c96_read10_measured(1, false, lba, false)) return false;
+            if (sim_time - req_start > worst_ns) worst_ns = sim_time - req_start;
+        }
+        std::printf("[WORKLOAD] %s requests=%d total_us=%.3f worst_us=%.3f MBps=%.3f\n",
+                    workload == 0 ? "sequential" : workload == 1 ? "two-stream" : "scattered",
+                    requests, (sim_time - start) / 1000.0, worst_ns / 1000.0,
+                    requests * 512.0 * 1000.0 / (sim_time - start));
+    }
     return true;
 }
 
@@ -2070,6 +2097,7 @@ int main(int argc, char** argv) {
     RUN(c19_c96_read_performance);
     RUN(c20_c96_read_clock_phase_sweep);
     RUN(c21_c96_card_latency_profiles);
+    RUN(c22_c96_small_read_workloads);
     RUN(c2_c96_write10_4blocks_full_tilt);
     RUN(c3_c96_write10_4blocks_stall_mid_block2);
     RUN(c4_c96_write6_2blocks_nondma);
