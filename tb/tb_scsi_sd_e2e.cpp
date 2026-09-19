@@ -1758,6 +1758,27 @@ static bool c21_c96_card_latency_profiles() {
     return ok;
 }
 
+static bool c23_c96_adaptive_coherency_and_capacity() {
+    apply_reset();
+    // The first miss allocates a two-sector run. Its successor grows a
+    // full run; issue writes while its speculative tail may still be live.
+    if (!c96_read10_measured(1, false, 2048, false) ||
+        !c96_read10_measured(1, false, 2050, false) ||
+        !c96_write10_multi(2051, 1, 16, -1, 0, "adaptive-overlap", false) ||
+        !c96_read10_measured(1, false, 2051, false)) return false;
+    // Refill a full window, write outside it, then check retained data.
+    if (!c96_read10_measured(32, false, 4096, false) ||
+        !c96_write10_multi(8192, 1, 16, -1, 0, "adaptive-unrelated", false) ||
+        !c96_read10_measured(2, false, 4100, false)) return false;
+    // Cold minimum and full-window continuation must both respect the
+    // last logical sector. Multi-sector requests may overlap short ways.
+    const uint32_t end = 1048576;
+    if (!c96_read10_measured(1, false, end - 3, false) ||
+        !c96_read10_measured(1, false, end - 1, false) ||
+        !c96_read10_measured(2, false, end - 2, false)) return false;
+    return true;
+}
+
 // c2 — RED-A (Bug 1, producer overruns the ring).
 //      WRITE(10) LBA 200, 4 blocks (one CMD25), 2048 bytes pushed as
 //      fast as the DRQ gate allows.  The initiator moves a byte every
@@ -2112,6 +2133,7 @@ int main(int argc, char** argv) {
     RUN(c20_c96_read_clock_phase_sweep);
     RUN(c21_c96_card_latency_profiles);
     RUN(c22_c96_small_read_workloads);
+    RUN(c23_c96_adaptive_coherency_and_capacity);
     RUN(c2_c96_write10_4blocks_full_tilt);
     RUN(c3_c96_write10_4blocks_stall_mid_block2);
     RUN(c4_c96_write6_2blocks_nondma);
