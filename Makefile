@@ -5030,6 +5030,17 @@ SCSI_SD_E2E_C96_RA_BUILD := $(BUILD_DIR)/scsi_sd_e2e_c96_ra
 SCSI_SD_E2E_PROD_BUILD := $(BUILD_DIR)/scsi_sd_e2e_production
 SCSI_SD_E2E_PROD_BASE_BUILD := $(BUILD_DIR)/scsi_sd_e2e_production_baseline
 SCSI_SD_E2E_PROD100_BUILD := $(BUILD_DIR)/scsi_sd_e2e_production100
+SCSI_SD_E2E_CMD25_BUILD := $(BUILD_DIR)/scsi_sd_e2e_cmd25_experiment
+
+# Simulation-only A/B. Production keeps closed-per-sector CMD24 writes until
+# multi-write recovery and on-card performance are validated independently.
+.PHONY: tb-scsi-sd-perf-cmd25
+tb-scsi-sd-perf-cmd25: $(SCSI_SD_E2E_CMD25_BUILD)/Vtb_scsi_sd_e2e
+	$(SCSI_SD_E2E_CMD25_BUILD)/Vtb_scsi_sd_e2e
+
+$(SCSI_SD_E2E_CMD25_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
+		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_CMD25_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION +define+SCSI_REAL_TIMEOUTS +define+SCSI_E2E_CMD25 -CFLAGS "-DSCSI_E2E_C96 -DSCSI_E2E_PERF_OPT -DSCSI_E2E_CMD25")
 
 # Performance baseline matching the shipping 200 MHz / 50 MHz clocks,
 # 50 MHz SPI, CRC-checked reads, 32-block read-ahead ways and CMD24 writes.

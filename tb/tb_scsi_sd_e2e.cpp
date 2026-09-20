@@ -348,7 +348,7 @@ struct SdCard {
                         sectors[w_lba] = w_block_bytes;
                     }
                     w_blocks_seen++;
-                    w_busy_ticks = 4;
+                    w_busy_ticks = card_write_busy_bytes;
                     if (w_multiblock) {
                         // Roll into next block of the same CMD25.
                         w_lba++;
@@ -1329,6 +1329,7 @@ static bool c96_write10_multi(uint32_t lba, int blocks, int chunk,
     if (reset_first) apply_reset();
     const int cmd24_before = sd.cmd24_frames_seen;
     const int cmd25_before = sd.cmd25_frames_seen;
+    const uint64_t write_start_ns = sim_time;
     const int total = blocks * 512;
     std::vector<uint8_t> payload(total);
     for (int i = 0; i < total; i++) {
@@ -1361,14 +1362,25 @@ static bool c96_write10_multi(uint32_t lba, int blocks, int chunk,
     if (!c96_finish(status, msg)) return false;
 
     bool ok = true;
-    if (sd.cmd24_frames_seen - cmd24_before != blocks) {
+#ifdef SCSI_E2E_CMD25
+    const int expected_cmd24 = blocks == 1 ? 1 : 0;
+    const int expected_cmd25 = blocks == 1 ? 0 : 1;
+#else
+    const int expected_cmd24 = blocks;
+    const int expected_cmd25 = 0;
+#endif
+    std::printf("[WRITE_PERF] %s blocks=%d busy_bytes=%d elapsed_us=%.3f MBps=%.3f cmd24=%d cmd25=%d\n",
+                tag, blocks, card_write_busy_bytes, (sim_time - write_start_ns) / 1000.0,
+                total * 1000.0 / (sim_time - write_start_ns),
+                sd.cmd24_frames_seen - cmd24_before, sd.cmd25_frames_seen - cmd25_before);
+    if (sd.cmd24_frames_seen - cmd24_before != expected_cmd24) {
         std::printf("  FAIL %s: saw %d CMD24 frames, want %d\n", tag,
-                    sd.cmd24_frames_seen - cmd24_before, blocks);
+                    sd.cmd24_frames_seen - cmd24_before, expected_cmd24);
         ok = false;
     }
-    if (sd.cmd25_frames_seen != cmd25_before) {
-        std::printf("  FAIL %s: SCSI-safe path emitted %d CMD25 frames\n", tag,
-                    sd.cmd25_frames_seen - cmd25_before);
+    if (sd.cmd25_frames_seen - cmd25_before != expected_cmd25) {
+        std::printf("  FAIL %s: saw %d CMD25 frames, want %d\n", tag,
+                    sd.cmd25_frames_seen - cmd25_before, expected_cmd25);
         ok = false;
     }
     // Reported, not returned on: a non-GOOD status here is informative
@@ -1674,6 +1686,31 @@ static bool c96_read10_measured(int blocks, bool reset = true,
 
 static bool c1_c96_read10_2blocks_control() {
     return c96_read10_measured(2);
+}
+
+static bool c24_c96_write_performance() {
+    const int saved_busy = card_write_busy_bytes;
+    for (int busy_bytes : {4, 4096}) {
+        card_write_busy_bytes = busy_bytes;
+        for (int blocks : {1, 2, 8, 40}) {
+            const uint64_t start = sim_time;
+            if (!c96_write10_multi(120000, blocks, 16, -1, 0, "write-profile")) {
+                card_write_busy_bytes = saved_busy;
+                return false;
+            }
+            // Negative-control guard: the profile must affect EVERY block's
+            // busy interval, not just CMD25's final stop token. At production
+            // 50 MHz SPI, each poll already takes at least 160 ns.
+            if (busy_bytes == 4096 && sim_time - start <
+                    uint64_t(blocks) * busy_bytes * 160) {
+                std::printf("  FAIL write-profile: per-block busy delay not exercised\n");
+                card_write_busy_bytes = saved_busy;
+                return false;
+            }
+        }
+    }
+    card_write_busy_bytes = saved_busy;
+    return true;
 }
 
 static bool c19_c96_read_performance() {
@@ -2151,6 +2188,7 @@ int main(int argc, char** argv) {
     RUN(c16_c96_write10_40blocks_provider_fails_midstream);
     RUN(c17_c96_write10_3blocks_provider_fails_first_block);
     RUN(c18_c96_back_to_back_write10_stress);
+    RUN(c24_c96_write_performance);
 #else
     RUN(s1_tur);
     RUN(s2_inquiry);

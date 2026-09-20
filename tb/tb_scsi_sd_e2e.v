@@ -255,7 +255,11 @@ module tb_scsi_sd_e2e (
         .READ_PIPELINE(1),
 `endif
 `endif
+`ifdef SCSI_E2E_CMD25
+        .MULTI_WRITE_AS_CMD24(0)
+`else
         .MULTI_WRITE_AS_CMD24(1)
+`endif
     ) u_sd_ctrl (
         .clk           (core_clk),
         .rst           (rst),
