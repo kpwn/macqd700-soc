@@ -5063,10 +5063,10 @@ $(SCSI_SD_E2E_CMD25_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
 		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
 	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_CMD25_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION +define+SCSI_REAL_TIMEOUTS +define+SCSI_E2E_CMD25 -CFLAGS "-DSCSI_E2E_C96 -DSCSI_E2E_PERF_OPT -DSCSI_E2E_CMD25")
 
-# Shipping performance gate uses reset-safe staged CMD25. Keep the older
-# closed-per-sector CMD24 build as an explicit A/B comparison.
+# Shipping performance gate uses closed-per-sector CMD24. Staged CMD25
+# remains an explicit experiment after its board data-response failure.
 .PHONY: tb-scsi-sd-perf
-tb-scsi-sd-perf: tb-scsi-sd-perf-staged
+tb-scsi-sd-perf: tb-scsi-sd-perf-cmd24
 
 .PHONY: tb-scsi-sd-perf-cmd24
 tb-scsi-sd-perf-cmd24: $(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e

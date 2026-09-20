@@ -448,7 +448,7 @@ if {$video_smoke != 0 && $video_smoke != 1} {
     exit 1
 }
 set boot_rom_sectors [parse_int_env BOOT_ROM_SECTORS 2048]
-set sd_safe_cmd25 [parse_int_env SD_SAFE_CMD25 1]
+set sd_safe_cmd25 [parse_int_env SD_SAFE_CMD25 0]
 if {$sd_safe_cmd25 ni {0 1}} {error "SD_SAFE_CMD25 must be 0 or 1"}
 if {$sd_safe_cmd25 && [info exists ::env(ENABLE_SD_JTAG_WRITER)]} {
     error "SD_SAFE_CMD25 requires the preemptive provisioning writer to be disabled"

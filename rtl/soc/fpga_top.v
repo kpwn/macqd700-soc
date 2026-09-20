@@ -195,9 +195,10 @@ module fpga_top #(
     // checkerboard/small-ROM smoke images can override this to a short
     // sector count without editing boot_fsm or the ROM boot harness.
     parameter [31:0] BOOT_ROM_SECTORS = 32'd2048,
-    // Reset-safe staged CMD25 writes. Set 0 only for legacy CMD24 A/B tests;
-    // staging adds first-sector latency while subsequent sectors overlap.
-    parameter integer SD_SAFE_CMD25 = 1,
+    // Experimental staged CMD25 writes, opt-in only. The board hit a
+    // data-response failure and fatal peripheral-write wedge with this enabled.
+    // Default to the established closed-per-sector CMD24 path (no staging).
+    parameter integer SD_SAFE_CMD25 = 0,
     // MAME's Quadra 700 model derives VIA clocks from C7M/10:
     // 31.3344 MHz / 4 / 10 = 783.36 kHz.
     parameter integer VIA_PHI2_HZ = 783_360,
