@@ -188,7 +188,7 @@ conditional:
     tools/sd_os_swap.sh            # writes the disk; never writes below LBA 8192
 
 Both use a two-bitstream flow: a provisioning image exposes the SD writer over
-JTAG (`docs/sd_jtag_writer.md`), then the real image is reloaded.
+JTAG ([SD provisioning](docs/sd_jtag_writer.md)), then the real image is reloaded.
 
 ## Memory and bus fabric
 
@@ -213,7 +213,10 @@ is not truncated through the 128-bit crossbar path.
 
 **Peripheral bus** — the Mac side of the machine hangs off a serialised I/O
 port behind GLUE, which bridges AXI to the 50 MHz peripheral bus. Multi-hot
-writes are serialised there; see `docs/peripheral_arch.md`.
+writes are serialised there; see [SoC architecture](docs/architecture.md).
+
+The [documentation index](docs/README.md) links the architecture contracts
+and hardware setup guides. CPU microarchitecture is documented in `cpu040/`.
 
 ## Storage: SCSI
 
@@ -327,8 +330,12 @@ run `make test-fast` inside `cpu040/` for the current core's fast suite.
 
 The publication regression run is **not fully green**: two VRAM-chain
 targets remain unresolved, in addition to existing expected failures.
-See [verification results](docs/publication_verification.md) for the full
-run summary, test-infrastructure fixes and targeted reruns.
+The unresolved targets are `tb-vram-ddr-chain` and `tb-vram-ddr-chain-nol2c`:
+the partial S3-write reset/flush scenario times out, and the no-L2 variant
+also runs L2-dependent checks. The full suite has not been rerun green;
+passing targeted tests or a board boot does not supersede these results.
+832×624 in millions of colors has also failed on hardware while 256 colors
+worked; passing scanout simulations did not explain that failure.
 
 ## Development setup
 
