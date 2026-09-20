@@ -1020,6 +1020,36 @@ static bool test_read_hit() {
     return ok;
 }
 
+static bool test_fill_bank_quadrants() {
+    bool ok = true;
+    // More than one full MSHR-table turnover. Each request starts in a
+    // different quadrant; then check the other three banks of that line.
+    for (unsigned epoch = 0; epoch < 4; ++epoch) {
+        uint32_t ids[8];
+        uint64_t addrs[8];
+        for (unsigned slot = 0; slot < 8; ++slot) {
+            addrs[slot] = 0x600000 + epoch*0x1000 + slot*64 + (slot%4)*16;
+            ids[slot] = issue_read(addrs[slot]);
+        }
+        for (unsigned slot = 0; slot < 8; ++slot) {
+            bool completed = wait_read_done(ids[slot]);
+            CHECK("fill bank concurrent completion", completed);
+            if (completed) {
+                CHECK("fill bank concurrent payload",
+                      std::memcmp(r_done[ids[slot]]->got[0].data(),
+                                  &golden[addrs[slot]], 16) == 0);
+                free_read(ids[slot]);
+            }
+        }
+        for (unsigned slot = 0; slot < 8; ++slot)
+            for (unsigned q = 0; q < 4; ++q)
+                CHECK("fill bank quadrant readback",
+                      do_read_check((addrs[slot] & ~uint64_t(63)) + q*16,
+                                    "fill_bank_quadrants"));
+    }
+    return ok;
+}
+
 static bool test_write_miss_allocate() {
     bool ok = true;
     uint64_t a = 0x2000;
@@ -5081,6 +5111,7 @@ int main(int argc, char** argv) {
 #else
     if (!std::getenv("L2C_SKIP_DIRECTED")) {
     run("read_miss_fill",              test_read_miss_fill);
+    run("fill_bank_quadrants",         test_fill_bank_quadrants);
     run("read_hit",                    test_read_hit);
     run("write_miss_allocate",         test_write_miss_allocate);
     run("write_hit_dirty",             test_write_hit_dirty);

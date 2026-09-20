@@ -1747,6 +1747,10 @@ tb-dafb: $(DAFB_BUILD)/Vvideo
 	@echo "Running DAFB shim unit tb..."
 	$(DAFB_BUILD)/Vvideo
 
+.PHONY: tb-dafb-area
+tb-dafb-area: $(DAFB_BUILD)/Vvideo
+	$(DAFB_BUILD)/Vvideo +area_contract
+
 $(DAFB_BUILD)/Vvideo: $(DAFB_RTL) $(TB_DIR)/tb_dafb.cpp
 	@mkdir -p $(DAFB_BUILD)
 	$(VERILATOR) --cc --exe --build --assert \

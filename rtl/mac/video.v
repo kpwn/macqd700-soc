@@ -268,14 +268,17 @@ module video #(
     localparam REG_BITS  = REG_WORDS * 32;
 
     // ── Register file (256x32) ──────────────────────────────────────
-    // 2026-05-22 — converted from a single REG_BITS-wide flat vector
-    // (256*32 = 8192 bits with dynamic bit-select for index access) to
-    // a proper 256x32 array.  The flat form forced Vivado to synth
-    // every read/write through a 256:1 32-bit mux and 8192 individual
-    // FFs (~5-10K LUTs + 8K FFs of overhead).  As an array, Vivado
-    // infers compact LUTRAM and skips the giant mux.  Old REG_BITS
-    // localparam kept for any callers still using the bit-width view.
-    reg [31:0] regs [0:REG_WORDS-1];
+    // Two asynchronous read addresses (AXI readback and write-side merge)
+    // plus byte write enables fit distributed RAM. Constant-address live
+    // taps must stay outside this array: they previously caused the entire
+    // 8192-bit array to become FFs despite the array-shaped declaration.
+    (* ram_style = "distributed" *) reg [31:0] regs [0:REG_WORDS-1];
+    // Only these words need continuously available, independent read ports.
+    // Keep small mirrors rather than turning the entire shadow RAM into FFs.
+    // Like the shadow RAM, they deliberately survive a warm reset.
+    reg [2:0] shadow_swatch_ctrl;
+    reg [31:0] shadow_cursor_line;
+    reg [8:0] shadow_scsi_ctrl;
 
     // ── Named register offsets (long-word index) ────────────────────
     // Offsets match Q700 ROM trace from docs/dafb_audit.md §2.
@@ -487,6 +490,18 @@ module video #(
     wire [31:0] write_word = merge_wstrb(write_prev, w_data, w_strb);
     wire [7:0]  aw_idx = aw_word_idx[7:0];
     wire [7:0]  ar_idx = ar_word_idx[7:0];
+    wire [31:0] shadow_read = regs[ar_idx];
+    integer shadow_byte;
+    always @(posedge clk) begin
+        if (!rst && do_write && aw_in_range) begin
+            for (shadow_byte = 0; shadow_byte < 4; shadow_byte = shadow_byte + 1)
+                if (w_strb[shadow_byte])
+                    regs[aw_idx][shadow_byte*8 +: 8] <= w_data[shadow_byte*8 +: 8];
+            if (aw_idx == REG_SWATCH_CTRL) shadow_swatch_ctrl <= write_word[2:0];
+            if (aw_idx == REG_SWATCH_CURSOR_LINE) shadow_cursor_line <= write_word;
+            if (aw_idx == REG_FIRST_HIT) shadow_scsi_ctrl <= write_word[8:0];
+        end
+    end
     // PLL: same 0x300 window, but use the same 16-entry stride (n =
     // (offset & 0xFF) >> 4 = aw_idx[5:2]).  Only the low nibble of
     // write_word becomes the dp8531 register value, matching MAME
@@ -789,24 +804,20 @@ module video #(
             // NOTE: `regs` (256x32) and `ramdac_clut_r/g/b` (256x8 each) are
             // intentionally NOT reset here.  A synchronous reset loop over a
             // dynamically-indexed array forces per-entry reset muxing, which
-            // defeats LUTRAM inference (Vivado falls back to ~14K discrete
-            // FFs + a 256:1 decode instead of compact LUTRAM) — see the
-            // 2026-05-22 array-conversion comments above.  Cold-boot init is
+            // defeats LUTRAM inference. Cold-boot init is
             // covered by bitstream INIT values on real hardware and by
             // the simulator's zero-init in sim; the ROM reprograms every
             // register (including the three below) before relying on any
             // of them, so this is invisible to a normal cold boot.
             //
             // This is NOT just "stale CLUT readback" — three LIVE,
-            // cross-module signals are read straight out of `regs[]`
-            // below and do NOT clear on a debug-only full-reset
+            // control mirrors below do NOT clear on a debug-only full-reset
             // (JTAG/VIO, no power-cycle):
-            //   - scsi0_ctrl_out  = regs[REG_FIRST_HIT][8:0]      (~line 953)
+            //   - shadow_scsi_ctrl = regs[REG_FIRST_HIT][8:0]
             //     TurboSCSI bus-1 ctrl word into scsi.v's DMA gating.
-            //   - irq_enable_reg  = regs[REG_IRQ_ENABLE]          (~line 485)
-            //     gates irq_observable (DAFB vblank IRQ -> VIA1); can leave
-            //     the vblank IRQ "silently still armed" post-reset.
-            //   - Swatch auto-arm = regs[REG_SWATCH_CTRL][2]/[0]  (~lines 669, 906)
+            //   - shadow_cursor_line = regs[REG_SWATCH_CURSOR_LINE]
+            //     supplies the cursor re-arm delay.
+            //   - shadow_swatch_ctrl = regs[REG_SWATCH_CTRL][2:0]
             //     cursor auto-arm gate / VBL auto-arm gate.
             // See docs/uarch_decisions.md #1 for the full writeup. A debug
             // full-reset is therefore NOT equivalent to a ROM cold boot for
@@ -820,7 +831,7 @@ module video #(
             // MAME arms the VBL timer only while SWATCH_CTRL (+0x104) bit0
             // (VBL enable) is set; with that bit clear the VBL source cannot
             // raise int_status bit0 at all (dafb.cpp swatch_w case 0x4).
-            if (vblank_tick && regs[REG_SWATCH_CTRL][0]) begin
+            if (vblank_tick && shadow_swatch_ctrl[0]) begin
                 vblank_pending <= 1'b1;
             end
 
@@ -829,7 +840,7 @@ module video #(
             // full RGB triple.
             clut_we <= 1'b0;
 
-            if (regs[REG_SWATCH_CTRL][2] && !swatch_cursor_pending) begin
+            if (shadow_swatch_ctrl[2] && !swatch_cursor_pending) begin
                 if (swatch_cursor_countdown == 32'd0)
                     swatch_cursor_pending <= 1'b1;
                 else
@@ -870,7 +881,6 @@ module video #(
                     // (matches the "little-endian WSTRB over big-endian
                     // data" convention used elsewhere — each byte in
                     // wdata pairs with wstrb[i] = (1<<i).)
-                    regs[aw_idx] <= write_word;
                     // MAME's dafb_w masks data to 0xfff before storing.
                     // We mirror that for the base/stride/config slots so
                     // the decode below matches MAME m_base / m_stride /
@@ -896,7 +906,7 @@ module video #(
                     else if (write_swatch_cursor_ack) begin
                         if (swatch_cursor_pending)
                             swatch_cursor_countdown <= swatch_cursor_delay_cycles(
-                                regs[REG_SWATCH_CURSOR_LINE]);
+                                shadow_cursor_line);
                         swatch_cursor_pending <= 1'b0;
                     end
                     else if (write_swatch_ctrl) begin
@@ -907,7 +917,7 @@ module video #(
                         if (write_word[2]) begin
                             swatch_cursor_pending <= 1'b0;
                             swatch_cursor_countdown <= swatch_cursor_delay_cycles(
-                                regs[REG_SWATCH_CURSOR_LINE]);
+                                shadow_cursor_line);
                         end else begin
                             swatch_cursor_pending <= 1'b0;
                             swatch_cursor_countdown <= 32'd0;
@@ -977,7 +987,7 @@ module video #(
                             // double; we hold the previous pixel-clock.
                             if ((r != 12'd0) && (p != 16'd0)) begin
                                 vco = (PLL_REF_HZ / {20'd0, r}) * n;
-                                r_pixel_clock <= vco / {16'd0, p};
+                                r_pixel_clock <= vco >> p_shift;
                             end
                         end
                     end
@@ -1137,8 +1147,8 @@ module video #(
     assign s_axi_arready = !ar_pending && !s_axi_rvalid;
 
     // Read-data mux: named-override for the handful of ROM-polled
-    // status/RAMDAC-byte offsets, else last-written from the flat storage.
-    // The write side still persists every byte lane in `regs_flat`, so the
+    // status/RAMDAC-byte offsets, else last-written from shadow storage.
+    // The write side still persists every byte lane in `regs`, so the
     // special reads stay deterministic without turning the window dead.
     function [31:0] swatch_read_reg;
         input [7:0] idx;
@@ -1149,10 +1159,10 @@ module video #(
                     swatch_read_reg = {29'd0,
                                        swatch_cursor_pending,
                                        1'b0,
-                                       vblank_pending && regs[REG_SWATCH_CTRL][0]};
+                                       vblank_pending && shadow_swatch_ctrl[0]};
                 // +0x120 driver-stash (MAME dafb.cpp:608 case 0x20: m_swatch_test)
                 {REG_SWATCH_BASE[7:4], 4'h8}:
-                    swatch_read_reg = {20'd0, regs[REG_SWATCH_BASE+8'h08][11:0]};
+                    swatch_read_reg = {20'd0, shadow_read[11:0]};
                 // +0x124..0x148 horizontal params (MAME dafb.cpp:611-613)
                 REG_SWATCH_HSERR : swatch_read_reg = {20'd0, r_hserr};
                 REG_SWATCH_HLFLN : swatch_read_reg = {20'd0, r_hlfln};
@@ -1196,7 +1206,7 @@ module video #(
     // TurboSCSI bus 1 ctrl word (low 9 bits live at +0x24).  Exposed
     // to scsi.v so the C96 path can implement DRQ-check on its DMA
     // window per dafb.cpp:1001-1011 + 1040-1047.
-    assign scsi0_ctrl_out = regs[REG_FIRST_HIT][8:0];
+    assign scsi0_ctrl_out = shadow_scsi_ctrl;
 
     function [31:0] read_reg;
         input [9:0] idx;
@@ -1213,18 +1223,18 @@ module video #(
                     REG_IRQ_STATUS : read_reg = {30'd0, irq_observable, vblank_pending};
                     // +0x24 SCSI bus 1 status (dafb.cpp:418-419):
                     //   m_scsi_ctrl[0] | (m_drq[0] << 9)
-                    REG_FIRST_HIT  : read_reg = (regs[REG_FIRST_HIT] & 32'h0000_01ff)
+                    REG_FIRST_HIT  : read_reg = (shadow_read & 32'h0000_01ff)
                                               | (scsi0_drq_in ? 32'h0000_0200 : 32'h0);
-                    REG_DAFB_TEST  : read_reg = (regs[REG_DAFB_TEST] & 32'h0000_01ff)
+                    REG_DAFB_TEST  : read_reg = (shadow_read & 32'h0000_01ff)
                                                   | DAFB_VERSION_BITS;
                     REG_RAMDAC_ADDR   : read_reg = {24'd0, ramdac_pal_address};
                     REG_RAMDAC_DATA   : read_reg = {24'd0, ramdac_data_byte(ramdac_pal_idx, ramdac_pal_address)};
-                    REG_RAMDAC_PBCTRL : read_reg = {24'd0, regs[REG_RAMDAC_PBCTRL][7:0]};
+                    REG_RAMDAC_PBCTRL : read_reg = {24'd0, shadow_read[7:0]};
                     default        : begin
                         if ((idx[7:0] >= REG_SWATCH_BASE) && (idx[7:0] <= REG_SWATCH_END))
                             read_reg = swatch_read_reg(idx[7:0]);
                         else
-                            read_reg = regs[idx[7:0]];
+                            read_reg = shadow_read;
                     end
                 endcase
             end

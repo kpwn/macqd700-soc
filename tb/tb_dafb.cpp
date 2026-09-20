@@ -219,6 +219,62 @@ static int axil_read(uint32_t addr, uint32_t* out) {
     return 3;
 }
 
+// Area-refactor contract: distinct words/byte lanes, warm-reset retention,
+// live SCSI mirror, and exact unsigned PLL arithmetic (including overflow).
+static void test_area_contract() {
+    reset();
+    uint32_t expected[48] = {};
+    uint32_t seed = 0x6522040u;
+    for (unsigned round = 0; round < 16; ++round) {
+        for (unsigned i = 0; i < 48; ++i) {
+            seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+            unsigned mask = round;
+            for (unsigned b = 0; b < 4; ++b)
+                if (mask & (1u << b))
+                    expected[i] = (expected[i] & ~(0xffu << (8*b))) |
+                                  (seed & (0xffu << (8*b)));
+            CHECK(axil_write(0x40 + 4*i, seed, mask) == 0,
+                  "area_shadow write word=%u mask=%x", i, mask);
+        }
+        if (round == 7) reset();
+        for (unsigned i = 0; i < 48; ++i) {
+            uint32_t value = 0;
+            CHECK(axil_read(0x40 + 4*i, &value) == 0 && value == expected[i],
+                  "area_shadow read word=%u round=%u", i, round);
+        }
+    }
+    CHECK(axil_write(0x24, 0x12345678) == 0, "area_scsi seed");
+    CHECK(axil_write(0x24, 0x000001ab, 1) == 0, "area_scsi low byte");
+    CHECK(dut->scsi0_ctrl_out == 0x0ab, "area_scsi mirror byte enable");
+    CHECK(axil_write(0x24, 0x00000100, 2) == 0, "area_scsi upper bit");
+    reset();
+    CHECK(dut->scsi0_ctrl_out == 0x1ab, "area_scsi mirror survives reset");
+    uint32_t last_clock = 31334400u;
+    for (unsigned sample = 0; sample < 64; ++sample) {
+        seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
+        unsigned r = sample == 0 ? 0 : (seed & 4095u);
+        unsigned nm = seed >> 16;
+        unsigned shift = sample & 15;
+        for (unsigned i = 0; i < 4; ++i)
+            CHECK(axil_write(0x300 + 16*i, (nm >> (4*i)) & 15) == 0,
+                  "area_pll modulus sample=%u nibble=%u", sample, i);
+        for (unsigned i = 0; i < 3; ++i)
+            CHECK(axil_write(0x340 + 16*i, (r >> (4*i)) & 15) == 0,
+                  "area_pll divider sample=%u nibble=%u", sample, i);
+        CHECK(axil_write(0x390, shift) == 0, "area_pll exponent=%u", shift);
+        CHECK(axil_write(0x3f0, 0) == 0, "area_pll trigger sample=%u", sample);
+        unsigned a = (nm & 31) ^ 31, b = nm >> 5;
+        if (a > b) a = b;
+        if (b < 2) b = 2;
+        if (r) {
+            uint32_t vco = (20000000u / r) * (32u * (b-a) + 31u * (1+a));
+            last_clock = vco / (1u << shift);
+        }
+        CHECK(dut->pll_pixel_clock == last_clock,
+              "area_pll exact clock sample=%u shift=%u", sample, shift);
+    }
+}
+
 // ── Scenarios ─────────────────────────────────────────────────────────
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
@@ -234,6 +290,13 @@ int main(int argc, char** argv) {
     // per-transaction one, and the runtime-change scenario below relies on
     // it surviving the idle_inputs() calls that reset()/run_cycles() make.
     dut->monitor_sense = 0x06;
+
+    if (Verilated::commandArgsPlusMatch("area_contract")[0]) {
+        test_area_contract();
+        std::printf("area_contract: pass=%d fail=%d\n", n_pass, n_fail);
+        delete dut;
+        return n_fail ? 1 : 0;
+    }
 
     std::printf("── tb_dafb: DAFB register-shim unit tb ──\n");
     reset();

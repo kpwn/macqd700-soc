@@ -232,7 +232,7 @@ module l2c_mshr #(
     reg [TAG_BITS-1:0] m_tag   [0:N-1]; reg [WAY_BITS-1:0] m_way [0:N-1];
     reg                m_issued[0:N-1]; reg m_fill_done [0:N-1];
     reg [1:0]          m_beat  [0:N-1]; reg m_fill_err [0:N-1];
-    reg [LINE_BITS-1:0] m_line [0:N-1];
+    wire [LINE_BITS-1:0] scan_line;
     // Quadrant masks: m_vsec is the way's valid mask AT ALLOCATION (so
     // ~m_vsec is exactly what this fill must install); m_dsec accumulates
     // the dirty mask this entry will leave behind and is updated in step
@@ -528,6 +528,20 @@ module l2c_mshr #(
     wire [IDX_BITS-1:0] r_idx_c = m_rid[IDX_BITS-1:0];
     assign m_rready  = (st == S_DRAIN) ||
                        (m_v[r_idx_c] && m_issued[r_idx_c] && !m_fill_done[r_idx_c]);
+    // Four independently enabled fill banks.  A dynamic part-select write
+    // on a 512-bit array can infer a read/modify/write mux for every bit.
+    // Each bank has just one write address and one asynchronous read address;
+    // the scan/install timing, eight entries and reset-drain rules are unchanged.
+    genvar fill_quad;
+    generate for (fill_quad = 0; fill_quad < LINE_BITS/128; fill_quad = fill_quad + 1) begin : g_fill_bank
+        (* ram_style = "distributed" *) reg [127:0] data [0:N-1];
+        always @(posedge clk) begin
+            if (!rst && m_rvalid && m_rready && st != S_DRAIN &&
+                m_beat[r_idx_c] == fill_quad)
+                data[r_idx_c] <= m_rdata;
+        end
+        assign scan_line[fill_quad*128 +: 128] = data[scan_idx_c];
+    end endgenerate
     // Fill-burst debt.  Its own always block, with NO `rst` arm, so the
     // "survives reset" property is visible rather than buried in an else.
     // The AR arm is unconditional on purpose: on the cycle `rst` first
@@ -620,7 +634,6 @@ module l2c_mshr #(
             // AXI read IDs are the MSHR indices, so fills may return while
             // another completed entry is installing/replaying.
             if (m_rvalid && m_rready && st != S_DRAIN) begin
-                m_line[r_idx_c][m_beat[r_idx_c]*128 +: 128] <= m_rdata;
                 if (m_rresp != 2'b00) m_fill_err[r_idx_c] <= 1'b1;
                 if (m_rlast) begin
                     m_fill_done[r_idx_c] <= 1'b1;
@@ -652,7 +665,7 @@ module l2c_mshr #(
                     // entry's assembled line into act_line for the whole
                     // install/replay walk.  Safe because scan_vec_c requires
                     // m_fill_done, so no further beat can land in this entry.
-                    act_line <= m_line[scan_idx_c];
+                    act_line <= scan_line;
                     rr_ptr <= scan_idx_c + 1'b1; // next SCAN starts past this entry
                 end
                 S_INSTALL: begin

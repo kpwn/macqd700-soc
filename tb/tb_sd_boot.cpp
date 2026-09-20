@@ -1371,13 +1371,14 @@ static uint32_t expected_rom_word(uint32_t byte_off) {
     return pack_be(b0, b1, b2, b3);
 }
 
-static bool test_mirror_dual_write_matches_rom() {
+static bool test_mirror_dual_write_matches_rom(int response_delay = 0) {
     if (!MIRROR_LOW_RAM) {
         printf("  FAIL mirror-dual: build not elaborated with MIRROR_LOW_RAM=1 "
                "-- see the tb-sd-boot-mirror target\n");
         return false;
     }
     reset_world_for_flaky();
+    axs.b_latency = response_delay;
     if (!boot_to_completion(3000000, "mirror-dual")) return false;
     if (dut->error) {
         printf("  FAIL mirror-dual: error asserted on an all-OKAY run\n");
@@ -1420,6 +1421,12 @@ static bool test_mirror_dual_write_matches_rom() {
            "(ROM_BASE=0x%08x, mirror base 0x00000000)\n",
            (unsigned)image_bytes, ROM_BASE);
     return true;
+}
+
+static bool test_mirror_fifo_stalled_wrap() {
+    // Both halves of each pair must survive while B stalls the reader;
+    // the multi-sector image wraps the compact FIFO many times.
+    return test_mirror_dual_write_matches_rom(37);
 }
 
 static bool test_mirror_and_vram_zero_boundary() {
@@ -1542,6 +1549,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         RUN(test_mirror_dual_write_matches_rom);
+        RUN(test_mirror_fifo_stalled_wrap);
         RUN(test_mirror_and_vram_zero_boundary);
         printf("\n%d/%d scenarios passed.\n", n_pass, n_pass + n_fail);
         dut->final();

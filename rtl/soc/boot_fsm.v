@@ -781,9 +781,8 @@ module boot_fsm #(
     localparam [WORD_FIFO_LOG2:0] WORD_FIFO_DEPTH_COUNT =
         (1 << WORD_FIFO_LOG2);
 
-    reg [31:0] word_fifo_addr [0:WORD_FIFO_DEPTH-1];
-    reg [31:0] word_fifo_data [0:WORD_FIFO_DEPTH-1];
-    reg [3:0]  word_fifo_strb [0:WORD_FIFO_DEPTH-1];
+    wire [31:0] word_fifo_head_addr;
+    wire [31:0] word_fifo_head_data;
     reg [WORD_FIFO_LOG2-1:0] word_fifo_wr_ptr;
     reg [WORD_FIFO_LOG2-1:0] word_fifo_rd_ptr;
     reg [WORD_FIFO_LOG2:0]   word_fifo_count;
@@ -792,6 +791,36 @@ module boot_fsm #(
     wire word_fifo_empty = (word_fifo_count == {(WORD_FIFO_LOG2+1){1'b0}});
     // Room for TWO more entries (MIRROR_LOW_RAM's dual-push case).
     wire word_fifo_room2 = (word_fifo_count <= (WORD_FIFO_DEPTH_COUNT - {{(WORD_FIFO_LOG2-1){1'b0}}, 2'd2}));
+    wire word_fifo_push = !rst && st == ST_CTRL_RUN && ctrl_rd_valid &&
+                          pack_phase == 2'd3 &&
+                          (MIRROR_LOW_RAM ? word_fifo_room2 : !word_fifo_full);
+    wire [31:0] word_fifo_offset = {7'd0, sector, 9'd0} +
+                                   {22'd0, sec_byte_idx[9:2], 2'b00};
+    // Mirrored writes always enqueue an even/odd pair with identical data.
+    // Store that payload once, retaining the same number of queued AXI words.
+    // The read pointer's low bit chooses ROM versus low-RAM destination.
+    generate if (MIRROR_LOW_RAM) begin : g_mirror_fifo
+        (* ram_style = "distributed" *) reg [63:0] words [0:WORD_FIFO_DEPTH/2-1];
+        wire [63:0] head = words[word_fifo_rd_ptr[WORD_FIFO_LOG2-1:1]];
+        always @(posedge clk) begin
+            if (word_fifo_push)
+                words[word_fifo_wr_ptr[WORD_FIFO_LOG2-1:1]] <=
+                    {word_fifo_offset, pack_b0, pack_b1, pack_b2, ctrl_rd_data};
+        end
+        assign word_fifo_head_addr = head[63:32] +
+                                    (word_fifo_rd_ptr[0] ? 32'd0 : ROM_BASE_ADDR);
+        assign word_fifo_head_data = head[31:0];
+    end else begin : g_plain_fifo
+        (* ram_style = "distributed" *) reg [63:0] words [0:WORD_FIFO_DEPTH-1];
+        wire [63:0] head = words[word_fifo_rd_ptr];
+        always @(posedge clk) begin
+            if (word_fifo_push)
+                words[word_fifo_wr_ptr] <=
+                    {word_fifo_offset, pack_b0, pack_b1, pack_b2, ctrl_rd_data};
+        end
+        assign word_fifo_head_addr = head[63:32] + ROM_BASE_ADDR;
+        assign word_fifo_head_data = head[31:0];
+    end endgenerate
 
     reg        burst_active;         // 1 between single-beat launch and B ack
     reg        burst_aw_fired;       // 1 once AW has handshaken
@@ -1020,13 +1049,13 @@ module boot_fsm #(
 
             if (writer_can_launch) begin
                 m_axi_awid    <= AXI_ID;
-                m_axi_awaddr  <= word_fifo_addr[word_fifo_rd_ptr];
+                m_axi_awaddr  <= word_fifo_head_addr;
                 m_axi_awlen   <= 8'd0;
                 m_axi_awsize  <= 3'd2;
                 m_axi_awburst <= 2'b01;
                 m_axi_awvalid <= 1'b1;
-                m_axi_wdata   <= word_fifo_data[word_fifo_rd_ptr];
-                m_axi_wstrb   <= word_fifo_strb[word_fifo_rd_ptr];
+                m_axi_wdata   <= word_fifo_head_data;
+                m_axi_wstrb   <= 4'b1111;
                 m_axi_wlast   <= 1'b1;
                 m_axi_wvalid  <= 1'b1;
                 burst_active     <= 1'b1;
@@ -1545,21 +1574,6 @@ module boot_fsm #(
                                         err_cause <= 3'd4;
                                         st        <= ST_ERROR;
                                     end else begin
-                                        word_fifo_addr[word_fifo_wr_ptr] <=
-                                            ROM_BASE_ADDR + {7'd0, sector, 9'd0} +
-                                            {22'd0, sec_byte_idx[9:2], 2'b00};
-                                        word_fifo_data[word_fifo_wr_ptr] <=
-                                            {pack_b0, pack_b1, pack_b2, ctrl_rd_data};
-                                        word_fifo_strb[word_fifo_wr_ptr] <= 4'b1111;
-                                        word_fifo_addr[word_fifo_wr_ptr +
-                                            {{(WORD_FIFO_LOG2-1){1'b0}}, 1'b1}] <=
-                                            {7'd0, sector, 9'd0} +
-                                            {22'd0, sec_byte_idx[9:2], 2'b00};
-                                        word_fifo_data[word_fifo_wr_ptr +
-                                            {{(WORD_FIFO_LOG2-1){1'b0}}, 1'b1}] <=
-                                            {pack_b0, pack_b1, pack_b2, ctrl_rd_data};
-                                        word_fifo_strb[word_fifo_wr_ptr +
-                                            {{(WORD_FIFO_LOG2-1){1'b0}}, 1'b1}] <= 4'b1111;
                                         word_fifo_wr_ptr <= word_fifo_wr_ptr +
                                             {{(WORD_FIFO_LOG2-2){1'b0}}, 2'd2};
                                         word_fifo_count <= word_fifo_count +
@@ -1571,12 +1585,6 @@ module boot_fsm #(
                                         err_cause <= 3'd4;
                                         st        <= ST_ERROR;
                                     end else begin
-                                        word_fifo_addr[word_fifo_wr_ptr] <=
-                                            ROM_BASE_ADDR + {7'd0, sector, 9'd0} +
-                                            {22'd0, sec_byte_idx[9:2], 2'b00};
-                                        word_fifo_data[word_fifo_wr_ptr] <=
-                                            {pack_b0, pack_b1, pack_b2, ctrl_rd_data};
-                                        word_fifo_strb[word_fifo_wr_ptr] <= 4'b1111;
                                         word_fifo_wr_ptr <= word_fifo_wr_ptr +
                                             {{(WORD_FIFO_LOG2-1){1'b0}}, 1'b1};
                                         word_fifo_count <= word_fifo_count +
