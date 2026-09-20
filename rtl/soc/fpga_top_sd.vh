@@ -556,7 +556,8 @@
     // The PRAM instance (pram_sd.v) deliberately keeps its watchdog.
     sd_ctrl #(
         .REQ_WDOG_ENABLE      (0),
-        .MULTI_WRITE_AS_CMD24 (1),
+        .MULTI_WRITE_AS_CMD24 (SD_SAFE_CMD25 ? 0 : 1),
+        .WRITE_STAGE         (SD_SAFE_CMD25),
         // At core=200 MHz this is 80 ns: four 50 MHz pb clocks, exceeding
         // the read toggle/data sampling window (three pb clocks). Lower
         // supported core frequencies only increase that margin.

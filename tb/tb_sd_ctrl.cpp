@@ -581,6 +581,7 @@ static void tick() {
 }
 
 static void idle_inputs() {
+    dut->stall_transport = 0;
     // Default every scenario to the SHIPPING-parameter sd_ctrl copy.
     // Only the watchdog-mechanism scenarios switch to a time-scaled one;
     // see tb_sd_ctrl.v's header for what each copy shortens and why.
@@ -952,6 +953,14 @@ static bool test_reset_at_every_cmd25_write_phase() {
         points.push_back({name, state, BS_IDLE, idx, 1, -1});
     };
 
+#ifdef SDCTRL_WRITE_STAGE
+    add_s("command-pre-s", 29);
+    add_w("command-pre-w", 30);
+    add_s("command-send", 1);
+    add_w("command-wait", 2);
+    add_s("r1-send", 3);
+    add_w("r1-wait", 4);
+#endif
     add_s("gap-s", S_W_GAP_S);
     add_w("gap-w", S_W_GAP_W);
     add_s("token-s", S_W_TOK_S);
@@ -982,9 +991,22 @@ static bool test_reset_at_every_cmd25_write_phase() {
     points.push_back({"final-busy-w-low", S_W_FBUSY_W, BS_IDLE, -1, 1, 0});
     points.push_back({"final-busy-w-release", S_W_FBUSY_W, BS_IDLE, -1, 1, 1});
 
+    size_t covered = 0;
+#ifdef SDCTRL_WRITE_STAGE
+    const std::vector<uint8_t> commands = {CT_CMD24, CT_CMD25};
+#else
+    const std::vector<uint8_t> commands = {CT_CMD25};
+#endif
+    for (uint8_t command : commands) {
     for (size_t case_idx = 0; case_idx < points.size(); case_idx++) {
         const WriteResetPoint& p = points[case_idx];
+        if (command == CT_CMD24 && p.state >= S_W_STOP_S && p.state <= S_W_FBUSY_W) continue;
         reset();
+#ifdef SDCTRL_WRITE_STAGE
+        // Staging must finish a genuine sector even when the card does not
+        // enforce CRC. A padded/bad-CRC abort would corrupt this sentinel.
+        sd.validates_write_crc = false;
+#endif
         sd.write_busy_ticks = 4;
         const uint32_t hdd_lba = 0x00004000 + (uint32_t)case_idx * 2;
         const uint32_t pram_lba = 8191;
@@ -1003,7 +1025,7 @@ static bool test_reset_at_every_cmd25_write_phase() {
             hdd_payload[k] = (uint8_t)(0x39 ^ case_idx ^ (size_t)(k * 17));
         g_wr_bytes_src = hdd_payload;
         g_wr_src_idx = 0;
-        dut->cmd_type = CT_CMD25;
+        dut->cmd_type = command;
         dut->lba = hdd_lba;
         dut->block_count = 1;
         dut->go = 1;
@@ -1023,6 +1045,10 @@ static bool test_reset_at_every_cmd25_write_phase() {
         // shorter than an SPI byte, so SEND/WAIT cases prove the pending byte
         // is retired after rst deasserts via the latched close request.
         dut->rst = 1;
+#ifdef SDCTRL_WRITE_STAGE
+        g_wr_bytes_src.assign(512, 0xDE); // reset destroys upstream data
+        g_wr_src_idx = 0;
+#endif
         for (int i = 0; i < 8; i++) tick();
         dut->rst = 0;
 
@@ -1071,9 +1097,11 @@ static bool test_reset_at_every_cmd25_write_phase() {
                 return false;
             }
         }
+        ++covered;
+    }
     }
 
-    printf("       (%zu reset landing points covered)\n", points.size());
+    printf("       (%zu reset landing points covered)\n", covered);
     return true;
 }
 
@@ -2191,6 +2219,108 @@ static bool test_crc_write_sends_real_crc() {
                      (unsigned long long)_dt); n_fail++; } \
 } while(0)
 
+#ifdef SDCTRL_WRITE_STAGE
+static bool test_staged_reset_during_fill() {
+    // First sector and partially staged successor: no token for an incomplete
+    // bank, and buffered-but-unsent data must not escape after reset.
+    for (int consumed : {1, 137, 511, 512 + 137, 512 + 138}) {
+        reset();
+        sd.validates_write_crc = false;
+        const uint32_t lba = 0x7000;
+        std::vector<uint8_t> original(3 * 512);
+        for (size_t i = 0; i < original.size(); ++i) original[i] = uint8_t(i * 13 + 9);
+        g_wr_bytes_src = original;
+        if (consumed == 512 + 138) {
+            g_wr_stall_at = consumed;
+            g_wr_stall_cycles = 1000000;
+        }
+        dut->cmd_type = CT_CMD25; dut->lba = lba;
+        dut->block_count = 3; dut->go = 1;
+        tick(); dut->go = 0; dut->cmd_type = CT_IDLE;
+        uint64_t guard = 1000000;
+        while (g_wr_src_idx < size_t(consumed) && guard-- > 0) tick();
+        CHECK_TRUE("staging reset landing reached", guard > 0);
+        if (consumed == 512 + 138) {
+            guard = 1000000;
+            while (dut->dbg_state != 47 && guard-- > 0) tick();
+            CHECK_TRUE("reset between sectors with partial next bank", guard > 0);
+        }
+        if (consumed < 512) CHECK_TRUE("no write command before full sector", !sd.write_session_open());
+        g_wr_bytes_src.assign(3 * 512, 0xDE); g_wr_src_idx = 0;
+        dut->rst = 1;
+        for (int n = 0; n < 8; ++n) tick();
+        dut->rst = 0;
+        guard = 1000000;
+        while (dut->busy && guard-- > 0) tick();
+        CHECK_TRUE("staged reset closes", guard > 0 && !sd.write_session_open());
+        for (const auto& [addr, data] : sd.captured_writes) {
+            CHECK_TRUE("only complete first sector may commit", consumed >= 512 && addr == lba);
+            CHECK_TRUE("reset cannot change active payload", data == std::vector<uint8_t>(original.begin(), original.begin() + 512));
+        }
+        tick(); tick();
+        g_wr_stall_cycles = 0;
+        g_wr_bytes_src.assign(512, 0xA7); g_wr_src_idx = 0;
+        CHECK_TRUE("following PRAM write completes", kick_and_wait(CT_CMD24, 8191, 1));
+        CHECK_TRUE("following write reaches correct sector", sd.captured_writes[8191] == g_wr_bytes_src);
+    }
+    return true;
+}
+
+static bool test_staged_busy_timeout_quarantines() {
+    // A prior quarantine is intentionally not resettable: simulate a real
+    // FPGA/card power cycle before this independent fault injection.
+    dut->final(); delete dut; dut = new Vtb_sd_ctrl;
+    reset();
+    sd.write_busy_ticks = 10000; // staged unit instance has a 64-poll limit
+    g_wr_bytes_src.assign(1024, 0x63);
+    dut->cmd_type = CT_CMD25; dut->lba = 0x7500;
+    dut->block_count = 2; dut->go = 1;
+    tick(); dut->go = 0;
+    uint64_t guard = 1000000;
+    while (dut->dbg_state != 48 && guard-- > 0) tick();
+    CHECK_TRUE("busy timeout enters quarantine", guard > 0);
+    CHECK_TRUE("quarantine retains owner and error", dut->busy && dut->error);
+    tick();
+    CHECK_TRUE("quarantine reports failed completion", dut->done && dut->error);
+    tick();
+    CHECK_TRUE("quarantine completion is a pulse", !dut->done);
+    const auto before = sd.captured_writes;
+    dut->rst = 1;
+    for (int n = 0; n < 8; ++n) tick();
+    dut->rst = 0;
+    dut->cmd_type = CT_CMD24; dut->lba = 8191; dut->block_count = 1;
+    dut->go = 1;
+    tick();
+    CHECK_TRUE("new requests fail without accessing card", dut->done && dut->error);
+    dut->go = 0;
+    for (int n = 0; n < 10000; ++n) tick();
+    CHECK_TRUE("reset/go cannot release quarantined owner", dut->busy && dut->dbg_state == 48);
+    CHECK_TRUE("no following writes while quarantined", sd.captured_writes == before);
+    return true;
+}
+
+static bool test_staged_reset_transport_deadline() {
+    reset();
+    g_wr_bytes_src.assign(1024, 0x47);
+    dut->cmd_type = CT_CMD25; dut->lba = 0x7600;
+    dut->block_count = 2; dut->go = 1;
+    tick(); dut->go = 0;
+    uint64_t guard = 1000000;
+    while (!(dut->dbg_state == S_W_DATA_W && dut->dbg_byte_state == BS_WAIT)
+           && guard-- > 0) tick();
+    CHECK_TRUE("transport fault landing reached", guard > 0);
+    dut->stall_transport = 1;
+    dut->rst = 1;
+    for (int n = 0; n < 8; ++n) tick();
+    dut->rst = 0;
+    guard = 100000;
+    while (dut->dbg_state != 48 && guard-- > 0) tick();
+    CHECK_TRUE("reset cleanup deadline works with normal watchdog disabled", guard > 0);
+    CHECK_TRUE("lost byte response retains bus ownership", dut->busy && dut->error);
+    return true;
+}
+#endif
+
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     dut = new Vtb_sd_ctrl;
@@ -2201,14 +2331,18 @@ int main(int argc, char** argv) {
     RUN(test_cmd24_write);
     RUN(test_cmd25_multi_write);
     RUN(test_cmd25_then_cmd24_without_reset);
+#ifndef SDCTRL_WRITE_STAGE
     RUN(test_reset_mid_cmd25_closes_card_before_restart);
+#endif
     RUN(test_reset_at_every_cmd25_write_phase);
     RUN(test_wr_avail_stalls_the_data_block);
     RUN(test_wr_avail_stall_at_block_boundary);
     RUN(test_cmd25_per_block_state_resets);
+#ifndef SDCTRL_WRITE_STAGE
     RUN(test_cmd25_abort_closes_the_card);
     RUN(test_cmd25_abort_then_pram_save_hits_only_8191);
     RUN(test_abandoned_cmd25_bleeds_next_master_into_the_image);
+#endif
     RUN(test_r1_bad);
     RUN(test_r1_timeout);
     RUN(test_dr_bad);
@@ -2229,6 +2363,12 @@ int main(int argc, char** argv) {
     RUN(test_crc_later_bank_never_published);
     RUN(test_reset_discards_queued_read_banks);
     RUN(test_crc_write_sends_real_crc);
+#ifdef SDCTRL_WRITE_STAGE
+    RUN(test_staged_reset_during_fill);
+    RUN(test_staged_reset_transport_deadline);
+    // Last: quarantine intentionally cannot be cleared by ordinary reset.
+    RUN(test_staged_busy_timeout_quarantines);
+#endif
 
     printf("\n%d/%d scenarios passed.\n", n_pass, n_pass + n_fail);
 

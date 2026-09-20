@@ -1068,6 +1068,12 @@ SDCTRL_RTL   := \
 	$(TB_DIR)/tb_sd_ctrl.v
 SDCTRL_BUILD := $(BUILD_DIR)/sd_ctrl
 SDCTRL_PIPELINE ?= 0
+SDCTRL_WRITE_STAGE ?= 0
+SDCTRL_CFLAGS ?=
+
+.PHONY: tb-sd-ctrl-staged
+tb-sd-ctrl-staged:
+	$(MAKE) tb-sd-ctrl SDCTRL_BUILD=$(BUILD_DIR)/sd_ctrl_staged SDCTRL_WRITE_STAGE=1 SDCTRL_CFLAGS=-DSDCTRL_WRITE_STAGE
 
 .PHONY: tb-sd-ctrl-pipeline
 tb-sd-ctrl-pipeline:
@@ -1089,9 +1095,10 @@ $(SDCTRL_BUILD)/Vtb_sd_ctrl: $(SDCTRL_RTL) $(TB_DIR)/tb_sd_ctrl.cpp
 		-Mdir $(SDCTRL_BUILD) \
 		--top-module tb_sd_ctrl \
 		-GREAD_PIPELINE=$(SDCTRL_PIPELINE) \
+		-GWRITE_STAGE=$(SDCTRL_WRITE_STAGE) \
 		$(SDCTRL_RTL) \
 		$(TB_DIR)/tb_sd_ctrl.cpp \
-		-CFLAGS "-std=c++17"
+		-CFLAGS "-std=c++17 $(SDCTRL_CFLAGS)"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # sd_jtag_writer focused unit testbench (JTAG AXI-Lite -> CMD24 writer)
@@ -2512,6 +2519,7 @@ lint-configs: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V))
 	           "nosdjtag+l2c:-DDISABLE_SD_JTAG_WRITER -DL2C_ENABLE -DVRAM_IN_DDR" \
 	           "ila:-DILA_ENABLE -DVIO_ENABLE -DJTAG_AXI_ENABLE -DL2C_ENABLE -DVRAM_IN_DDR" \
 	           "ship:-DVIO_ENABLE -DJTAG_AXI_ENABLE -DL2C_ENABLE -DVRAM_IN_DDR -DDISABLE_SD_JTAG_WRITER" \
+	           "ship+cmd25:-DVIO_ENABLE -DJTAG_AXI_ENABLE -DL2C_ENABLE -DVRAM_IN_DDR -DDISABLE_SD_JTAG_WRITER -GSD_SAFE_CMD25=1" \
 	           "scsitrace:-DSCSI_TRACE_ENABLE -DVIO_ENABLE -DL2C_ENABLE -DVRAM_IN_DDR" \
 	           "noscsitrace:-DVIO_ENABLE -DL2C_ENABLE -DVRAM_IN_DDR"; do \
 	  name=$${cfg%%:*}; defs=$${cfg#*:}; \
@@ -5031,6 +5039,15 @@ SCSI_SD_E2E_PROD_BUILD := $(BUILD_DIR)/scsi_sd_e2e_production
 SCSI_SD_E2E_PROD_BASE_BUILD := $(BUILD_DIR)/scsi_sd_e2e_production_baseline
 SCSI_SD_E2E_PROD100_BUILD := $(BUILD_DIR)/scsi_sd_e2e_production100
 SCSI_SD_E2E_CMD25_BUILD := $(BUILD_DIR)/scsi_sd_e2e_cmd25_experiment
+SCSI_SD_E2E_STAGED_BUILD := $(BUILD_DIR)/scsi_sd_e2e_staged
+
+.PHONY: tb-scsi-sd-perf-staged
+tb-scsi-sd-perf-staged: $(SCSI_SD_E2E_STAGED_BUILD)/Vtb_scsi_sd_e2e
+	$(SCSI_SD_E2E_STAGED_BUILD)/Vtb_scsi_sd_e2e
+
+$(SCSI_SD_E2E_STAGED_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
+		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_STAGED_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION +define+SCSI_REAL_TIMEOUTS +define+SCSI_E2E_CMD25 +define+SCSI_E2E_WRITE_STAGE -CFLAGS "-DSCSI_E2E_C96 -DSCSI_E2E_PERF_OPT -DSCSI_E2E_CMD25")
 
 # Simulation-only A/B. Production keeps closed-per-sector CMD24 writes until
 # multi-write recovery and on-card performance are validated independently.

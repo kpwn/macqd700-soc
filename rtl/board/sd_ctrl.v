@@ -65,6 +65,9 @@
 //       between bytes is always legal for the card.  Callers that keep
 //       a whole block buffered before they start tie it high and get
 //       the legacy unpaced behaviour bit for bit.
+//       With WRITE_STAGE=1, these pulses consume into two local sector
+//       banks; the SPI token waits for a full bank. Normal completion still
+//       waits for every sector's card response/busy and CMD25 stop/busy.
 //       HISTORY: there used to be NO write-side back-pressure at all.
 //       S_W_DATA_S latched wr_data and issued the SPI byte
 //       unconditionally whenever the byte engine was idle, so a
@@ -186,7 +189,16 @@ module sd_ctrl #(
     parameter integer RD_FLUSH_PACE_CYCLES = 32,
     // Two sector banks overlap SPI reception with CRC-validated delivery.
     // Disabled by default for callers retaining the single-buffer behavior.
-    parameter integer READ_PIPELINE = 0
+    parameter integer READ_PIPELINE = 0,
+    // Whole-sector ping-pong write staging. No data token is sent until
+    // all 512 bytes are owned locally. A controlled reset drains the active
+    // sector with its genuine CRC, closes CMD25, then resets. Cleanup failure
+    // retains busy (bus quarantine) until FPGA reconfiguration/power cycle.
+    parameter integer WRITE_STAGE = 0,
+    // CDC round trip includes the registered pb-side pulse and producer
+    // update. 32 core clocks = 160ns at 200MHz, above that 50MHz-pb bound.
+    parameter integer WRITE_STAGE_PACE = 32,
+    parameter [19:0] WRITE_BUSY_TIMEOUT = 20'd1000000
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -536,11 +548,29 @@ module sd_ctrl #(
         S_AB_STOP_W   = 6'd43,
         S_AB_FBUSY_S  = 6'd44,
         S_AB_FBUSY_W  = 6'd45,
-        S_RD_DRAIN    = 6'd46;
+        S_RD_DRAIN    = 6'd46,
+        S_W_STAGE     = 6'd47,
+        S_W_QUARANTINE = 6'd48;
 
     // Widened from [4:0] (5 bits, 0..31) to [5:0] to make room for the
     // new S_RD_FLUSH_S state above the pre-existing 0..30 range.
     reg [5:0]  st;
+    (* ram_style = "block" *) reg [7:0] wr_sector_buf [0:1023];
+    reg [7:0] wr_sector_data;
+    reg [1:0] wr_sector_full;
+    reg wr_fill_bank, wr_drain_bank;
+    reg [8:0] wr_fill_idx;
+    reg [15:0] wr_filled_blocks;
+    reg [7:0] wr_fill_pace;
+    reg wr_stage_first;
+    reg wr_command_started;
+    reg wr_quarantine_reported;
+    // Registered BRAM read: prefetch the next index while SPI transmits the
+    // current byte, so data is ready on the next S_W_DATA_S launch edge.
+    always @(posedge clk) begin
+        wr_sector_data <= wr_sector_buf[{wr_drain_bank,
+            ((st == S_W_DATA_W) ? byte_idx[8:0] + 9'd1 : byte_idx[8:0])}];
+    end
     reg [3:0]  cur_cmd;        // SC_* — which command frame is on-the-wire
     reg [2:0]  frame_idx;      // 0..5 for 6-byte CMD frame
     reg [9:0]  byte_idx;       // 0..511 within a data block
@@ -818,7 +848,7 @@ module sd_ctrl #(
     // budget for no protocol-mandated reason.
     localparam [19:0] POLL_TIMEOUT  = 20'd1000000;   // R1
     localparam [19:0] TOKEN_TIMEOUT = 20'd500000;    // 0xFE token
-    localparam [19:0] BUSY_TIMEOUT  = 20'd1000000;   // write busy
+    localparam [19:0] BUSY_TIMEOUT  = WRITE_BUSY_TIMEOUT;
 
     // ══════════════════════════════════════════════════════════════════
     // GLOBAL PER-REQUEST WATCHDOG  (the bounded-response guarantee)
@@ -930,7 +960,10 @@ module sd_ctrl #(
     // parameter comment at the top of the file.  Keeping the counter live
     // when disabled means the arm/clear logic below stays on exactly one
     // code path, so turning the knob cannot perturb anything else.
-    assign      wdog_expired    = (REQ_WDOG_ENABLE != 0) &&
+    // Staged reset cleanup remains bounded even when normal request
+    // starvation timeouts are disabled by the platform.
+    assign      wdog_expired    = ((REQ_WDOG_ENABLE != 0) ||
+                                  (WRITE_STAGE && reset_close_pending)) &&
                                   wdog_armed && (wdog_ticks >= wdog_limit);
 
     always @(posedge clk) begin
@@ -1022,6 +1055,15 @@ module sd_ctrl #(
             rd_drain_bank   <= 1'b0;
             wdog_rearm      <= 1'b0;
             wdog_rearmed_q  <= 1'b0;
+            wr_sector_full <= 2'b00;
+            wr_fill_bank <= 1'b0;
+            wr_drain_bank <= 1'b0;
+            wr_fill_idx <= 9'd0;
+            wr_filled_blocks <= 16'd0;
+            wr_fill_pace <= 8'd0;
+            wr_stage_first <= 1'b1;
+            wr_command_started <= 1'b0;
+            wr_quarantine_reported <= 1'b0;
         end else begin
             // Default one-cycle pulses
             bgo      <= 1'b0;
@@ -1030,7 +1072,28 @@ module sd_ctrl #(
             done     <= 1'b0;
             wdog_rearm <= 1'b0;
 
+            // Producer and SPI consumer own different complete-sector banks.
+            // Never accept source bytes during reset or error recovery.
+            if (WRITE_STAGE && write_reset_active && !rst &&
+                !reset_close_pending && !error && st != S_W_QUARANTINE) begin
+                if (wr_fill_pace != 0) wr_fill_pace <= wr_fill_pace - 8'd1;
+                else if (!wr_sector_full[wr_fill_bank] &&
+                         wr_filled_blocks < block_count_lat && wr_avail) begin
+                    wr_sector_buf[{wr_fill_bank, wr_fill_idx}] <= wr_data;
+                    wr_ready <= 1'b1;
+                    wr_fill_pace <= WRITE_STAGE_PACE - 1;
+                    if (wr_fill_idx == 9'd511) begin
+                        wr_sector_full[wr_fill_bank] <= 1'b1;
+                        wr_fill_bank <= ~wr_fill_bank;
+                        wr_fill_idx <= 9'd0;
+                        wr_filled_blocks <= wr_filled_blocks + 16'd1;
+                    end else wr_fill_idx <= wr_fill_idx + 9'd1;
+                end
+            end
+
 `ifdef VERILATOR
+            if (WRITE_STAGE && st == S_W_TOK_S && !wr_sector_full[wr_drain_bank])
+                $fatal(1, "sd_ctrl: write token before a complete sector was staged");
             if (READ_PIPELINE && st == S_RD_WAIT && bdone &&
                 rd_bank_valid[rd_fill_bank])
                 $fatal(1, "sd_ctrl: overwriting an undrained read bank");
@@ -1064,6 +1127,15 @@ module sd_ctrl #(
                 S_IDLE: begin
                     wr_valid <= 1'b0;
                     if (go) begin
+                        wr_sector_full <= 2'b00;
+                        wr_fill_bank <= 1'b0;
+                        wr_drain_bank <= 1'b0;
+                        wr_fill_idx <= 9'd0;
+                        wr_filled_blocks <= 16'd0;
+                        wr_fill_pace <= WRITE_STAGE_PACE - 1;
+                        wr_stage_first <= 1'b1;
+                        wr_command_started <= 1'b0;
+                        wr_quarantine_reported <= 1'b0;
                         rd_bank_valid <= 2'b00;
                         rd_fill_bank <= 1'b0;
                         rd_drain_bank <= 1'b0;
@@ -1093,10 +1165,13 @@ module sd_ctrl #(
                         case (cmd_type)
                             CT_CMD17: begin cur_cmd <= SC_CMD17; st <= S_CMD_PRE_S; end
                             CT_CMD18: begin cur_cmd <= SC_CMD18; st <= S_CMD_PRE_S; end
-                            CT_CMD24: begin cur_cmd <= SC_CMD24; st <= S_CMD_PRE_S; end
+                            CT_CMD24: begin
+                                cur_cmd <= SC_CMD24;
+                                st <= WRITE_STAGE ? S_W_STAGE : S_CMD_PRE_S;
+                            end
                             CT_CMD25: begin
                                 cur_cmd <= MULTI_WRITE_AS_CMD24 ? SC_CMD24 : SC_CMD25;
-                                st <= S_CMD_PRE_S;
+                                st <= WRITE_STAGE ? S_W_STAGE : S_CMD_PRE_S;
                             end
                             default: begin
                                 error     <= 1'b1;
@@ -1227,7 +1302,8 @@ module sd_ctrl #(
                             if (poll_cnt >= POLL_TIMEOUT) begin
                                 error     <= 1'b1;
                                 err_cause <= ERR_R1_TO;
-                                st        <= S_ERROR;
+                                st        <= (WRITE_STAGE && write_reset_active)
+                                             ? S_W_QUARANTINE : S_ERROR;
                             end else begin
                                 poll_cnt <= poll_cnt + 20'd1;
                                 st       <= S_R1_SEND;
@@ -1475,6 +1551,33 @@ module sd_ctrl #(
                 end
 
                 // ────────── WRITE PATH ──────────
+                S_W_STAGE: begin
+                    wr_valid <= 1'b1;
+                    if (reset_close_pending || rst) begin
+                        wr_valid <= 1'b0;
+                        st <= (wr_command_started && cur_cmd == SC_CMD25)
+                              ? S_W_STOP_S : S_DONE;
+                    end else if (wr_sector_full[wr_drain_bank]) begin
+                        wr_valid <= 1'b0;
+                        byte_idx <= 10'd0;
+                        wr_command_started <= 1'b1;
+                        st <= wr_stage_first ? S_CMD_PRE_S : S_W_TOK_S;
+                        wr_stage_first <= 1'b0;
+                    end
+                end
+                S_W_QUARANTINE: begin
+                    // Keep CS/ownership despite go/reset: the card state
+                    // is unknown. Ordinary reset must not permit another
+                    // client's command frame to be consumed as write data.
+                    busy <= 1'b1;
+                    error <= 1'b1;
+                    bgo <= 1'b0;
+                    wr_ready <= 1'b0;
+                    wr_valid <= 1'b0;
+                    // Fail the caller without releasing the physical bus.
+                    if (!wr_quarantine_reported || go) done <= 1'b1;
+                    wr_quarantine_reported <= 1'b1;
+                end
                 // 0xFF gap byte after R1.
                 S_W_GAP_S: begin
                     if (bst == BS_IDLE) begin
@@ -1514,10 +1617,11 @@ module sd_ctrl #(
                 // always legal — SPI is host-clocked — and is bounded by
                 // the global request watchdog.
                 S_W_DATA_S: begin
-                    if ((bst == BS_IDLE) && wr_avail) begin
-                        bt          <= wr_data;
-                        wr_ready    <= 1'b1;          // consumed one byte
-                        wr_crc_calc <= crc16_step(wr_crc_calc, wr_data);
+                    if ((bst == BS_IDLE) && (WRITE_STAGE || wr_avail)) begin
+                        bt          <= WRITE_STAGE ? wr_sector_data : wr_data;
+                        if (!WRITE_STAGE) wr_ready <= 1'b1;
+                        wr_crc_calc <= crc16_step(wr_crc_calc,
+                                                 WRITE_STAGE ? wr_sector_data : wr_data);
                         bgo         <= 1'b1;
                         st          <= S_W_DATA_W;
                     end
@@ -1604,7 +1708,7 @@ module sd_ctrl #(
                                 error     <= 1'b1;
                                 err_cause <= ERR_DR_BAD;
                                 busy_cnt  <= 20'd0;
-                                st        <= S_AB_BUSY_S;
+                                st        <= WRITE_STAGE ? S_W_QUARANTINE : S_AB_BUSY_S;
                             end else begin
                                 poll_cnt <= poll_cnt + 20'd1;
                                 st       <= S_W_RESP_S;
@@ -1625,14 +1729,19 @@ module sd_ctrl #(
                     if (bdone) begin
                         if (br != 8'h00) begin
                             // Busy released.  Next block, or end.
+                            if (WRITE_STAGE) begin
+                                wr_sector_full[wr_drain_bank] <= 1'b0;
+                                wr_drain_bank <= ~wr_drain_bank;
+                            end
                             if (cur_cmd == SC_CMD25) begin
-                                if (block_idx + 16'd1 >= block_count_lat) begin
+                                if (block_idx + 16'd1 >= block_count_lat ||
+                                    (WRITE_STAGE && (reset_close_pending || rst))) begin
                                     // All blocks sent — issue stop-tran token.
                                     st <= S_W_STOP_S;
                                 end else begin
                                     block_idx <= block_idx + 16'd1;
                                     byte_idx  <= 10'd0;
-                                    st        <= S_W_TOK_S;
+                                    st        <= WRITE_STAGE ? S_W_STAGE : S_W_TOK_S;
                                 end
                             end else if (MULTI_WRITE_AS_CMD24 &&
                                          cmd_type_lat == CT_CMD25 &&
@@ -1645,7 +1754,8 @@ module sd_ctrl #(
                                 frame_idx <= 3'd0;
                                 poll_cnt  <= 20'd0;
                                 byte_idx  <= 10'd0;
-                                st        <= S_CMD_PRE_S;
+                                wr_stage_first <= 1'b1;
+                                st        <= WRITE_STAGE ? S_W_STAGE : S_CMD_PRE_S;
                             end else begin
                                 // CMD24, or the final decomposed block.
                                 st <= S_DONE;
@@ -1656,7 +1766,7 @@ module sd_ctrl #(
                             // stop-tran before reporting (see S_AB_*).
                             error     <= 1'b1;
                             err_cause <= ERR_BUSY_TO;
-                            st        <= S_AB_STOP_S;
+                            st        <= WRITE_STAGE ? S_W_QUARANTINE : S_AB_STOP_S;
                         end else begin
                             busy_cnt <= busy_cnt + 20'd1;
                             st       <= S_W_BUSY_S;
@@ -1692,7 +1802,7 @@ module sd_ctrl #(
                         end else if (busy_cnt >= BUSY_TIMEOUT) begin
                             error     <= 1'b1;
                             err_cause <= ERR_BUSY_TO;
-                            st        <= S_ERROR;
+                            st        <= WRITE_STAGE ? S_W_QUARANTINE : S_ERROR;
                         end else begin
                             busy_cnt <= busy_cnt + 20'd1;
                             st       <= S_W_FBUSY_S;
@@ -1709,9 +1819,8 @@ module sd_ctrl #(
                 //   * `error` and `err_cause` are ALREADY latched by the
                 //     site that decided to abort and are never touched
                 //     here — the caller sees the original cause.
-                //   * No error escalation: a timeout inside the close
-                //     just moves on to the next step.  The close is
-                //     best-effort card hygiene, not a new failure mode.
+                //   * Legacy close is best-effort on timeout. Staged writes
+                //     instead quarantine the bus if closure cannot be proven.
                 //   * `wr_ready` is never pulsed, so the producer is not
                 //     asked for bytes it may not have.
 
@@ -1801,7 +1910,9 @@ module sd_ctrl #(
                 end
                 S_AB_BUSY_W: begin
                     if (bdone) begin
-                        if (br != 8'h00 || busy_cnt >= BUSY_TIMEOUT) begin
+                        if (WRITE_STAGE && br == 8'h00 && busy_cnt >= BUSY_TIMEOUT) begin
+                            st <= S_W_QUARANTINE;
+                        end else if (br != 8'h00 || busy_cnt >= BUSY_TIMEOUT) begin
                             st <= S_AB_STOP_S;
                         end else begin
                             busy_cnt <= busy_cnt + 20'd1;
@@ -1838,7 +1949,9 @@ module sd_ctrl #(
                 end
                 S_AB_FBUSY_W: begin
                     if (bdone) begin
-                        if (br != 8'h00 || busy_cnt >= BUSY_TIMEOUT) begin
+                        if (WRITE_STAGE && br == 8'h00 && busy_cnt >= BUSY_TIMEOUT) begin
+                            st <= S_W_QUARANTINE;
+                        end else if (br != 8'h00 || busy_cnt >= BUSY_TIMEOUT) begin
                             st <= S_ERROR;
                         end else begin
                             busy_cnt <= busy_cnt + 20'd1;
@@ -1904,7 +2017,11 @@ module sd_ctrl #(
                     error     <= 1'b1;
                     err_cause <= ERR_WDOG;
                 end
-                if (wr_close_needed && !wdog_rearmed_q) begin
+                if (WRITE_STAGE && write_reset_active) begin
+                    // Lost transport progress is not permission to release
+                    // an open/possibly accepted card session to another owner.
+                    st <= wr_command_started ? S_W_QUARANTINE : S_ERROR;
+                end else if (wr_close_needed && !wdog_rearmed_q) begin
                     wdog_rearm     <= 1'b1;
                     wdog_rearmed_q <= 1'b1;
                     busy_cnt       <= 20'd0;
@@ -1924,7 +2041,11 @@ module sd_ctrl #(
             // close used by error exits.  Pre-R1 requests keep advancing
             // until acceptance or failure, and normal/abort tails already in
             // progress are left alone.  local_rst fires after busy falls.
-            if (reset_close_pending && wr_close_needed &&
+            if (WRITE_STAGE && reset_close_pending && !wdog_rearmed_q) begin
+                wdog_rearm <= 1'b1;
+                wdog_rearmed_q <= 1'b1;
+            end
+            if (!WRITE_STAGE && reset_close_pending && wr_close_needed &&
                 !wdog_rearmed_q && !wr_close_wait_byte) begin
                 wdog_rearm     <= 1'b1;
                 wdog_rearmed_q <= 1'b1;

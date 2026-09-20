@@ -49,10 +49,12 @@
 // given `go`; the others sit in S_IDLE with their watchdogs unarmed.
 
 module tb_sd_ctrl #(
-    parameter integer READ_PIPELINE = 0
+    parameter integer READ_PIPELINE = 0,
+    parameter integer WRITE_STAGE = 0
 ) (
     input  wire        clk,
     input  wire        rst,
+    input  wire        stall_transport,
 
     // Which sd_ctrl copy the scenario is driving: 0 = u_ship (default),
     // 1 = u_fast_tick, 2 = u_tiny_base, 3 = u_wdog_off.  See the header.
@@ -177,7 +179,11 @@ module tb_sd_ctrl #(
                                       u_ship.dbg_block_idx;
 
     // Shipping parameters — the configuration that actually ships.
-    sd_ctrl #(.READ_PIPELINE(READ_PIPELINE)) u_ship (
+    sd_ctrl #(.READ_PIPELINE(READ_PIPELINE), .WRITE_STAGE(WRITE_STAGE),
+              .REQ_WDOG_ENABLE(WRITE_STAGE ? 0 : 1),
+              .REQ_WDOG_TICK_LOG2(WRITE_STAGE ? 3 : 12),
+              .REQ_WDOG_BASE_TICKS(WRITE_STAGE ? 22'd8192 : 22'd245760),
+              .WRITE_BUSY_TIMEOUT(WRITE_STAGE ? 20'd64 : 20'd1000000)) u_ship (
         .clk           (clk),
         .rst           (rst),
 
@@ -199,7 +205,7 @@ module tb_sd_ctrl #(
         .spi_cmd_valid (s_cmd_valid),
         .spi_cmd_ready (cmd_ready & sel_ship),
         .spi_cmd_data  (s_cmd_data),
-        .spi_rsp_valid (rsp_valid & sel_ship),
+        .spi_rsp_valid (rsp_valid & sel_ship & ~stall_transport),
         .spi_rsp_data  (rsp_data),
 
         .busy          (s_busy),

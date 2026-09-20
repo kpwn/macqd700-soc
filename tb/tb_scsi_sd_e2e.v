@@ -256,6 +256,9 @@ module tb_scsi_sd_e2e (
 `endif
 `endif
 `ifdef SCSI_E2E_CMD25
+`ifdef SCSI_E2E_WRITE_STAGE
+        .WRITE_STAGE(1),
+`endif
         .MULTI_WRITE_AS_CMD24(0)
 `else
         .MULTI_WRITE_AS_CMD24(1)

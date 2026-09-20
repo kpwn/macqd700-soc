@@ -448,6 +448,11 @@ if {$video_smoke != 0 && $video_smoke != 1} {
     exit 1
 }
 set boot_rom_sectors [parse_int_env BOOT_ROM_SECTORS 2048]
+set sd_safe_cmd25 [parse_int_env SD_SAFE_CMD25 0]
+if {$sd_safe_cmd25 ni {0 1}} {error "SD_SAFE_CMD25 must be 0 or 1"}
+if {$sd_safe_cmd25 && [info exists ::env(ENABLE_SD_JTAG_WRITER)]} {
+    error "SD_SAFE_CMD25 requires the preemptive provisioning writer to be disabled"
+}
 if {$boot_rom_sectors <= 0 || $boot_rom_sectors > 65535} {
     puts stderr "ERROR: BOOT_ROM_SECTORS must be in the range 1..65535; got $boot_rom_sectors."
     exit 1
@@ -786,6 +791,7 @@ set top_generic_list [list \
     VIDEO_SMOKE=$video_smoke \
     ETH_ICMP_RESPONDER=$eth_icmp_responder \
     BOOT_ROM_SECTORS=$boot_rom_sectors \
+    SD_SAFE_CMD25=$sd_safe_cmd25 \
     BUILD_ID=$build_id_generic
 ]
 set_property generic [join $top_generic_list " "] [current_fileset]
@@ -2872,6 +2878,7 @@ puts $buildinfo_fh "target_freq_mhz=$target_freq_mhz"
 puts $buildinfo_fh "core_clk_hz=$core_clk_hz"
 puts $buildinfo_fh "video_smoke=$video_smoke"
 puts $buildinfo_fh "boot_rom_sectors=$boot_rom_sectors"
+puts $buildinfo_fh "sd_safe_cmd25=$sd_safe_cmd25"
 # Record the memory-system cutover knobs.  These were previously absent,
 # so there was NO way to tell from a shipped artifact whether a bitstream
 # had the L2C in it -- answering that question on 2026-08-03 required

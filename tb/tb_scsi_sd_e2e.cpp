@@ -1713,6 +1713,19 @@ static bool c24_c96_write_performance() {
     return true;
 }
 
+static bool c25_c96_write_clock_phase_sweep() {
+    for (int offset = 0; offset < 2 * PB_HALF_NS; ++offset) {
+        initial_pb_offset_ns = offset;
+        if (!c96_write10_multi(125000, 4, 48, 511, 50000, "write-phase")) {
+            std::printf("  FAIL write CDC at pb offset %d ns\n", offset);
+            initial_pb_offset_ns = 0;
+            return false;
+        }
+    }
+    initial_pb_offset_ns = 0;
+    return true;
+}
+
 static bool c19_c96_read_performance() {
     for (int blocks : {1, 2, 8, 32, 64}) {
         if (!c96_read10_measured(blocks)) return false;
@@ -2189,6 +2202,7 @@ int main(int argc, char** argv) {
     RUN(c17_c96_write10_3blocks_provider_fails_first_block);
     RUN(c18_c96_back_to_back_write10_stress);
     RUN(c24_c96_write_performance);
+    RUN(c25_c96_write_clock_phase_sweep);
 #else
     RUN(s1_tur);
     RUN(s2_inquiry);
