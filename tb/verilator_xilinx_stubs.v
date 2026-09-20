@@ -135,60 +135,28 @@ module BUFGCE_DIV #(
 endmodule
 
 module debug_vio (
-    input  wire        clk,
-    input  wire        probe_in0,
-    input  wire [11:0] probe_in1,
-    input  wire [10:0] probe_in2,
-    input  wire [19:0] probe_in3,
-    input  wire [23:0] probe_in4,
-    input  wire [31:0] probe_in5,
-    input  wire [15:0] probe_in6,
-    input  wire [5:0]  probe_in7,
-    input  wire        probe_in8,
-    input  wire [31:0] probe_in9,
-    input  wire [4:0]  probe_in10,
-    input  wire [1:0]  probe_in11,
-    input  wire [9:0]  probe_in12,
-    input  wire [7:0]  probe_in13,
-    input  wire [95:0] probe_in14,
-    input  wire [15:0] probe_in15,
-    input  wire [31:0] probe_in16,
-    input  wire [31:0] probe_in17,
-    // probe_in18/19 (vio_boot_diag / vio_boot_crc) were added to the RTL
-    // and to the real Xilinx IP config but never to this stub, so a
-    // VIO_ENABLE lint could not elaborate at all.  Since `make lint`
-    // does not define VIO_ENABLE, nothing ever caught it -- the whole
-    // VIO block is invisible to the default lint.  Completed here so
-    // the VIO config can actually be linted (see synth/vivado.tcl's
-    // gen_debug_vio_ip for the authoritative widths).
-    input  wire [31:0] probe_in18,
-    input  wire [31:0] probe_in19,
-    input  wire [19:0] probe_in20,
-    input  wire [67:0] probe_in21,
-    input  wire [75:0] probe_in22,
-    input  wire [47:0] probe_in23,
-    // Task #243 — coherent scan-out snapshot + committed placement.
-    // Widths must track CONFIG.C_PROBE_IN24/25_WIDTH in
-    // synth/vivado.tcl's gen_debug_vio_ip, or lint and synth disagree.
-    input  wire [95:0] probe_in24,
-    input  wire [63:0] probe_in25,
-    // 53C96 initiator-state probe.  Width must track
-    // CONFIG.C_PROBE_IN26_WIDTH {84} in synth/vivado.tcl's
-    // gen_debug_vio_ip, or lint and synth disagree.
-    input  wire [83:0] probe_in26,
-    output wire [3:0]  probe_out0,
-    output wire        probe_out1
+    input wire clk,
+    input wire [31:0] probe_in0,
+    input wire [5:0] probe_in1,
+    input wire [9:0] probe_in2,
+    input wire [7:0] probe_in3,
+    input wire [15:0] probe_in4,
+    input wire [31:0] probe_in5,
+    input wire [31:0] probe_in6,
+    input wire [31:0] probe_in7,
+    input wire [31:0] probe_in8,
+    input wire [67:0] probe_in9,
+    input wire [186:0] probe_in10,
+    input wire [47:0] probe_in11,
+    input wire [95:0] probe_in12,
+    input wire [159:0] probe_in13,
+    input wire [83:0] probe_in14,
+    output wire [4:0] probe_out0,
+    output wire probe_out1
 );
-    assign probe_out0 = 4'b0011;
+    assign probe_out0 = 5'b00011;
     assign probe_out1 = 1'b0;
-
-    wire _unused = &{clk, probe_in0, probe_in1, probe_in2, probe_in3,
-                     probe_in4, probe_in5, probe_in6, probe_in7, probe_in8,
-                     probe_in9, probe_in10, probe_in11, probe_in12,
-                     probe_in13, probe_in14, probe_in15, probe_in16,
-                     probe_in17, probe_in18, probe_in19, probe_in20,
-                     probe_in21, probe_in22, probe_in23, probe_in24,
-                     probe_in25, probe_in26, 1'b0};
+    wire _unused = &{1'b0, clk, probe_in0, probe_in1, probe_in2, probe_in3, probe_in4, probe_in5, probe_in6, probe_in7, probe_in8, probe_in9, probe_in10, probe_in11, probe_in12, probe_in13, probe_in14};
 endmodule
 
 // Ethernet-link clock/delay primitives used by q700_eth_link.sv.  Functional

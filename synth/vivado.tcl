@@ -796,47 +796,8 @@ puts "=== TOP GENERICS: CORE_CLK_HZ=$core_clk_hz CORE_CLK_DIVIDE=$core_clk_divid
 # $output_dir/ip/debug_vio.  Probe widths match the wires brought out
 # to the debug_vio instance at the bottom of rtl/fpga_top.v:
 #
-#   probe_in0  1b   hdmi_mmcm_locked     MMCM locked (HDMI clocks alive)
-#   probe_in1  12b  video_debug_hcount   VTG horizontal counter
-#   probe_in2  11b  video_debug_vcount   VTG vertical counter
-#   probe_in3  20b  vram_rd_addr         Scanner VRAM read address
-#   probe_in4  24b  video_debug_rgb      Last RGB pixel sent to HDMI pad
-#   probe_in5  32b  dbg_pc               Last-committed CPU PC
-#   probe_in6  16b  ddr_dbg_r_cnt[15:0]  DDR read-beat counter (low 16b)
-#   probe_in7  6b   {cpu_resetn,core_rst,ddr_cal_done,boot_rom_ready,
-#                    hdmi_i2c_done,fb_underflow_sticky}
-#   probe_in8  1b   s0_wready            DDR xbar write-ready
-#   probe_in9  32b  dbg_committed        Retired-insn counter (catch-all)
-#   probe_in10 5b   HDMI control bundle  {resetn,i2c_done,de,vs,hs}
-#   probe_in11 2b   VRAM read bundle     {rd_valid,rd_en}
-#   probe_in12 10b  DDR AXI handshakes
-#   probe_in13 8b   Boot/video status bundle    (renamed from probe_in15)
-#   probe_in14 96b  {dafb_fb_base_px,dafb_fb_stride_px,dafb_fb_bpp_reg}
-#                                                (renamed from probe_in16)
-#   probe_in15 16b  AXI/boot error summary      (renamed from probe_in18)
-#   (dropped 2026-04-26 by debug-bloat-cull to free LUTs:
-#     - old probe_in13 32b vram_write_count + dafb_write_count
-#     - old probe_in14 8b VRAM smoke handshakes (only useful with VIDEO_SMOKE=1)
-#     - old probe_in17 64b fb_reader stats — readable via JTAG-AXI debug_ctrl)
-#   probe_out0 5b   JTAG ROM-load + debug + SCC + PRAM controls:
-#                   bit0 = bypass SD boot / hold boot_fsm reset
-#                   bit1 = release CPU after host ROM load
-#                   bit2 = SCC UART select (0 = channel A, 1 = channel B).
-#                          Originally bit2 was a CPU-only halt; that
-#                          function is subsumed by bit3 debug_full_reset.
-#                   bit3 = full debug reset — equivalent of board cold reset
-#                          for the CPU-side fabric: re-arms reset overlay
-#                          AND resets VIA1 (ORB[3]) AND holds the CPU.
-#                          Releasing bit3 lets the CPU resume from the reset
-#                          PC with the low-mem ROM alias live again.  See
-#                          task #256 / docs/hw_debug.md.
-#                   bit4 = zap PRAM (Cmd-Opt-P-R equivalent).  PRAM is
-#                          battery-backed — rtc.v does NOT clear it on any
-#                          reset — so this is the only software-reachable
-#                          way back to a known-good image.  EDGE-triggered
-#                          in RTL (fpga_top_clocks.vh one-shot): holding
-#                          the bit does not hold PRAM clear.  JTAG REPL:
-#                          `pram-clear`.
+# Compact map v27 is documented in synth/vio_dashboard.tcl.
+# Values and reset outputs remain enabled; input activity tracking is off.
 # ──────────────────────────────────────────────────────────────────────────────
 # v15 (2026-07-24): the marker_ok check below only verifies probe
 # COUNT/WIDTH, not which actual net each probe_inN resolves to. The
@@ -853,105 +814,44 @@ proc gen_debug_vio_ip {output_dir part} {
     set ip_dir $output_dir/ip
     set ip_xci $ip_dir/debug_vio/debug_vio.xci
     set ip_dcp $ip_dir/debug_vio/debug_vio.dcp
-    # WARNING (learned the hard way 2026-08-18): the width literals in the
-    # marker check below are HARDCODED. Changing a CONFIG.C_PROBE_INn_WIDTH in
-    # the create_ip block does NOT invalidate this cache -- the stale IP is
-    # reused, the build SUCCEEDS, and the probe silently keeps its OLD width.
-    # That cost a full ~2 h build: vio_scsi_sd came back 76 bits after being
-    # widened to 187. When you change a probe width you MUST also update the
-    # matching probe_inNN_width literal in BOTH the marker check and the
-    # marker write below, and bump probe_map=vNN.
-    set ip_marker $ip_dir/debug_vio/m68k_ooo_probe_map_v20.txt
+    # Compact map v27. Exact configuration is the cache key, including
+    # all probe widths and the disabled activity-detector setting.
+    set widths {32 6 10 8 16 32 32 32 32 68 187 48 96 160 84}
+    set config [list CONFIG.C_NUM_PROBE_IN [llength $widths] \
+        CONFIG.C_NUM_PROBE_OUT 2 CONFIG.C_PROBE_OUT0_WIDTH 5 \
+        CONFIG.C_PROBE_OUT0_INIT_VAL 0x0 CONFIG.C_PROBE_OUT1_WIDTH 1 \
+        CONFIG.C_PROBE_OUT1_INIT_VAL 0x0 CONFIG.C_EN_PROBE_IN_ACTIVITY 0]
+    set n 0
+    foreach width $widths {
+        lappend config CONFIG.C_PROBE_IN${n}_WIDTH $width
+        incr n
+    }
+    set ip_marker $ip_dir/debug_vio/probe_config.txt
+    set signature [list probe_map=v27 part=$part config=$config]
     file mkdir $ip_dir
-
     set marker_ok 0
     if {[file exists $ip_marker]} {
-        set marker_fh [open $ip_marker r]
-        set marker_txt [read $marker_fh]
-        close $marker_fh
-        set marker_ok [expr {[string first "probe_map=v26" $marker_txt] >= 0 &&
-                             [string first "part=$part" $marker_txt] >= 0 &&
-                             [string first "probe_count=27" $marker_txt] >= 0 &&
-                             [string first "probe_in26_width=84" $marker_txt] >= 0 &&
-                             [string first "probe_in23_width=48" $marker_txt] >= 0 &&
-                             [string first "probe_in24_width=96" $marker_txt] >= 0 &&
-                             [string first "probe_in25_width=160" $marker_txt] >= 0 &&
-                             [string first "probe_in14_width=96" $marker_txt] >= 0 &&
-                             [string first "probe_in20_width=20" $marker_txt] >= 0 &&
-                             [string first "probe_in21_width=68" $marker_txt] >= 0 &&
-                             [string first "probe_in22_width=187" $marker_txt] >= 0 &&
-                             [string first "probe_out_count=2" $marker_txt] >= 0 &&
-                             [string first "probe_out0_width=5" $marker_txt] >= 0 &&
-                             [string first "probe_out1_width=1" $marker_txt] >= 0}]
+        set fh [open $ip_marker r]
+        set marker_ok [expr {[string trim [read $fh]] eq $signature}]
+        close $fh
     }
-    if {[file exists $ip_dcp] && $marker_ok} {
+    if {[file exists $ip_xci] && [file exists $ip_dcp] && $marker_ok} {
         puts "=== Reusing cached debug_vio IP at $ip_dcp ==="
         return [list $ip_xci $ip_dcp]
     } elseif {[file exists [file dirname $ip_xci]]} {
         puts "=== Existing debug_vio IP is missing/stale/wrong-part; regenerating ==="
         file delete -force $ip_dir/debug_vio
     }
-
     puts "=== Generating debug_vio IP OOC into $ip_dir ==="
     create_project -in_memory -part $part -force
     create_ip -name vio -vendor xilinx.com -library ip -version 3.0 \
         -module_name debug_vio -dir $ip_dir
-    set_property -dict [list \
-        CONFIG.C_NUM_PROBE_IN    {27} \
-        CONFIG.C_NUM_PROBE_OUT   {2} \
-        CONFIG.C_PROBE_IN0_WIDTH {1} \
-        CONFIG.C_PROBE_IN1_WIDTH {12} \
-        CONFIG.C_PROBE_IN2_WIDTH {11} \
-        CONFIG.C_PROBE_IN3_WIDTH {20} \
-        CONFIG.C_PROBE_IN4_WIDTH {24} \
-        CONFIG.C_PROBE_IN5_WIDTH {32} \
-        CONFIG.C_PROBE_IN6_WIDTH {16} \
-        CONFIG.C_PROBE_IN7_WIDTH {6} \
-        CONFIG.C_PROBE_IN8_WIDTH {1} \
-        CONFIG.C_PROBE_IN9_WIDTH {32} \
-        CONFIG.C_PROBE_IN10_WIDTH {5} \
-        CONFIG.C_PROBE_IN11_WIDTH {2} \
-        CONFIG.C_PROBE_IN12_WIDTH {10} \
-        CONFIG.C_PROBE_IN13_WIDTH {8} \
-        CONFIG.C_PROBE_IN14_WIDTH {96} \
-        CONFIG.C_PROBE_IN15_WIDTH {16} \
-        CONFIG.C_PROBE_IN16_WIDTH {32} \
-        CONFIG.C_PROBE_IN17_WIDTH {32} \
-        CONFIG.C_PROBE_IN18_WIDTH {32} \
-        CONFIG.C_PROBE_IN19_WIDTH {32} \
-        CONFIG.C_PROBE_IN20_WIDTH {20} \
-        CONFIG.C_PROBE_IN21_WIDTH {68} \
-        CONFIG.C_PROBE_IN22_WIDTH {187} \
-        CONFIG.C_PROBE_IN23_WIDTH {48} \
-        CONFIG.C_PROBE_IN24_WIDTH {96} \
-        CONFIG.C_PROBE_IN25_WIDTH {160} \
-        CONFIG.C_PROBE_IN26_WIDTH {84} \
-        CONFIG.C_PROBE_OUT0_WIDTH {5} \
-        CONFIG.C_PROBE_OUT0_INIT_VAL {0x0} \
-        CONFIG.C_PROBE_OUT1_WIDTH {1} \
-        CONFIG.C_PROBE_OUT1_INIT_VAL {0x0} \
-        CONFIG.C_EN_PROBE_IN_ACTIVITY {1} \
-    ] [get_ips debug_vio]
+    set_property -dict $config [get_ips debug_vio]
     generate_target {synthesis} [get_ips debug_vio]
     synth_ip [get_ips debug_vio]
-    set marker_fh [open $ip_marker w]
-    puts $marker_fh "probe_map=v26"
-    puts $marker_fh "part=$part"
-    puts $marker_fh "probe_count=27"
-    puts $marker_fh "probe_in26_width=84"
-    puts $marker_fh "probe_in23_width=48"
-    puts $marker_fh "probe_in24_width=96"
-    puts $marker_fh "probe_in25_width=160"
-    puts $marker_fh "probe_in14_width=96"
-    puts $marker_fh "probe_in16_width=32"
-    puts $marker_fh "probe_in17_width=32"
-    puts $marker_fh "probe_in20_width=20"
-    puts $marker_fh "probe_in21_width=68"
-    puts $marker_fh "probe_in22_width=187"
-    puts $marker_fh "probe_out_count=2"
-    puts $marker_fh "probe_out0_width=5"
-    puts $marker_fh "probe_out1_width=1"
-    close $marker_fh
+    set fh [open $ip_marker w]
+    puts $fh $signature
+    close $fh
     close_project
     return [list $ip_xci $ip_dcp]
 }
@@ -2317,31 +2217,7 @@ apply_async_fifo_gray_cdc_bus_skew_bound
 # top-level wires.  No post-synth `create_debug_core` or
 # `connect_debug_port` calls are required with this flow.
 #
-# Probe map (also documented in synth/vio_dashboard.tcl):
-#   probe_in0  1b   hdmi_mmcm_locked       MMCM locked (pixel clock alive)
-#   probe_in1  12b  video_debug_hcount     VTG horizontal counter
-#   probe_in2  11b  video_debug_vcount     VTG vertical counter
-#   probe_in3  20b  vram_rd_addr           Scanner VRAM read address
-#   probe_in4  24b  video_debug_rgb        Last RGB pixel sent to HDMI pad
-#   probe_in5  32b  dbg_pc                 Last-committed CPU PC
-#   probe_in6  16b  ddr_dbg_r_cnt[15:0]    DDR read-beat counter (low 16b)
-#   probe_in7  6b   {cpu_resetn, core_rst, ddr_cal_done, boot_rom_ready,
-#                    hdmi_i2c_done, fb_underflow_sticky}
-#   probe_in8  1b   s0_wready              DDR xbar write-ready
-#   probe_in9  32b  dbg_committed          Retired-insn counter (catch-all)
-#   probe_in10 5b   HDMI control bundle    {resetn,i2c_done,de,vs,hs}
-#   probe_in11 2b   VRAM read bundle       {rd_valid,rd_en}
-#   probe_in12 10b  DDR AXI handshakes
-#   probe_in13 8b   Boot/video status bundle    (renamed from probe_in15)
-#   probe_in14 96b  {dafb_fb_base_px,dafb_fb_stride_px,dafb_fb_bpp_reg}
-#                                                (renamed from probe_in16)
-#   probe_in15 16b  AXI/boot error summary      (renamed from probe_in18)
-#   (dropped 2026-04-26 to free LUTs: vram_write_count/dafb_write_count,
-#    vram smoke handshakes, fb_reader stats — all readable through JTAG-AXI
-#    debug_ctrl when needed)
-#   probe_out0 5b   JTAG ROM-load + debug + SCC UART + PRAM controls
-#                  {pram_clear, debug_full_reset, scc_uart_sel_b,
-#                   release_cpu, bypass_sd_boot}
+# Probe map: see synth/vio_dashboard.tcl (compact v27).
 #
 # All probes land on the core_clk domain at the instance.  pclk-domain
 # signals are sampled async via core_clk under the same core_clk/pclk
@@ -2360,15 +2236,7 @@ proc setup_debug_vio {} {
     # The IP instance ports are already wired in RTL, but MARK_DEBUG
     # prevents the optimiser from shoving sources through CLB packers
     # and losing signal identity at the hw_manager.
-    foreach n {hdmi_mmcm_locked video_debug_hcount video_debug_vcount \
-               video_debug_rgb vram_rd_addr dbg_pc ddr_dbg_r_cnt \
-               core_rst ddr_cal_done boot_rom_ready hdmi_i2c_done \
-               fb_underflow_sticky s0_wready dbg_committed \
-               video_debug_de video_debug_hs video_debug_vs vram_rd_en \
-               vram_rd_valid smoke_active smoke_done vram_write_count \
-               dafb_write_count s0_awvalid s0_awready s0_wvalid \
-               s0_bvalid s0_bready s0_arvalid s0_arready s0_rvalid \
-               s0_rready boot_rom_loading boot_error} {
+    foreach n {dbg_pc vio_rst_bundle vio_ddr_axi vio_boot_video vio_axi_error err_s0_aw_addr_r err_s0_ar_addr_r vio_boot_diag vio_boot_crc vio_l2c_stats vio_scsi_sd vio_fb_reader_stats video_dbg_snap video_dbg_place vio_scsi_c96} {
         set m [get_nets -quiet $n]
         if {[llength $m] > 0} {
             set_property MARK_DEBUG true $m

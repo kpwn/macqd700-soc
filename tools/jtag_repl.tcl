@@ -6324,7 +6324,7 @@ while {1} {
                         set nm [get_property NAME $p]
                         set is_snap  [expr {[string first "video_dbg_snap"  $nm] >= 0}]
                         set is_place [expr {[string first "video_dbg_place" $nm] >= 0}]
-                        # probe_in23, {miss_count, rsp_count, req_count}, 3 x 16
+                        # vio_fb_reader_stats: {miss_count, rsp_count, req_count}, 3 x 16
                         # bits (rtl/soc/fpga_top_debug_vio.vh).  It has existed
                         # since 2026-08-01 and was never displayed anywhere --
                         # docs/video_path_review.md S4.2.  req - rsp is the live
@@ -6416,7 +6416,7 @@ while {1} {
                                      $base $stride $stride]
                         # The REJECTED tuple lives above bit 64 and only
                         # exists on a probe_map=v26+ bitstream (160-bit
-                        # probe_in25).  On an older one the field is simply
+                        # video_dbg_place). On an older one the field is simply
                         # absent, so gate on the probe WIDTH rather than
                         # printing a decode of bits that were never driven.
                         if {$place_w >= 160} {
@@ -6436,7 +6436,7 @@ while {1} {
                                 puts "> video admit : no placement rejected since the last commit"
                             }
                         } else {
-                            puts "> video admit : (pre-v26 bitstream: probe_in25 is ${place_w}b, no reject channel)"
+                            puts "> video admit : (pre-v26 bitstream: video_dbg_place is ${place_w}b, no reject channel)"
                         }
                     }
                     # ── fb_reader request/response accounting ──────────

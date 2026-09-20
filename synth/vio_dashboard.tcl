@@ -20,40 +20,26 @@
 # is instantiated directly in rtl/fpga_top.v under `ifdef VIO_ENABLE`;
 # synth pass it as `-verilog_define VIO_ENABLE` when `ENABLE_VIO=1`.
 #
-#   Index  Width  Signal              Clock   What it tells you
-#   ------ -----  ------------------- ------- --------------------------
-#   probe0   1    hdmi_mmcm_locked    core    Pixel clock MMCM locked?
-#                                             (1 = HDMI clocks alive)
-#   probe1  12    video_debug_hcount core    VTG horizontal counter.
-#   probe2  11    video_debug_vcount core    VTG vertical counter.
-#   probe3  20    vram_rd_addr        pclk    Scanner VRAM read address
-#                                             (should tick across ~768K
-#                                              during active scan-out)
-#   probe4  24    video_debug_rgb     pclk    Last RGB pixel sent to HDMI
-#                                             transmitter
-#   probe5  32    dbg_pc              core    Last-committed CPU PC —
-#                                             shows boot progress / live
-#   probe6  16    ddr_dbg_r_cnt[15:0] core    Low 16b of DDR read-beat
-#                                             counter — "something is
-#                                             happening on the bus"
-#   probe7   6    {cpu_resetn,core_rst,ddr_cal_done,boot_rom_ready,
-#                  hdmi_i2c_done,fb_underflow_sticky}
-#                                     core    Reset + init state vector
-#   probe8   1    s0_wready           core    DDR xbar write-ready (0 =
-#                                             bus stuck)
-#   probe9  32    dbg_committed       core    Catch-all: retired-insn
-#                                             counter.
-#   probe10  5    hdmi_ctrl           mixed   {resetn,i2c_done,de,vs,hs}
-#   probe11  2    vram_read           mixed   {rd_valid,rd_en}
-#   probe12 10    ddr_axi             core    DDR AXI handshake bits
-#   probe13 32    write_counts        core    {vram_w_count,dafb_w_count}
-#   probe14  8    vram_write          core    smoke + VRAM write handshakes
-#   probe15  8    boot_video          mixed   boot/video status bundle
-#   probe_out0[0] jtag_bypass_sd      core    Hold boot_fsm reset / bypass SD.
-#   probe_out0[1] jtag_release_cpu    core    Release CPU after host ROM load.
-#   probe_out0[2] jtag_force_cpu_rst  core    Force CPU reset while debugging.
-#   probe_out0[3] jtag_full_dbg_rst   core    Full CPU-side cold-reset (task #256).
-#   probe_out0[4] scc_uart_sel_b      core    0 = SCC channel A, 1 = channel B.
+# Compact probe map v27 (activity detection disabled; values remain readable).
+#   probe0  32 bits  dbg_pc
+#   probe1  6 bits  vio_rst_bundle
+#   probe2  10 bits  vio_ddr_axi
+#   probe3  8 bits  vio_boot_video
+#   probe4  16 bits  vio_axi_error
+#   probe5  32 bits  err_s0_aw_addr_r
+#   probe6  32 bits  err_s0_ar_addr_r
+#   probe7  32 bits  vio_boot_diag
+#   probe8  32 bits  vio_boot_crc
+#   probe9  68 bits  vio_l2c_stats
+#   probe10  187 bits  vio_scsi_sd
+#   probe11  48 bits  vio_fb_reader_stats
+#   probe12  96 bits  video_dbg_snap
+#   probe13  160 bits  video_dbg_place
+#   probe14  84 bits  vio_scsi_c96
+#   probe_out0[0] bypass SD; [1] release CPU; [2] SCC UART B select;
+#   [3] full debug reset; [4] clear PRAM.
+#   probe_out1: platform hard reset.
+# CPU retirement counters remain available through JTAG-AXI performance CSRs.
 # ---------------------------------------------------------------------------
 
 set script_dir [file normalize [file dirname [info script]]]
@@ -145,34 +131,25 @@ proc show_probe {vio label candidates {property INPUT_VALUE}} {
 puts "────────────────────────────────────────────────────────────────"
 puts " m68k-ooo JTAG VIO snapshot"
 puts "────────────────────────────────────────────────────────────────"
-show_probe $vio "hdmi_mmcm_locked" {hdmi_mmcm_locked hdmi_mmcm_locked_1}
-show_probe $vio "video_debug_hcount" {video_debug_hcount}
-show_probe $vio "video_debug_vcount" {video_debug_vcount}
-show_probe $vio "vram_rd_addr" {vram_rd_addr}
-show_probe $vio "video_debug_rgb" {video_debug_rgb}
-show_probe $vio "dbg_pc" {dbg_pc}
-show_probe $vio "ddr_dbg_r_cnt" {ddr_dbg_r_cnt}
+show_probe $vio "dbg_pc" {dbg_pc_1 dbg_pc}
 set rst_hex [show_probe $vio "rst/init bundle" {vio_rst_bundle_1 vio_rst_bundle}]
-show_probe $vio "s0_wready" {s0_wready s0_wready_1}
-show_probe $vio "dbg_committed" {dbg_committed}
-show_probe $vio "hdmi_ctrl" {vio_hdmi_ctrl_1 vio_hdmi_ctrl}
-show_probe $vio "vram_read" {vio_vram_read}
-show_probe $vio "write_counts" {vio_write_counts}
-show_probe $vio "vram_write" {vio_vram_write}
-show_probe $vio "boot_rom_loading" {boot_rom_loading}
-show_probe $vio "boot_error" {boot_error}
-show_probe $vio "al9134_int" {al9134_int_IBUF al9134_int}
-
-foreach label {
-    s0_awvalid s0_awready s0_wvalid s0_wready s0_bvalid s0_bready
-    s0_arvalid s0_arready s0_rvalid s0_rready
-} {
-    show_probe $vio $label [list $label]
-}
+show_probe $vio "vio_ddr_axi" {vio_ddr_axi_1 vio_ddr_axi}
+show_probe $vio "vio_boot_video" {vio_boot_video_1 vio_boot_video}
+show_probe $vio "vio_axi_error" {vio_axi_error_1 vio_axi_error}
+show_probe $vio "err_s0_aw_addr_r" {err_s0_aw_addr_r_1 err_s0_aw_addr_r}
+show_probe $vio "err_s0_ar_addr_r" {err_s0_ar_addr_r_1 err_s0_ar_addr_r}
+show_probe $vio "vio_boot_diag" {vio_boot_diag_1 vio_boot_diag}
+show_probe $vio "vio_boot_crc" {vio_boot_crc_1 vio_boot_crc}
+show_probe $vio "vio_l2c_stats" {vio_l2c_stats_1 vio_l2c_stats}
+show_probe $vio "vio_scsi_sd" {vio_scsi_sd_1 vio_scsi_sd}
+show_probe $vio "vio_fb_reader_stats" {vio_fb_reader_stats_1 vio_fb_reader_stats}
+show_probe $vio "video_dbg_snap" {video_dbg_snap_1 video_dbg_snap}
+show_probe $vio "video_dbg_place" {video_dbg_place_1 video_dbg_place}
+show_probe $vio "vio_scsi_c96" {vio_scsi_c96_1 vio_scsi_c96}
 
 if {$rst_hex ne ""} {
     scan $rst_hex %x rst
-    puts [format "  %-28s: cpu_resetn=%d core_rst=%d ddr_cal_done=%d boot_rom_ready=%d hdmi_i2c_done=%d fb_underflow=%d" \
+    puts [format "  %-28s: platform_resetn=%d core_rst=%d ddr_cal_done=%d boot_rom_ready=%d hdmi_i2c_done=%d fb_underflow=%d" \
         "rst/init decode" \
         [expr {($rst >> 5) & 1}] \
         [expr {($rst >> 4) & 1}] \
@@ -188,11 +165,11 @@ if {[llength $po] != 0} {
     scan $ov_hex %x ov
     set bypass_sd    [expr {$ov & 1}]
     set release_cpu  [expr {($ov >> 1) & 1}]
-    set force_cpu_rst [expr {($ov >> 2) & 1}]
+    set scc_uart_sel_b [expr {($ov >> 2) & 1}]
     set full_dbg_rst [expr {($ov >> 3) & 1}]
-    set scc_uart [expr {(($ov >> 4) & 1) ? "B" : "A"}]
-    puts [format "  probe_out0 jtag_boot_ctl : 0x%s (bypass_sd=%d release_cpu=%d force_cpu_rst=%d full_dbg_rst=%d scc_uart=%s)" \
-                  $ov_hex $bypass_sd $release_cpu $force_cpu_rst $full_dbg_rst $scc_uart]
+    set pram_clear [expr {($ov >> 4) & 1}]
+    puts [format "  probe_out0 jtag_boot_ctl : 0x%s (bypass_sd=%d release_cpu=%d scc_uart_sel_b=%d full_dbg_rst=%d pram_clear=%d)" \
+                  $ov_hex $bypass_sd $release_cpu $scc_uart_sel_b $full_dbg_rst $pram_clear]
 }
 puts ""
 puts "Switch to the Vivado GUI's Hardware Manager pane for live updates."

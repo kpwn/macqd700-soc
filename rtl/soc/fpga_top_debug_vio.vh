@@ -111,10 +111,6 @@
     wire [5:0]  vio_rst_bundle = {platform_resetn, core_rst, ddr_cal_done,
                                    boot_rom_ready, hdmi_i2c_done,
                                    fb_underflow_sticky};
-    wire [4:0]  vio_hdmi_ctrl = {al9134_resetn, hdmi_i2c_done,
-                                  video_debug_de, video_debug_vs,
-                                  video_debug_hs};
-    wire [1:0]  vio_vram_read = {vram_rd_valid, vram_rd_en};
     wire [9:0]  vio_ddr_axi = {s0_awvalid, s0_awready,
                                 s0_wvalid,  s0_wready,
                                 s0_bvalid,  s0_bready,
@@ -124,15 +120,11 @@
                                    hdmi_mmcm_locked, hdmi_i2c_done,
                                    video_debug_de, vram_rd_en,
                                    vram_rd_valid, al9134_int};
-    wire [95:0] vio_dafb_cfg = {dafb_fb_base_px, dafb_fb_stride_px,
-                                dafb_fb_bpp_reg};
     // Real-HW CMD18/CRC-retry diagnosis (boot_fsm.v dbg_sector /
     // dbg_err_cause / dbg_ctrl_retry) — added so a stuck boot can be
     // root-caused (which sector, which error, how many retries ran)
     // without a fresh rebuild every time it happens.
-    // [24:23] ROM-overlay state (2026-09-12).  Folded into vio_boot_diag's
-    // spare MSBs rather than a new probe_in so no VIO IP regeneration is
-    // needed (probe_in26 is the highest the generated core carries).
+    // [24:23] ROM-overlay state in vio_boot_diag.
     //   bit 24 = cpu_overlay_disabled_q  — the sticky "first CPU ROM read
     //            seen" latch in axi_xbar, cleared by cpu_overlay_reset
     //   bit 23 = effective_cpu_overlay_active — the AND of VIA1's overlay
@@ -161,31 +153,6 @@
     // proves the card isn't sending a genuine per-block CRC at all
     // (some cheap SD controllers accept CMD59 without ever actually
     // computing one), not a real data-integrity problem.
-    // ADB live-poke diagnosis (2026-07-25) -- keyboard/mouse never
-    // worked; VIA1 was observed (via JTAG dump-mem of its own
-    // registers) stuck in "shift in under external clock" with CB1
-    // never firing -- i.e. adb_phy.v never gets a device response
-    // clocked back in. This bundle exposes adb_modem's own dispatch
-    // state (adb_dbg_state) and the actual command/address it last
-    // sent to the keyboard/mouse device models, plus each device's own
-    // response-ready/empty/SRQ status, so the next live session can
-    // see WHICH device (if either) is being addressed and whether ITS
-    // response path is the one that's silent, without needing a
-    // rebuild to add visibility after the fact again.
-    wire [19:0] vio_adb_dbg = {
-        adb_dbg_state,          // [19:16] adb_modem's own state
-        adb_dev_cmd_valid,      // [15]
-        adb_dev_cmd_addr,       // [14:11]
-        adb_dev_cmd_op,         // [10:8]
-        adb_kbd_resp_valid,     // [7]
-        adb_kbd_resp_empty,     // [6]
-        adb_kbd_srq,            // [5]
-        adb_ms_resp_valid,      // [4]
-        adb_ms_resp_empty,      // [3]
-        adb_ms_srq,             // [2]
-        adb_dev_listen_valid,   // [1]
-        1'b0                    // [0] pad
-    };
     // L2C hit/miss/occupancy counters (2026-07-25) -- so the next live
     // boot can show whether the cache is doing anything useful, not
     // just that it isn't SLVERR'ing anymore. See l2c_ctrl.v's
@@ -326,7 +293,7 @@
     // the measured signature. These two make that immediately checkable.
     //   [129:98] vh_num_lbas as seen by scsi.v   [97] vh_dev_sel
     //   [186:155] xfer_lba   [154:131] xfer_blocks   [130] chk_ok
-    // ── 53C96 initiator-state probe (probe_in26) ─────────────────────
+    // ── 53C96 initiator-state probe (vio_scsi_c96) ─────────────────────
     // Added 2026-08-19 for the post-boot-fix hang: the ROM's untimed
     // wait-for-INT at 0x40899704 spins forever after `W reg2=0xEE;
     // W reg3=0x10`.  Deliberately a SEPARATE probe rather than widening
@@ -334,7 +301,7 @@
     // 256, so the 81-bit payload would not fit — and keeping it separate
     // leaves every existing vio_scsi_sd bit offset untouched.
     //
-    // Bit offsets AS READ OFF THIS PROBE (probe_in26, 84 bits):
+    // Bit offsets AS READ OFF THIS PROBE (vio_scsi_c96, 84 bits):
     //   [83]    c96_sel_stopped
     //   [82]    c96_sel_active
     //   [81]    c96_xfer_active   ** live connection (MAME mode==MODE_I) **
@@ -498,46 +465,21 @@
 
     (* DONT_TOUCH = "true" *) debug_vio u_dbg_vio (
         .clk       (core_clk),
-        .probe_in0 (hdmi_mmcm_locked),
-`ifdef PCIE_XDMA_ENABLE
-        // PCIe bring-up diagnostics (bits [2:0]); hcount[11:3] retained
-        // in the upper bits.  [0]=user_lnk_up, [1]=GT power-good
-        // (sys_clk_ce_out), [2]=XDMA axi_aresetn (user_clk domain up).
-        .probe_in1 ({video_debug_hcount[11:3],
-                     pcie_axi_aresetn, pcie_sysclk_ce, pcie_user_lnk_up}),
-`else
-        .probe_in1 (video_debug_hcount),
-`endif
-        .probe_in2 (video_debug_vcount),
-        .probe_in3 (vram_rd_addr),
-        .probe_in4 (video_debug_rgb),
-        .probe_in5 (dbg_pc),
-        .probe_in6 (ddr_dbg_r_cnt[15:0]),
-        .probe_in7 (vio_rst_bundle),
-        .probe_in8 (s0_wready),
-        .probe_in9 (dbg_committed),
-        .probe_in10(vio_hdmi_ctrl),
-        .probe_in11(vio_vram_read),
-        .probe_in12(vio_ddr_axi),
-        .probe_in13(vio_boot_video),     // was probe_in15
-        .probe_in14(vio_dafb_cfg),       // was probe_in16
-        .probe_in15(vio_axi_error),      // was probe_in18
-        .probe_in16(err_s0_aw_addr_r),   // first DDR write SLVERR addr
-        .probe_in17(err_s0_ar_addr_r),   // first DDR read SLVERR addr
-        .probe_in18(vio_boot_diag),      // boot_fsm sector/err_cause/retry
-        .probe_in19(vio_boot_crc),       // computed-vs-received CRC16
-        .probe_in20(vio_adb_dbg),        // adb_modem state + kbd/mouse resp status
-        .probe_in21(vio_l2c_stats),      // l2c hit/miss/occupancy counters
-        .probe_in22(vio_scsi_sd),
-        .probe_in23(vio_fb_reader_stats), // req/rsp/miss — drop detector        // SCSI->SD go/done/err counts + last LBA
-        // Task #243 — coherent one-pclk-edge scan-out snapshot.  Unlike
-        // video_debug_hcount/vcount/rgb (three INDEPENDENT probes, each
-        // sampled in its own JTAG transaction and therefore impossible to
-        // correlate), every field of these two is captured on the same
-        // clock edge in video_top.  Decode with the video-status command.
-        .probe_in24(video_dbg_snap),      // {hcount,vcount,de,dafb_live,rd_*,uflow_lb,uflow_fbr,scale,rgb,bpp,bytes,hres,vres}
-        .probe_in25(video_dbg_place),     // {committed fb_base_px, committed fb_stride_px}
-        .probe_in26(vio_scsi_c96),        // 53C96 initiator state — see the bit map above
+        .probe_in0(dbg_pc),
+        .probe_in1(vio_rst_bundle),
+        .probe_in2(vio_ddr_axi),
+        .probe_in3(vio_boot_video),
+        .probe_in4(vio_axi_error),
+        .probe_in5(err_s0_aw_addr_r),
+        .probe_in6(err_s0_ar_addr_r),
+        .probe_in7(vio_boot_diag),
+        .probe_in8(vio_boot_crc),
+        .probe_in9(vio_l2c_stats),
+        .probe_in10(vio_scsi_sd),
+        .probe_in11(vio_fb_reader_stats),
+        .probe_in12(video_dbg_snap),
+        .probe_in13(video_dbg_place),
+        .probe_in14(vio_scsi_c96),
         // 5 bits as of the battery-backed-PRAM change (was 4).  Width is
         // set by CONFIG.C_PROBE_OUT0_WIDTH in gen_debug_vio_ip
         // (synth/vivado.tcl) — bump both together or the IP/RTL widths
