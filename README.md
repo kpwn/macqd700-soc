@@ -82,13 +82,9 @@ must provide your own dumps, exactly as MAME requires:
 | `files/342s0440-b.bin` | ADB modem ROM — FPGA ADB PIC and integration tests, also MAME |
 | `files/pmuv2.bin` | PMU firmware — MAME lockstep only |
 
-New hardware builds produce **`fpga_top.blank.bit`, with an empty ADB PIC
-BRAM**. They do not require or embed an Apple dump during synthesis. Before
-programming, insert your own dump locally using the matching `.adb.mmi` and
-`.adb.json` companions; see [ADB firmware insertion](docs/adb_firmware_bitstream.md).
-The next release will ship this firmware-free blank image and its matching
-companions. The initial `200mhz-20260919` bitstream has been withdrawn.
-Neither image type includes the Quadra boot ROM or a Mac OS disk image.
+Releases do not include Apple firmware. Add your own ADB modem ROM before
+flashing; see the [firmware setup guide](docs/adb_firmware_bitstream.md).
+The Quadra boot ROM and Mac OS disk image are supplied separately on SD.
 
 **The ADB modem dump is required even if you use only injected keyboard/mouse
 input.** Its PIC runs inside the FPGA; it is not an optional MAME-only test

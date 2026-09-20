@@ -80,17 +80,10 @@ own Musashi/MAME notices. Host models are not synthesized into the FPGA.
 
 ## User-supplied firmware
 
-Apple ROMs are not included in source Git. The next release bitstream will
-also exclude the ADB modem firmware: its PIC program BRAM will be blank.
-The release will provide the matching `.adb.mmi` and `.adb.json` files so
-users can insert their own `342s0440-b.bin` dump locally before programming.
-
-Follow [Local ADB firmware insertion](docs/adb_firmware_bitstream.md) to
-create `fpga_top.local.bit` with `tools/patch_adb_bitstream.py` and AMD
-UpdateMEM. This does not require synthesis or place-and-route. Use files
-from the same build; this flow requires the blank BRAM image.
-The Quadra boot ROM is supplied separately, as described in README.
-User-supplied firmware is not covered by the project's licenses.
+Apple firmware is not included in the source or releases and is not covered
+by the project's licenses. Supply your own ROM dumps; see the
+[firmware setup guide](docs/adb_firmware_bitstream.md) for the ADB modem and
+[README](README.md#roms-you-must-supply) for the Quadra boot ROM.
 
 ## FPGA vendor IP
 

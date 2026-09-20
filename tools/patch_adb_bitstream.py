@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Insert the user's ADB PIC dump into a hash-bound, blank BRAM bitstream.
 
-This implementation requires AMD UpdateMEM on PATH (or --updatemem). It does
-not synthesize/place/route. It is NOT a standalone UltraScale+ frame patcher.
+Python release bundles need only Python 3 and your firmware dump. Legacy
+MMI bundles remain supported with AMD UpdateMEM (or --updatemem).
 """
 import argparse
 import hashlib
@@ -15,6 +15,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 from prepare_adb_firmware import convert
+from adb_config import FORMAT, insert_firmware
 
 
 def digest(path):
@@ -73,20 +74,31 @@ def seal(bit, mmi, manifest):
 
 def verify_bundle(bit, mmi, manifest):
     bundle = json.loads(manifest.read_text(encoding="ascii"))
-    if bundle.get("format") != "macqd700-adb-bram-v1" or bundle.get("processor") != "adb_pic":
+    if (not isinstance(bundle, dict) or bundle.get("format") != "macqd700-adb-bram-v1"
+            or bundle.get("processor") != "adb_pic"):
         raise ValueError("unsupported ADB patch manifest")
     if digest(bit) != bundle.get("bit_sha256") or digest(mmi) != bundle.get("mmi_sha256"):
         raise ValueError("bitstream/MMI hash mismatch; use the matching release bundle")
     validate_mmi(mmi)
 
 
-def patch(bit, mmi, manifest, firmware, output, updatemem):
-    verify_bundle(bit, mmi, manifest)
-    contents = memory_text(firmware.read_bytes())
+def patch(bit, mmi, manifest, firmware, output, updatemem="updatemem"):
     if output.exists() or output.resolve() in {
-        path.resolve() for path in (bit, mmi, manifest, firmware)
+        path.resolve() for path in (bit, mmi, manifest, firmware) if path is not None
     }:
         raise ValueError("output must be a new file, not an input or existing file")
+    bundle = json.loads(manifest.read_text(encoding="ascii"))
+    if isinstance(bundle, dict) and bundle.get("format") == FORMAT:
+        result = insert_firmware(bit.read_bytes(), bundle, firmware.read_bytes())
+        with output.open("xb") as out:
+            out.write(result)
+        print(f"Created {output} (contains your firmware; do not redistribute)")
+        return
+    if mmi is None:
+        raise ValueError("legacy bundle requires --mmi and AMD UpdateMEM; "
+                         "download the Python bundle to patch without FPGA tools")
+    verify_bundle(bit, mmi, manifest)
+    contents = memory_text(firmware.read_bytes())
     # Temp directory is private and removed even on error: the converted MEM
     # contains the user's firmware and is not a redistributable build artifact.
     with tempfile.TemporaryDirectory(prefix="macqd700-adb-") as temp:
@@ -110,8 +122,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("seal", "patch"):
         command = commands.add_parser(name)
-        for arg in ("bit", "mmi", "manifest"):
+        for arg in ("bit", "manifest"):
             command.add_argument(f"--{arg}", type=Path, required=True)
+        command.add_argument("--mmi", type=Path, required=name == "seal")
         if name == "patch":
             command.add_argument("--firmware", type=Path, required=True)
             command.add_argument("--output", type=Path, required=True)

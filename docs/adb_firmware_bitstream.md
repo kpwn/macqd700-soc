@@ -1,110 +1,104 @@
-# Local ADB firmware insertion
+# ADB firmware setup
 
-The PIC modem program is a dedicated, protected RAMB36E2. New builds produce
-`fpga_top.blank.bit`, `fpga_top.blank.adb.mmi`, and `fpga_top.blank.adb.json`.
-The bitstream has zero PIC program contents, even if a user's simulation hex
-file exists in the checkout. The map and manifest contain no firmware.
+Releases do not include Apple firmware. Before flashing, add your own
+`342s0440-b.bin` ADB modem ROM to the bitstream. This is required even if
+you use injected keyboard and mouse input.
 
-**A blank image does not provide a working ADB modem. Do not program it.**
-The initial `200mhz-20260919` bitstream has been withdrawn. It used LUTROM
-and cannot use this method. The next release will supply the blank BRAM
-image and matching map/manifest; download all three from the same release.
+## Using the Python bundle
 
-## Populate your image
+Download `fpga_top.python.bit`, `fpga_top.python.adb-map.json` and
+`adb-patcher.zip` from the same release. Extract the patcher, then run:
 
-This first implementation uses **AMD UpdateMEM**, either on PATH after
-sourcing `settings64.sh`, or supplied with `--updatemem /path/to/updatemem`.
-It does not require synthesis or place-and-route. It is not yet a Python-only
-configuration-frame patcher and must not be advertised as Vivado-independent.
+```sh
+python3 adb-patcher/patch_adb_bitstream.py patch \
+  --bit fpga_top.python.bit \
+  --manifest fpga_top.python.adb-map.json \
+  --firmware /path/to/your/342s0440-b.bin \
+  --output fpga_top.local.bit
+```
+
+This needs only Python 3—no Vivado, UpdateMEM or additional Python packages.
+If you cloned the repository, use `tools/patch_adb_bitstream.py` instead.
+
+Flash **`fpga_top.local.bit`** using [openFPGALoader](spi_flash.md). Do not
+flash the unpatched download: its ADB modem has no program. Keep the release's
+matching `.ltx` and build information. The patched file contains your Apple
+firmware; do not redistribute it.
+
+Your ROM dump must contain 512 little-endian, 12-bit instructions in 16-bit
+containers (1,024 bytes total). The patcher rejects incorrect sizes, invalid
+upper bits, mismatched bitstream hashes, malformed maps and existing output
+files. The Quadra boot ROM is separate and goes on SD; the ADB modem program
+loads directly from the bitstream when the FPGA starts.
+
+## Legacy bundles and local builds
+
+The original `.blank.bit`, `.adb.mmi` and `.adb.json` bundle uses AMD
+UpdateMEM. If your download has no `.adb-map.json`, either obtain the Python
+bundle or run the legacy command with UpdateMEM on your PATH:
 
 ```sh
 python3 tools/patch_adb_bitstream.py patch \
-  --bit build/vivado/fpga_top.blank.bit \
-  --mmi build/vivado/fpga_top.blank.adb.mmi \
-  --manifest build/vivado/fpga_top.blank.adb.json \
+  --bit fpga_top.blank.bit \
+  --mmi fpga_top.blank.adb.mmi \
+  --manifest fpga_top.blank.adb.json \
   --firmware /path/to/your/342s0440-b.bin \
-  --output build/vivado/fpga_top.local.bit
+  --output fpga_top.local.bit
 ```
 
-The input dump is exactly 1,024 bytes: 512 little-endian 12-bit words in
-16-bit containers. Invalid lengths/upper bits are rejected, not silently
-masked. The script checks both base-image and MMI SHA-256 hashes before
-running UpdateMEM, refuses to overwrite any existing output, and removes its
-private temporary firmware file afterward. These hashes bind the map to a
-particular build; they are not a signature or independent legal clearance.
+Use `--updatemem /path/to/updatemem` if needed. Always use companions from
+the same build; maps are not interchangeable between builds or formats.
 
-Program **`fpga_top.local.bit`** using [openFPGALoader](spi_flash.md), retaining
-the corresponding `.ltx` and build information. Its firmware is initialized
-directly from FPGA configuration at power-up; there is no runtime SD loader.
-The local output contains your firmware and must not be redistributed.
+## Preparing a release (maintainers)
 
-## Timing and physical layout
-
-The memory uses 1,024 32-bit words, with PIC words 0..511 in bits 11:0.
-Unused bits/words and parity remain zero. A whole RAMB36 deliberately avoids
-compiler-dependent packing, parity-lane instruction bits and RAMB18 updater
-compatibility differences. Explicit instantiation and `DONT_TOUCH` preserve
-the zero-filled memory and its consumers through optimization.
-
-The modem is clocked by **50 MHz `pb_clk`**, not the 200 MHz CPU clock (see
-`fpga_top_peripherals.vh`). The PC updates on its rising edge; memory reads on the
-falling edge using its built-in clock inversion. The next rising edge sees
-the correct instruction even with consecutive `cyc_en` pulses, redirects,
-PIC branch bubbles and reset. No PIC execution or ADB GPIO edge is delayed.
-Both PC-to-BRAM and BRAM-to-execute paths are **half-cycle paths** (10 ns in
-this integration). Do not false-path them. This RTL change does **not** inherit
-the historical whole-SoC timing closure: a new full implementation and board
-check are still required.
-
-The synthesis/optimization smoke test is:
+The Python bundle uses an uncompressed bitstream and a build-specific map
+of the PIC's 6,144 instruction bits. Creating this bundle requires Vivado
+and UpdateMEM; using it does not. Start with the final routed checkpoint:
 
 ```sh
-vivado -mode batch -source synth/pic_bram_ooc.tcl -tclargs build/pic-bram-ooc
-make tb-pic16c5x
-python3 tools/test_patch_adb_bitstream.py
+vivado -mode batch -source synth/export_adb_python_base.tcl \
+  -tclargs build/vivado/checkpoints/route.dcp build/python-release
+python3 tools/build_adb_patch_map.py \
+  --bit build/python-release/fpga_top.python.bit \
+  --mmi build/python-release/fpga_top.python.adb.mmi \
+  --manifest build/python-release/fpga_top.python.adb.json \
+  --output build/python-release/fpga_top.python.adb-map.json
 ```
 
-The main and resumed implementation scripts check the primitive, placement
-and all 128 data / 16 parity INIT properties **before** writing any blank image,
-then export its placement-specific MMI and matching file hashes. Old
-checkpoints without the dedicated primitive are rejected before writing.
-Do not pair files from different builds or rename an old image as a blank one.
+The export reuses placement and routing, and checks that the dedicated PIC
+BRAM and parity are empty. The map generator uses synthetic instruction
+patterns to identify the physical bits, then compares Python-patched images
+against UpdateMEM's output. It writes the map only after every complete
+configuration payload matches, including CRC, frame ECC and non-PIC data.
 
-## Standalone patcher follow-up
+The patcher regenerates configuration CRCs. In the supported BRAM layout,
+changing program contents does not change frame ECC; the exporter rejects
+any mapping or vendor comparison that violates this. Compressed, encrypted
+and other unsupported packet layouts are rejected, not guessed at.
 
-A Python-only patcher remains possible, but requires a validated UltraScale+
-configuration-frame mapping plus CRC/ECC handling. Synthetic INIT patterns
-written from the **same fixed implemented checkpoint** can establish a
-per-build mapping; repeated synthesis/place-and-route cannot. Such a patcher
-must be checked against vendor-generated images and on hardware before use.
-This change does not ship an unverified raw-bit rewriting implementation.
+Publish the `.python.bit` and `.python.adb-map.json` together. Run
+`python3 tools/package_adb_patcher.py build/python-release/adb-patcher.zip`
+to bundle the three Python modules, instructions, license and notices.
+Do not publish local
+ROM dumps or patched bitstreams. File hashes bind a map to its base image;
+they are not signatures, so obtain both from a trusted release.
 
-## Validation recorded 2026-09-19
+## Hardware layout
 
-- 39 synthetic PIC scenarios pass: 13 instruction/reset/redirect cases under
-  consecutive, sparse and irregular enables. The 1,270-line rising-edge
-  trace matches the previous asynchronous RTL byte-for-byte (PC, W, ports,
-  TRIS, retirement). The previous port-read test had stale TRIS-mux
-  expectations; both RTL versions pass the corrected PIC1654S open-drain test.
-- Vivado 2025.2 synthesis plus optimization retains one RAMB36E2, 589 LUTs and
-  305 FFs with zero program INIT: neither ROM nor its consumers fold away.
-- At the integrated 50 MHz peripheral clock, out-of-context timing estimates
-  WNS +6.280 ns and WHS +0.071 ns, with no failing endpoints. This is not routed
-  full-SoC signoff. A separate 200 MHz PIC-clock stress estimate fails setup;
-  that is not the clock frequency used by this modem in the 200 MHz SoC.
-- Synthetic same-placement UpdateMEM/Vivado comparisons match the complete
-  configuration packet payload, including CRC/ECC, for **both uncompressed
-  and compressed images**. Only the `.bit` container header is excluded.
-  This caught and corrected both the legacy MMI `RAMB32` naming requirement
-  for physical RAMB36 and the little-endian MEM token byte order.
-- Eleven patcher/preflight tests and three firmware conversion tests
-  pass. New hardware behavior and full-SoC timing await a fresh build/board
-  check; the existing working release was not replaced or reprogrammed.
+The PIC program occupies words 0–511, bits 11:0, of one protected RAMB36E2
+configured as 1,024 × 32. Unused words, upper bits and parity stay zero.
+The modem runs on the 50 MHz peripheral clock, fetching on the falling edge
+and executing on the rising edge. Both paths remain constrained to 10 ns.
+Firmware insertion does not alter logic, placement, routing or timing.
 
-Repeat the real vendor-tool round-trip with
-`synth/pic_bram_roundtrip.tcl` (usage is in its header). Its tiny test image
-uses unconstrained test IO and **must never be programmed on hardware**.
+Tests use synthetic firmware only:
 
-Vendor references: [UpdateMEM MMI format](https://docs.amd.com/r/2025.1-English/ug1580-updatemem/MMI-File-Syntax),
-[MEM format](https://docs.amd.com/r/2025.1-English/ug1580-updatemem/Memory-Files),
-[UltraScale BRAM addressing](https://docs.amd.com/r/en-US/ug573-ultrascale-memory-resources/Address-Bus-ADDRARDADDR-and-ADDRBWRADDR).
+```sh
+python3 tools/test_patch_adb_bitstream.py
+python3 tools/test_adb_config.py
+python3 tools/test_prepare_adb_firmware.py
+```
+
+The separate `synth/pic_bram_roundtrip.tcl` test compares UpdateMEM against
+Vivado INIT writes at fixed placement. Its standalone test bitstreams must
+never be programmed on a board.

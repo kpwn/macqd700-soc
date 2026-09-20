@@ -22,11 +22,9 @@ recursive checkout or generated hardware as exclusively MIT.
 
 The VIA implementation drew inspiration from Shachar Shemesh’s CompuSAR/6522 project.
 
-Apple firmware is not supplied in source Git. The next release bitstream
-will also exclude the ADB modem firmware. Users insert their own ROM into
-the blank bitstream locally; see docs/adb_firmware_bitstream.md.
-Firmware is not covered by this project's licenses. FPGA vendor IP is
-separately licensed as well.
+Apple firmware is not included in the source or releases and is not covered
+by this project's licenses. Supply your own ROM dumps; see
+docs/adb_firmware_bitstream.md. FPGA vendor IP is separately licensed as well.
 
 
 MIT License

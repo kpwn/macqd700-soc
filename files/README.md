@@ -1,10 +1,8 @@
 # User-supplied firmware
 
-Firmware is not distributed with the source. Supply dumps you are entitled
-to use; do not commit them as part of the source release. New builds emit a
-blank ADB BRAM bitstream for [local firmware insertion](../docs/adb_firmware_bitstream.md).
-The initial `200mhz-20260919` bitstream predates this flow and embeds ADB
-firmware; it has not been silently replaced.
+Apple firmware is not included in the source or releases. Supply your own
+ROM dumps and keep them out of Git. Add the ADB modem ROM before flashing;
+see the [firmware setup guide](../docs/adb_firmware_bitstream.md).
 
 | Local path | Size | Consumer |
 |---|---:|---|

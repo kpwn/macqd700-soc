@@ -4,10 +4,9 @@ Use `openFPGALoader` for persistent programming on the RK-XCKU5P-F board.
 This interrupts the running Mac, replaces the boot image at flash offset zero,
 and boots the FPGA again. It does not provision or overwrite the SD card.
 
-New builds produce `fpga_top.blank.bit`, which **must not be flashed as a
-working Mac image**. First perform [local ADB firmware insertion](adb_firmware_bitstream.md)
-and explicitly select its new output below. A blank image has no working ADB
-modem. The historical verified release described below already contains it.
+Add your own ADB modem ROM using the [firmware setup guide](adb_firmware_bitstream.md),
+then flash the resulting `fpga_top.local.bit`. The unpatched release downloads
+(`fpga_top.python.bit` and `fpga_top.blank.bit`) have no working ADB modem.
 
 1. Verify the intended `.bit` hash and adjacent `.buildinfo`; do not pick
    an artifact merely because its directory is named `vivado` or `200`.
@@ -46,5 +45,5 @@ Flash read-back passed; subsequent attachment reported that build ID,
 retiring instructions and no halt/double fault. This was a flash boot,
 not a separate physical power-cycle test.
 
-This configuration embeds ADB firmware. The source tree excludes that
-firmware; any prebuilt bitstream release must disclose its embedded content.
+This local verification used a firmware-patched image. Published bitstreams
+exclude Apple firmware.
