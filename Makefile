@@ -5059,10 +5059,13 @@ $(SCSI_SD_E2E_CMD25_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
 		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
 	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_CMD25_BUILD),+define+SCSI_E2E_C96 +define+SCSI_E2E_READAHEAD +define+SCSI_E2E_PRODUCTION +define+SCSI_REAL_TIMEOUTS +define+SCSI_E2E_CMD25 -CFLAGS "-DSCSI_E2E_C96 -DSCSI_E2E_PERF_OPT -DSCSI_E2E_CMD25")
 
-# Performance baseline matching the shipping 200 MHz / 50 MHz clocks,
-# 50 MHz SPI, CRC-checked reads, 32-block read-ahead ways and CMD24 writes.
+# Shipping performance gate uses reset-safe staged CMD25. Keep the older
+# closed-per-sector CMD24 build as an explicit A/B comparison.
 .PHONY: tb-scsi-sd-perf
-tb-scsi-sd-perf: $(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e
+tb-scsi-sd-perf: tb-scsi-sd-perf-staged
+
+.PHONY: tb-scsi-sd-perf-cmd24
+tb-scsi-sd-perf-cmd24: $(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e
 	$(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e
 
 $(SCSI_SD_E2E_PROD_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \

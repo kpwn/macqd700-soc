@@ -448,7 +448,7 @@ if {$video_smoke != 0 && $video_smoke != 1} {
     exit 1
 }
 set boot_rom_sectors [parse_int_env BOOT_ROM_SECTORS 2048]
-set sd_safe_cmd25 [parse_int_env SD_SAFE_CMD25 0]
+set sd_safe_cmd25 [parse_int_env SD_SAFE_CMD25 1]
 if {$sd_safe_cmd25 ni {0 1}} {error "SD_SAFE_CMD25 must be 0 or 1"}
 if {$sd_safe_cmd25 && [info exists ::env(ENABLE_SD_JTAG_WRITER)]} {
     error "SD_SAFE_CMD25 requires the preemptive provisioning writer to be disabled"
@@ -2663,13 +2663,23 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
             break
         }
     }
-    # Final hold repair: if the netlist we started from was ALREADY hold-negative
-    # (routing can leave it so -- the 2026-09-15 200 MHz route handed us WHS
-    # -0.532), try once to clean it now that the setup passes are done.  A repair
-    # that fails leaves the design no worse than routing did, so this is free.
+    # Final hold repair can regress setup even without improving hold.
+    # Preserve the current result and roll back on either timing regression
+    # or tool failure. A failed checkpoint write must stop before mutation.
     if {[_pr_whs] < 0} {
-        puts [format "=== POST-ROUTE PHYS_OPT: final hold repair attempt (WHS %.3f) ===" [_pr_whs]]
-        if {[catch {phys_opt_design -hold_fix} pr_fh_err]} { puts "WARN final hold_fix: $pr_fh_err" }
+        set pr_final_wns [_pr_wns]
+        set pr_final_whs [_pr_whs]
+        set pr_final_checkpoint [file join $output_dir checkpoints pre_final_hold_repair.dcp]
+        write_checkpoint -force $pr_final_checkpoint
+        puts [format "=== POST-ROUTE PHYS_OPT: final hold repair attempt (WHS %.3f) ===" $pr_final_whs]
+        set pr_final_failed [catch {phys_opt_design -hold_fix} pr_fh_err]
+        if {$pr_final_failed || [_pr_wns] < $pr_final_wns - 0.001 ||
+                                [_pr_whs] < $pr_final_whs - 0.001} {
+            puts "=== POST-ROUTE PHYS_OPT: final repair failed/regressed; restoring prior checkpoint ==="
+            if {$pr_final_failed} {puts "WARN final hold_fix: $pr_fh_err"}
+            close_design
+            open_checkpoint $pr_final_checkpoint
+        }
         puts [format "=== POST-ROUTE PHYS_OPT: after final repair WNS %.3f WHS %.3f ===" [_pr_wns] [_pr_whs]]
     }
     puts [format "=== POST-ROUTE PHYS_OPT done: WNS %.3f WHS %.3f after %d passes ===" [_pr_wns] [_pr_whs] $pr_i]
