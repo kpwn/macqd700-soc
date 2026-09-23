@@ -1075,6 +1075,38 @@
     end
     wire cpu_rst = cpu_rst_or || (|cpu_rst_stretch);
 
+    // ── cpu_rst_core: the reset the CPU actually sees ──────────────────
+    // MEASURED on the routed 200 MHz build: feeding the combinational `cpu_rst`
+    // straight to M68kSocketTop's ASYNC reset put a cross-die combinational tree on
+    // the CLR pin of ~8,500 core registers -- 6,324 of them inside 0.5 ns of slack,
+    // worst 0.283 ns. `cpu_rst` is an OR of five sources, several physically distant
+    // from the CPU: soc_full_rst, dbg_cold_reset_hold (the debug CSR),
+    // !boot_rom_ready (which folds in boot_rom_loaded from the boot FSM at the die
+    // bottom, plus the pram_boot_hold counter compare) and !cpu_rst_settle_done. The
+    // core's reset arrival was therefore a function of where the BOOT FSM sits, which
+    // constrains placement of the whole core: this campaign measured placement
+    // variance at +/-0.4 ns, larger than any single RTL lever.
+    //
+    // Registering it here gives the core a reset sourced from ONE flop, which the
+    // placer and phys_opt can replicate per cluster (they already do exactly that for
+    // the CPU's own doFlushReg, fanout 83/134/14). The long combinational tree now
+    // terminates at a single endpoint with enormous slack instead of 8,500 tight ones.
+    //
+    // ASYNC-ASSERT / SYNC-DEASSERT, deliberately:
+    //   * assertion stays IMMEDIATE, because axi_xbar's slot-0 fan-in is a plain 2:1
+    //     mux selected by `cpu_rst`, not an arbiter, and it relies on the CPU being
+    //     held the moment the boot FSM re-arms. A registered assert would open a
+    //     one-cycle window where the xbar has switched away but the CPU is still live.
+    //   * deassertion is one cycle LATER than the xbar's, which is the safe direction:
+    //     the xbar hands slot 0 back before the CPU can issue anything.
+    // Every other `cpu_rst` consumer (ifa_rready_gated, cpu_d_*ready_xbar, the xbar
+    // mux) keeps the combinational net, so their timing relationship is unchanged.
+    (* ASYNC_REG = "TRUE" *) reg cpu_rst_core = 1'b1;
+    always @(posedge core_clk or posedge cpu_rst) begin
+        if (cpu_rst) cpu_rst_core <= 1'b1;
+        else         cpu_rst_core <= 1'b0;
+    end
+
     // ═══════════════════════════════════════════════════════════════════
     // phi2_tick — Q700 VIA timebase for 6522 timers
     // ═══════════════════════════════════════════════════════════════════

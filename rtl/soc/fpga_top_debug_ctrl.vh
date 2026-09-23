@@ -217,7 +217,12 @@
 `ifdef PERF_DETAIL_ENABLE
         .perf_trace (ipc_trace),
 `endif
-        .clk(core_clk), .rst(cpu_rst),
+        // cpu_rst_core, not cpu_rst: a REGISTERED reset the placer can replicate.
+        // The combinational net put a cross-die tree on the CLR pin of ~8,500 core
+        // registers (6,324 inside 0.5 ns). See fpga_top_clocks.vh. Only the m68k040
+        // core takes it -- the other CPU variants below are far smaller and keep the
+        // combinational net, so their reset relationship is untouched.
+        .clk(core_clk), .rst(cpu_rst_core),
 
         // ── axi_i_* : instruction read master → xbar M2 / l2c fetch port (ifa_*)
         .axi_i_arid   (ifa_arid   ), .axi_i_araddr (ifa_araddr ),
