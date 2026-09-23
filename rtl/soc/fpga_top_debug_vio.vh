@@ -10,6 +10,17 @@
     // ═══════════════════════════════════════════════════════════════════
     // LEDs — board-side bring-up status (left-to-right power-on sequence)
     //
+`ifdef IPC_ILA_ENABLE
+    // Same-edge taps; no CPU halt and no capture qualification (every cycle).
+    // 33-bit retirement probes combine validity and PC for one comparator.
+    ipc_ila u_ipc_ila (
+        .clk(core_clk),
+        .probe0({ipc_trace[64], ipc_trace[31:0]}),
+        .probe1({ipc_trace[65], ipc_trace[63:32]}),
+        .probe2(ipc_trace[88:66]),
+        .probe3(ipc_trace[94:89])
+    );
+`endif
     //   led[0] = ddr_cal_done       — DDR4 calibration finished
     //   led[1] = ~spi_cs_n_wire     — SD bus active (chip select asserted),
     //                                  i.e. boot ROM copy in progress, SD

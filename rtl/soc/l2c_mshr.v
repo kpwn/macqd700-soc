@@ -161,6 +161,7 @@ module l2c_mshr #(
     // Lookup (combinational).
     input  wire [SET_BITS-1:0]   lu_set,       input wire [TAG_BITS-1:0] lu_tag,
     output wire                  lu_hit,       output wire [IDX_BITS-1:0] lu_idx,
+    output wire [7:0]            lu_onehot, // selected lookup entry, same priority as lu_idx
     // Busy-way query (combinational): ways in `bw_set` already claimed by
     // an in-flight MSHR entry -- l2c.v excludes these from victim-way
     // selection so two misses can never double-claim the same way.
@@ -207,7 +208,7 @@ module l2c_mshr #(
     output reg  [SET_BITS-1:0]   inst_set,      output reg [WAY_BITS-1:0] inst_way,
     output reg  [TAG_BITS-1:0]   inst_tag,
     output reg  [3:0]            inst_vsec,     output reg [3:0] inst_dsec,
-    output reg  [LINE_BITS-1:0]  inst_data,     output reg [63:0] inst_strb,
+    output wire [LINE_BITS-1:0]  inst_data,     output reg [63:0] inst_strb,
     // Replay response -> l2c.v's arbitrated R/B channel mux.
     output reg                   rsp_valid,     input wire rsp_ready,
     output reg                   rsp_is_write,  output reg [ID_WIDTH-1:0] rsp_id,
@@ -371,14 +372,14 @@ module l2c_mshr #(
     // synthesis translate_on
     wire                lu_hit_c, free_any_c, issue_any_c, scan_any_c;
     wire [IDX_BITS-1:0] lu_idx_c, free_idx_c, issue_idx_rot_c, scan_idx_rot_c;
-    l2c_pri8 u_pri_lu   (.req(lu_match_c), .hit(lu_hit_c),   .idx(lu_idx_c));
-    l2c_pri8 u_pri_free (.req(free_vec_c), .hit(free_any_c), .idx(free_idx_c));
+    l2c_pri8 u_pri_lu   (.req(lu_match_c), .hit(lu_hit_c),   .idx(lu_idx_c), .onehot(lu_onehot));
+    l2c_pri8 u_pri_free (.req(free_vec_c), .hit(free_any_c), .idx(free_idx_c), .onehot());
     // Fill issue and completion service are independent round-robin walks.
     reg [IDX_BITS-1:0] issue_rr_ptr;
     wire [7:0] issue_vec_rot_c = (issue_vec_c >> issue_rr_ptr) |
                                   (issue_vec_c << (4'd8 - issue_rr_ptr));
     wire [IDX_BITS-1:0] issue_idx_c = issue_idx_rot_c + issue_rr_ptr;
-    l2c_pri8 u_pri_issue (.req(issue_vec_rot_c), .hit(issue_any_c), .idx(issue_idx_rot_c));
+    l2c_pri8 u_pri_issue (.req(issue_vec_rot_c), .hit(issue_any_c), .idx(issue_idx_rot_c), .onehot());
     // Completion SCAN is round-robin, not fixed lowest-index: a fixed-priority scan
     // would let a continuously-refreshed low index starve higher indices
     // forever.  Rotate the valid mask by rr_ptr, encode, un-rotate;
@@ -386,7 +387,7 @@ module l2c_mshr #(
     reg [IDX_BITS-1:0] rr_ptr;
     wire [7:0] scan_vec_rot_c = (scan_vec_c >> rr_ptr) | (scan_vec_c << (4'd8 - rr_ptr));
     wire [IDX_BITS-1:0] scan_idx_c = scan_idx_rot_c + rr_ptr;
-    l2c_pri8 u_pri_scan (.req(scan_vec_rot_c), .hit(scan_any_c), .idx(scan_idx_rot_c));
+    l2c_pri8 u_pri_scan (.req(scan_vec_rot_c), .hit(scan_any_c), .idx(scan_idx_rot_c), .onehot());
     assign lu_hit      = lu_hit_c;
     assign lu_idx      = lu_idx_c;
     assign alloc_ready = free_any_c;
@@ -473,6 +474,15 @@ module l2c_mshr #(
     // follow-up (m_line -> BRAM) straightforward.
     reg [LINE_BITS-1:0] act_line;
     wire [LINE_BITS-1:0] line_act_c   = act_line;
+    // The install payload is already registered here. S_INSTALL/S_SWR update
+    // act_line with the same merge on the edge that raises inst_valid; neither
+    // successor state changes act_line while that install pulse is consumed.
+    // S_SCAN can replace it only after inst_valid has gone low. A separate
+    // 512-bit output register therefore duplicates both data and write control.
+    // Payload when inst_valid=0 is unspecified; the valid/strobe/tag timing is
+    // unchanged. tb_l2c retains the old registered payload as an independent
+    // simulation reference and compares every valid install against it.
+    assign inst_data = act_line;
     wire [1:0]           p_qoff_act_c = p_qoff[act];
     wire [1:0]           r_qoff_act_c = r_qoff[act][rk_i];
     // Asynchronous read out of the replay-payload RAM.  Distributed RAM
@@ -504,8 +514,23 @@ module l2c_mshr #(
     wire [143:0]         rpay_q_c      = r_pay[rpay_ra_c];
     wire [127:0]         r_wdata_act_c = rpay_q_c[127:0];
     wire [15:0]          r_wstrb_act_c = rpay_q_c[143:128];
-    wire [127:0] merged_p = merge_quad(line_act_c[p_qoff_act_c*128 +: 128], p_wdata[act], p_wstrb[act]);
-    wire [127:0] merged_r = merge_quad(line_act_c[r_qoff_act_c*128 +: 128], r_wdata_act_c, r_wstrb_act_c);
+    wire [127:0] p_wdata_act_c = p_wdata[act];
+    wire [15:0]  p_wstrb_act_c = p_wstrb[act];
+    // Merge at a fixed destination quadrant below. Selecting an old quadrant,
+    // merging, then dynamically writing it back sends qoff through both a
+    // 512-to-128 read mux and a 128-to-512 write network. Each fixed lane needs
+    // only its local old bytes, shared new bytes, and one quadrant enable.
+    // There is no extra register, state, or install/replay cycle.
+    // Primary and replay merges are mutually exclusive. Select their narrow
+    // input once, before distributing it to the four fixed destination lanes,
+    // rather than giving every lane its own primary/replay update network.
+    wire merge_replay_c = (st == S_SWR);
+    wire merge_line_c = !m_fill_err[act] &&
+                        (merge_replay_c || ((st == S_INSTALL) && p_wr[act]));
+    wire [127:0] merge_wdata_c = merge_replay_c ? r_wdata_act_c : p_wdata_act_c;
+    wire [15:0] merge_wstrb_c = merge_replay_c ? r_wstrb_act_c : p_wstrb_act_c;
+    wire [1:0] merge_qoff_c = merge_replay_c ? r_qoff_act_c : p_qoff_act_c;
+    integer merge_q;
     // Quadrant-only strobe for S_SWR (Critical-6): same shift pattern as
     // l2c_ctrl.v's own hit-path dw_strb.
     wire [63:0] swr_strb_c = {48'b0, r_wstrb_act_c} << (r_qoff_act_c * 16);
@@ -684,12 +709,7 @@ module l2c_mshr #(
                         inst_vsec      <= 4'b1111;
                         inst_dsec      <= p_dsec_c;
                         m_dsec[act]    <= p_dsec_c;
-                        inst_data      <= line_act_c;
                         inst_strb      <= inst_strb_c;
-                        if (p_wr[act]) begin
-                            inst_data[p_qoff_act_c*128 +: 128] <= merged_p;
-                            act_line[p_qoff_act_c*128 +: 128]  <= merged_p;
-                        end
                     end
                     rk <= {(RK_BITS+1){1'b0}};
                     st <= S_PRSP;
@@ -728,10 +748,7 @@ module l2c_mshr #(
                         inst_vsec      <= 4'b1111;
                         inst_dsec      <= r_dsec_c;
                         m_dsec[act]    <= r_dsec_c;
-                        inst_data      <= line_act_c;
-                        inst_data[r_qoff_act_c*128 +: 128] <= merged_r;
                         inst_strb      <= swr_strb_c;
-                        act_line[r_qoff_act_c*128 +: 128] <= merged_r;
                     end
                     st <= r_need[act][rk_i] ? S_SRSP : S_SNEXT;
                     if (!r_need[act][rk_i]) rk <= rk + 1'b1;
@@ -755,6 +772,16 @@ module l2c_mshr #(
                 end
                 default: st <= S_SCAN;
             endcase
+            // No new stage: these are exactly the former S_INSTALL/S_SWR
+            // writes. S_SCAN's snapshot is mutually exclusive, and reset,
+            // fill-error suppression and untouched-byte retention are intact.
+            if (merge_line_c) begin
+                for (merge_q = 0; merge_q < 4; merge_q = merge_q + 1) begin
+                    if (merge_qoff_c == merge_q[1:0])
+                        act_line[merge_q*128 +: 128] <= merge_quad(
+                            line_act_c[merge_q*128 +: 128], merge_wdata_c, merge_wstrb_c);
+                end
+            end
         end
     end
 

@@ -5,6 +5,7 @@
 - [SoC architecture](architecture.md): CPU boundary, memory, peripherals,
   clock domains and reset responsibilities.
 - [L2 system cache](l2c_spec.md): geometry, ports, coherency and reset rules.
+- [PRAM storage](pram-storage.md): block RAM, explicit clearing and persistence.
 - [Fabric concurrency contract](fabric_concurrency_contract.md): interface
   requirements and ordering guarantees.
 

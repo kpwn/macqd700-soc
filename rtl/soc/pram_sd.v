@@ -168,10 +168,11 @@ module pram_sd #(
     // budget would cost.
     parameter integer ARB_WAIT_LOG2     = 28,
     parameter integer CDC_WAIT_LOG2     = 16,
-    // How long `pram_default` is held.  rtc.v runs on pb_clk = core_clk/2
-    // and its pram_clear rewrites all 256 bytes on EVERY clock the input
-    // is high, so this only has to be comfortably longer than the 2-FF
-    // synchroniser in fpga_top_peripherals.vh.  2^11 core = 1024 pb.
+    // How long `pram_default` is held. Must cover the 256-pb-clock PRAM
+    // sweep plus the 2-FF clear synchronizer before reporting completion
+    // or releasing boot autoload. 2^11 core clocks cover 1024 pb clocks
+    // at 100 MHz core / 50 MHz pb, or 512 at 200 MHz core / 50 MHz pb.
+    // Reduced simulation overrides must preserve this minimum duration.
     parameter integer DEFAULT_HOLD_LOG2 = 11,
     // Opt-in: self-issue one LOAD when boot_done first rises, so a cold
     // boot installs the saved PRAM before the 68k can read it.  Default 0

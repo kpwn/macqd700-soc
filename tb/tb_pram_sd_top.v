@@ -32,7 +32,9 @@ module tb_pram_sd_top #(
     // pram_sd.v's parameter block for what the real budgets are.
     parameter integer ARB_WAIT_LOG2     = 10,
     parameter integer CDC_WAIT_LOG2     = 10,
-    parameter integer DEFAULT_HOLD_LOG2 = 6,
+    // Must cover 256 peripheral clocks plus the clear synchronizer, as on
+    // hardware (whose default hold is 2048 core clocks). Core:PB is 2:1 here.
+    parameter integer DEFAULT_HOLD_LOG2 = 10,
     parameter integer AUTOLOAD_ON_BOOT  = 0
 ) (
     input  wire        core_clk,
@@ -89,7 +91,8 @@ module tb_pram_sd_top #(
 
     // ── Observability ─────────────────────────────────────────────────
     output wire        pram_default,
-    output wire        pram_sd_busy
+    output wire        pram_sd_busy,
+    output wire        rtc_pram_busy
 );
 
     wire        pram_x_req;
@@ -174,6 +177,7 @@ module tb_pram_sd_top #(
         .b_addr  (rtc_ext_addr),
         .b_wdata (rtc_ext_wdata),
         .b_we    (rtc_ext_we),
+        .b_ready (!rtc_pram_busy),
         .b_rdata (rtc_ext_rdata)
     );
 
@@ -204,6 +208,7 @@ module tb_pram_sd_top #(
         .rtc_data_o  (rtc_data_o),
         .rtc_data_oe (rtc_data_oe),
         .pram_clear  (pram_clear_sync),
+        .pram_busy   (rtc_pram_busy),
         .pram_ext_addr  (rtc_ext_addr ),
         .pram_ext_we    (rtc_ext_we   ),
         .pram_ext_wdata (rtc_ext_wdata),

@@ -10,7 +10,8 @@
 module l2c_pri8 (
     input  wire [7:0] req,  // req[i] = 1 means "candidate i"
     output wire        hit,
-    output wire [2:0]  idx
+    output wire [2:0]  idx,
+    output wire [7:0]  onehot // same selected entry, zero when no match
 );
 
     assign hit = |req;
@@ -21,6 +22,16 @@ module l2c_pri8 (
                  req[4] ? 3'd4 :
                  req[5] ? 3'd5 :
                  req[6] ? 3'd6 : 3'd7;
+
+    // Consumers needing an exclusion mask should not encode and then decode
+    // the match again. Preserve lowest-index priority even for multi-hot req.
+    assign onehot[0] = req[0];
+    genvar k;
+    generate
+        for (k = 1; k < 8; k = k + 1) begin : g_selected
+            assign onehot[k] = req[k] && !(|req[k-1:0]);
+        end
+    endgenerate
 
 endmodule
 

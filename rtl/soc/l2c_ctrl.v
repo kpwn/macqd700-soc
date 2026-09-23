@@ -1360,9 +1360,9 @@ module l2c_ctrl #(
         end
     endgenerate
     wire any_hit_c; wire [2:0] hit_way_c;
-    l2c_pri8 u_hitpri (.req(way_hit_c), .hit(any_hit_c), .idx(hit_way_c));
+    l2c_pri8 u_hitpri (.req(way_hit_c), .hit(any_hit_c), .idx(hit_way_c), .onehot());
     wire any_tm_c; wire [2:0] tm_way_c;
-    l2c_pri8 u_tmpri (.req(tag_match_c), .hit(any_tm_c), .idx(tm_way_c));
+    l2c_pri8 u_tmpri (.req(tag_match_c), .hit(any_tm_c), .idx(tm_way_c), .onehot());
     wire mshr_lu_hit; wire [2:0] mshr_lu_idx;
     wire mshr_alloc_ready, mshr_merge_ready; wire [7:0] mshr_bw_mask, mshr_bwq_mask;
     // ====================================================================
@@ -1660,12 +1660,24 @@ module l2c_ctrl #(
     // a reduced busy bit precisely so the "all but the entry I am merging
     // into" form can be taken here without a second CAM.
     wire [7:0] idq2_vec;
-    wire [7:0] lu_onehot_c  = mshr_lu_hit ? (8'b1 << mshr_lu_idx) : 8'b0;
+    // Direct selected match from the MSHR CAM/priority helper, avoiding a
+    // binary-index decode on this late ordering -> array-enable path.
+    wire [7:0] lu_onehot_c;
     wire       idq2_any_c   = |idq2_vec;
     wire       idq2_other_c = |(idq2_vec & ~lu_onehot_c);
     wire       byp_ord_c    = byp_active_valid && (byp_active_id == req_id);
     wire ord_now_block_c    = idq2_any_c   || byp_ord_c;
     wire ord_merge_block_c  = idq2_other_c || byp_ord_c;
+    // synthesis translate_off
+    wire [7:0] lu_onehot_reference_c = mshr_lu_hit ? (8'b1 << mshr_lu_idx) : 8'b0;
+    always @(posedge clk) if (!rst && !rst_busy) begin
+        if ((lu_onehot_c !== lu_onehot_reference_c) ||
+            (idq2_other_c !== (|(idq2_vec & ~lu_onehot_reference_c)))) begin
+            $display("L2C_CTRL ASSERT: selected MSHR ordering mask changed");
+            $fatal(1);
+        end
+    end
+    // synthesis translate_on
     wire s_lookup_active = s2_live_c && !req_illegal && !skew_hazard_c && !victim_query_hit;
     // Rule 2: a WRITE onto a quadrant the cache already owns must not
     // proceed while that line has a live fill -- the install would revert
@@ -1715,10 +1727,28 @@ module l2c_ctrl #(
     // Stage 2 retires this cycle.  Every outcome that used to write
     // `st <= S_IDLE` is a term here, and every stall that used to fall
     // through the case (leaving st at S_LOOKUP) is its absence.
+    // Compute outcome readiness independently of the common live/hazard
+    // guard. The victim CAM is late; feeding it through each qualified
+    // action and then ORing those actions puts needless depth before the
+    // 336-load array-enable net. Keep the guard at this cone's final AND.
+    // These are the same acceptance conditions as the action wires above;
+    // no action, queue update, pipeline stage or clock-enable cycle changes.
+    // tools/check_l2_completion.py checks all 65,536 scalar combinations.
+    wire lookup_hit_ready_c = any_hit_c && !hit_wr_blocked_c &&
+                              (!req_is_write || !mshr_inst_valid) &&
+                              !hit_rsp_block_c && !ord_now_block_c;
+    wire lookup_merge_ready_c = !any_hit_c && !req_full && mshr_lu_hit &&
+                                mshr_merge_ready && !ord_merge_block_c;
+    wire lookup_alloc_ready_c = !any_hit_c && !mshr_lu_hit && !req_full &&
+                                need_fill_c && miss_ok_c && !ord_now_block_c;
+    wire lookup_install_ready_c = !any_hit_c && !mshr_lu_hit && req_is_write &&
+                                  !need_fill_c && ins_ok_c;
+    wire lookup_outcome_ready_c = lookup_hit_ready_c || lookup_merge_ready_c ||
+                                  lookup_alloc_ready_c || lookup_install_ready_c;
     wire p2_done_c = s2_live_c &&
                      (req_illegal ? (!hit_rsp_block_c && !ord_now_block_c)
-                                  : (s_lookup_hit_go || merge_valid_c ||
-                                     s_lookup_ins_go || s_lookup_miss_go));
+                                  : (!skew_hazard_c && !victim_query_hit &&
+                                     lookup_outcome_ready_c));
     assign rr_start_c = s2_live_c && !req_illegal && skew_hazard_c;
     assign p2_free_c  = !req_v || p2_done_c;
     // The rigid shift: every stage moves, or none does.  `!rr_busy_c` and
@@ -1794,6 +1824,7 @@ module l2c_ctrl #(
                .REPLAY_N(MSHR_REPLAY_N), .RK_BITS(MSHR_REPLAY_K)) u_mshr (
         .clk(clk), .rst(rst || rst_busy),
         .lu_set(req_set), .lu_tag(req_tag), .lu_hit(mshr_lu_hit), .lu_idx(mshr_lu_idx),
+        .lu_onehot(lu_onehot_c),
         .bw_set(req_set), .bw_mask(mshr_bw_mask),
         .bwq_set(q_set),  .bwq_mask(mshr_bwq_mask),
         .idq_id({cur_is_fetch, cur_id}), .idq_busy(mshr_idq_busy),

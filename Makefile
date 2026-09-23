@@ -2361,7 +2361,7 @@ CPU_M68K040_IDIRS :=
 .PHONY: cpu040-gen
 cpu040-gen:
 	@echo "cpu040-gen: regenerating M68kSocketTop.v via sbt (cd $(CPU040_SRC_DIR) && sbt \"runMain m68k040.top.GenSocketTopVerilog\") ..."
-	cd $(CPU040_SRC_DIR) && sbt "runMain m68k040.top.GenSocketTopVerilog"
+	cd $(CPU040_SRC_DIR) && CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE) sbt "runMain m68k040.top.GenSocketTopVerilog"
 
 # Only re-run sbt when a cpu040 Scala source (or build.sbt) is newer than
 # the last generated .v -- keeps `make lint-fpga-top CPU=m68k040` cheap on
@@ -3185,7 +3185,9 @@ ETH_DEBUG_ENABLE      ?= 0
 # ETH_RK5_DIR is defined ABOVE (search "this is the FIRST `?=`").  `?=` takes the
 # first assignment, so repeating it here would have no effect.
 
-VIVADO_RUN_ENV := PCIE_TEST_DIR=$(PCIE_TEST_DIR) INCREMENTAL_REF_DCP=$(INCREMENTAL_REF_DCP)
+CPU_IPC_PROFILE ?= baseline
+CPU_DEBUG_PROFILE ?= full
+VIVADO_RUN_ENV := PCIE_TEST_DIR=$(PCIE_TEST_DIR) INCREMENTAL_REF_DCP=$(INCREMENTAL_REF_DCP) CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE)
 # CPU socket select for synth/impl — same CPU=stub|m68k knob as the
 # Verilator flow (see "CPU build select" above); consumed by vivado.tcl.
 VIVADO_RUN_ENV += CPU=$(CPU)
@@ -3498,18 +3500,49 @@ check-synth-sources:
 check-storage-reset-pairing:
 	@python3 $(CURDIR)/tools/check_storage_reset_pairing.py
 
-synth: check-synth-sources check-storage-reset-pairing
+.PHONY: check-cpu-ipc-profile
+check-cpu-ipc-profile:
+	tclsh $(TOOLS_DIR)/test_cpu_ipc_profile.tcl
+
+.PHONY: check-cpu-debug-profile
+check-cpu-debug-profile:
+	tclsh $(TOOLS_DIR)/test_cpu_debug_profile.tcl
+
+.PHONY: check-post-route-exit
+check-post-route-exit:
+	tclsh $(TOOLS_DIR)/test_post_route_exit.tcl
+
+synth: check-synth-sources check-storage-reset-pairing check-cpu-ipc-profile check-cpu-debug-profile
 	@mkdir -p $(VIVADO_IMPL_DIR)
 	@touch $(VIVADO_LOCK)
 	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado.tcl -tclargs synth_only $(VIVADO_IMPL_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
 .PHONY: impl
-impl: check-synth-sources
+impl: check-synth-sources check-cpu-ipc-profile check-cpu-debug-profile check-post-route-exit
 	@mkdir -p $(VIVADO_IMPL_DIR)
 	@touch $(VIVADO_LOCK)
 	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado.tcl -tclargs full_impl $(VIVADO_IMPL_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
+
+# Place and route in SEPARATE Vivado processes.  route_design's post-routing leaf
+# clock optimisation segfaults deterministically on this design for BOTH Explore
+# and AggressiveExplore, after routing itself has completed; the same placement
+# routed by a freshly started Vivado gets through.  The crash tracks accumulated
+# process state, so restarting between place and route is the fix, not a
+# workaround -- and it also means a crash can never cost the synthesis and
+# placement hour.  ROUTE_DIRECTIVE selects the router directive (default
+# AggressiveExplore).
+.PHONY: impl-split
+impl-split: check-synth-sources check-cpu-ipc-profile check-cpu-debug-profile check-post-route-exit
+	@mkdir -p $(VIVADO_IMPL_DIR)
+	@touch $(VIVADO_LOCK)
+	flock -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado.tcl -tclargs place_only $(VIVADO_IMPL_DIR)' \
+	  || { status=$$?; echo "ERROR: placement stage failed ($$status)"; exit $$status; }
+	@test -s $(VIVADO_IMPL_DIR)/checkpoints/place.dcp || { echo "ERROR: place_only produced no place.dcp"; exit 1; }
+	@echo "=== place/route split: placement banked, restarting Vivado to route ==="
+	flock -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/resume_from_place.tcl -tclargs $(VIVADO_IMPL_DIR) $${ROUTE_DIRECTIVE:-AggressiveExplore}' \
+	  || { status=$$?; echo "ERROR: route stage failed ($$status); place.dcp retained for a retry with another directive"; exit $$status; }
 
 .PHONY: incremental-status
 incremental-status:
@@ -5530,6 +5563,19 @@ $(PIC16C5X_BUILD)/Vpic16c5x: $(PIC16C5X_RTL) $(TB_DIR)/tb_pic16c5x.cpp $(PIC16C5
 RTC_RTL   := $(RTL_DIR)/mac/rtc.v
 RTC_BUILD := $(BUILD_DIR)/rtc
 
+.PHONY: tb-pram-bram-cdc
+tb-pram-bram-cdc:
+	$(VERILATOR) --binary --timing --assert --top-module tb_pram_bram_cdc \
+		-Wno-TIMESCALEMOD -Wno-WIDTH \
+		-Mdir $(BUILD_DIR)/pram_bram_cdc \
+		$(RTL_DIR)/mac/rtc.v $(RTL_DIR)/soc/pram_cdc.v $(TB_DIR)/tb_pram_bram_cdc.sv
+	$(BUILD_DIR)/pram_bram_cdc/Vtb_pram_bram_cdc
+	$(VERILATOR) --binary --timing --assert --top-module tb_pram_bram_cdc \
+		-Wno-TIMESCALEMOD -Wno-WIDTH -GA_HALF_PS=2500 -GB_PHASE_PS=1700 \
+		-Mdir $(BUILD_DIR)/pram_bram_cdc_200 \
+		$(RTL_DIR)/mac/rtc.v $(RTL_DIR)/soc/pram_cdc.v $(TB_DIR)/tb_pram_bram_cdc.sv
+	$(BUILD_DIR)/pram_bram_cdc_200/Vtb_pram_bram_cdc
+
 .PHONY: tb-rtc
 tb-rtc: $(RTC_BUILD)/Vrtc
 	@echo "Running rtc unit tb..."
@@ -7437,6 +7483,21 @@ tb-l2c: $(L2C_BUILD)/Vtb_l2c
 	@echo "Running l2c unit tb..."
 	$(L2C_BUILD)/Vtb_l2c
 
+.PHONY: check-l2-completion
+check-l2-completion:
+	python3 $(TOOLS_DIR)/check_l2_completion.py
+
+L2C_PRI8_BUILD := $(BUILD_DIR)/l2c_pri8
+.PHONY: tb-l2c-pri8
+tb-l2c-pri8: $(L2C_PRI8_BUILD)/Vl2c_pri8
+	$(L2C_PRI8_BUILD)/Vl2c_pri8
+
+$(L2C_PRI8_BUILD)/Vl2c_pri8: $(RTL_DIR)/soc/l2c_pri8.v $(TB_DIR)/tb_l2c_pri8.cpp
+	@mkdir -p $(L2C_PRI8_BUILD)
+	$(VERILATOR) --cc --exe --build --assert -Wall \
+		-Mdir $(L2C_PRI8_BUILD) --top-module l2c_pri8 \
+		$(RTL_DIR)/soc/l2c_pri8.v $(TB_DIR)/tb_l2c_pri8.cpp -CFLAGS "-std=c++17"
+
 # Mutation-testing build (scratch -Mdir so it never clobbers tb-l2c's).
 # Used by the RED-verification harness described in the bypass-pipelining
 # scenarios; not part of any gate.
@@ -8664,7 +8725,7 @@ ALL_TBS := \
 	tb-sd-provision tb-sd-jtag-writer tb-vhdd-ctrl \
 	tb-dma-ctrl tb-dma-engine tb-dma-l2c tb-axil-null-slave tb-axil-split2 \
 	tb-pram-sd tb-pram-sd-populated tb-pram-sd-autoload \
-	tb-l2c tb-l2c-stress tb-l2c-collision tb-l2c-bypass-all tb-l2c-chain tb-l2c-chain-off \
+	tb-l2c-pri8 tb-l2c tb-l2c-stress tb-l2c-collision tb-l2c-bypass-all tb-l2c-chain tb-l2c-chain-off \
 	tb-axi-vram-mux3 tb-vram-ddr-chain tb-vram-ddr-chain-nol2c tb-fb-reader-ddr-chain \
 	tb-scanout-ddr-frames \
 	tb-video-smoke-ddr tb-video-smoke-ddr-negctl \

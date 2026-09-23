@@ -30,7 +30,9 @@
 //     registers.  They are stable for the entire transaction — declare
 //     them as false paths / max-delay if you ever constrain this.
 //   * b_we is a genuine one-clock pulse in the B domain.
-//   * b_rdata must be a combinational read of pram[b_addr].
+//   * b_rdata is a one-b_clk synchronous read of pram[b_addr].
+//   * b_ready is low throughout a PRAM clear. Requests remain pending;
+//     acceptance waits an additional ready clock for the RAM read to settle.
 //
 // Verilog-2005, synchronous active-high resets (one per domain).
 
@@ -52,7 +54,8 @@ module pram_cdc (
     input  wire        b_rst,
     output wire [7:0]  b_addr,
     output wire [7:0]  b_wdata,
-    output reg         b_we,
+    output wire        b_we,
+    input  wire        b_ready,
     input  wire [7:0]  b_rdata
 );
 
@@ -66,9 +69,12 @@ module pram_cdc (
     reg                          req_b_q;
     reg                          ack_b;
     reg  [7:0]                   rdata_b;
+    reg                          ready_q;
 
-    wire req_b_rise = req_b_sync && !req_b_q;
     wire req_b_fall = !req_b_sync && req_b_q;
+    wire accept_b = req_b_sync && !ack_b && b_ready && ready_q && !b_rst;
+    // Accepted on this edge, never a delayed pulse that can race a new clear.
+    assign b_we = accept_b && a_we;
 
     always @(posedge b_clk) begin
         if (b_rst) begin
@@ -77,18 +83,14 @@ module pram_cdc (
             req_b_q    <= 1'b0;
             ack_b      <= 1'b0;
             rdata_b    <= 8'h00;
-            b_we       <= 1'b0;
+            ready_q    <= 1'b0;
         end else begin
             req_b_meta <= a_req;
             req_b_sync <= req_b_meta;
             req_b_q    <= req_b_sync;
+            ready_q    <= b_ready;
 
-            // One-clock write strobe, exactly on the synchronised rising
-            // edge of the request.  a_addr/a_wdata have been stable for
-            // >= 2 b_clk edges by construction.
-            b_we <= req_b_rise && a_we;
-
-            if (req_b_rise) begin
+            if (accept_b) begin
                 // Read capture happens on the same edge for both read and
                 // write requests: b_rdata is the PRE-write value, which is
                 // exactly what a read-modify-write caller would want and is

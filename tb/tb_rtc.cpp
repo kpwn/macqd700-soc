@@ -48,6 +48,11 @@ static void tick() {
     dut->clk = 1; dut->eval(); sim_time++;
 }
 
+static void wait_pram_clear() {
+    for (unsigned i = 0; i < 260 && dut->pram_busy; ++i) tick();
+    if (dut->pram_busy) VL_FATAL_MT(__FILE__, __LINE__, "", "PRAM clear did not finish");
+}
+
 // Warm reset — pulses `rst` ONLY.
 //
 // As of the battery-backed-PRAM change, `rst` deliberately does not clear
@@ -74,6 +79,7 @@ static void pram_zap() {
     tick(); tick();
     dut->pram_clear = 0;
     tick();
+    wait_pram_clear();
 }
 
 // Full test-isolation reset — warm reset PLUS an explicit PRAM zap.
@@ -96,6 +102,7 @@ static void reset() {
     dut->rst        = 0;
     dut->pram_clear = 0;
     tick();
+    wait_pram_clear();
 }
 
 #define CHECK_EQ(name, got, exp) do { \
@@ -926,6 +933,103 @@ static bool test_pram_clear_restores_power_on_image() {
     return true;
 }
 
+static void ext_write(uint8_t addr, uint8_t value) {
+    dut->pram_ext_addr = addr;
+    dut->pram_ext_wdata = value;
+    dut->pram_ext_we = 1;
+    tick();
+    dut->pram_ext_we = 0;
+}
+
+static uint8_t ext_read(uint8_t addr) {
+    dut->pram_ext_addr = addr;
+    tick();
+    return dut->pram_ext_rdata;
+}
+
+static bool test_pram_bram_cross_ports_and_sweep() {
+    ScopedDut sd{};
+    reset();
+    uint32_t rng = 0x68c040;
+    uint8_t pattern[256];
+    for (unsigned i = 0; i < 256; ++i) {
+        rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5;
+        pattern[i] = rng;
+        ext_write(i, pattern[i]);
+    }
+    for (unsigned i = 0; i < 256; ++i)
+        CHECK_EQ("external write / serial read", xpram_read(i), pattern[i]);
+    for (unsigned i = 0; i < 256; ++i) xpram_write(i, pattern[i] ^ 0xff);
+    warm_reset();
+    for (unsigned i = 0; i < 256; ++i)
+        CHECK_EQ("serial write / external read after warm reset", ext_read(i), pattern[i] ^ 0xff);
+
+    dut->pram_clear = 1; tick();
+    dut->pram_clear = 0;
+    // Ordinary reset halfway through the sweep must not cancel/restart it.
+    for (unsigned i = 0; i < 255; ++i) {
+        dut->rst = (i >= 100 && i < 110);
+        tick();
+        CHECK_TRUE("busy until last byte", dut->pram_busy);
+    }
+    tick();
+    CHECK_EQ("sweep ends after exactly 256 writes", dut->pram_busy, 0);
+    for (unsigned i = 0; i < 256; ++i) CHECK_EQ("all bytes cleared", ext_read(i), 0);
+    // Restores while the Mac is held in reset remain legal.
+    dut->rst = 1;
+    ext_write(0xff, 0xa7);
+    CHECK_EQ("restore during reset", ext_read(0xff), 0xa7);
+    dut->rst = 0; tick();
+    CHECK_EQ("restore survives reset release", xpram_read(0xff), 0xa7);
+
+    dut->pram_clear = 1;
+    for (unsigned i = 0; i < 300; ++i) tick();
+    CHECK_TRUE("held clear keeps port unavailable", dut->pram_busy);
+    dut->pram_clear = 0; tick();
+    CHECK_EQ("held clear does not repeatedly restart sweep", dut->pram_busy, 0);
+    ext_write(0xff, 0x42);
+    dut->pram_clear = 1; tick();
+    dut->pram_clear = 0;
+    wait_pram_clear();
+    CHECK_EQ("second clear removes later write", ext_read(0xff), 0);
+    return true;
+}
+
+static bool test_pram_bram_collisions() {
+    ScopedDut sd{};
+    reset();
+    for (unsigned same = 0; same < 2; ++same) {
+        // Finish a serial write on exactly the same edge as an external write.
+        dut->rtc_enb = 0; tick();
+        for (int bit = 7; bit >= 0; --bit) shift_bit_in((0x20 >> bit) & 1);
+        for (int bit = 7; bit >= 0; --bit) shift_bit_in((0x5a >> bit) & 1);
+        dut->rtc_enb = 1;
+        ext_write(same ? 8 : 9, 0xa5);
+        CHECK_EQ("same-byte external write wins", xpram_read(8), same ? 0xa5 : 0x5a);
+        CHECK_EQ("different-byte external write also survives", xpram_read(9), 0xa5);
+    }
+    // External write at serial read-command completion: serial must latch OLD
+    // data, not the replacement arriving on the other READ_FIRST RAM port.
+    ext_write(8, 0xc3);
+    dut->rtc_enb = 0; tick();
+    for (int bit = 7; bit >= 1; --bit) shift_bit_in((0xa0 >> bit) & 1);
+    dut->rtc_data_o = 0; dut->rtc_clk = 1; tick();
+    dut->rtc_clk = 0;
+    ext_write(8, 0x69);
+    uint8_t out = 0;
+    for (int bit = 7; bit >= 0; --bit) out = (out << 1) | shift_bit_out();
+    dut->rtc_enb = 1; tick();
+    CHECK_EQ("serial read-before-write collision", out, 0xc3);
+    CHECK_EQ("external collision write stored", ext_read(8), 0x69);
+
+    dut->pram_clear = 1;
+    ext_write(8, 0xff);
+    dut->pram_clear = 0;
+    wait_pram_clear();
+    CHECK_EQ("clear takes priority over raw external strobe", ext_read(8), 0);
+    return true;
+}
+
 // ─── Main ──────────────────────────────────────────────────────────────
 #define RUN(fn) do { \
     bool ok = fn(); \
@@ -962,6 +1066,8 @@ int main(int argc, char** argv) {
     // Battery-backed PRAM: persistence across rst, and the explicit zap.
     RUN(test_pram_survives_warm_reset);
     RUN(test_pram_clear_restores_power_on_image);
+    RUN(test_pram_bram_cross_ports_and_sweep);
+    RUN(test_pram_bram_collisions);
 
     printf("\n%d/%d scenarios passed.\n", n_pass, n_pass + n_fail);
     dut->final();

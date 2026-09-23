@@ -50,7 +50,7 @@ set output_dir [lindex $argv 1]
 
 set_param general.maxThreads 4
 
-if {$mode ne "synth_only" && $mode ne "full_impl" && $mode ne "dry_run" && $mode ne "clock_report" && $mode ne "ddr_pincheck"} {
+if {$mode ne "synth_only" && $mode ne "full_impl" && $mode ne "place_only" && $mode ne "dry_run" && $mode ne "clock_report" && $mode ne "ddr_pincheck"} {
     puts stderr "ERROR: mode must be one of {synth_only, full_impl, dry_run, clock_report, ddr_pincheck}, got: $mode"
     exit 1
 }
@@ -104,6 +104,21 @@ if {$cpu_sel ne "stub" && $cpu_sel ne "m68k040"} {
     exit 1
 }
 set cpu_m68k040 [expr {$cpu_sel eq "m68k040"}]
+set cpu_ipc_profile [expr {[info exists ::env(CPU_IPC_PROFILE)] ? $::env(CPU_IPC_PROFILE) : "baseline"}]
+if {$cpu_ipc_profile ni {baseline throughput-v1 throughput-v2}} { error "Invalid CPU_IPC_PROFILE=$cpu_ipc_profile" }
+if {!$cpu_m68k040 && $cpu_ipc_profile ne "baseline"} { error "CPU_IPC_PROFILE requires CPU=m68k040" }
+set perf_detail_enable [expr {[info exists ::env(PERF_DETAIL_ENABLE)] ? $::env(PERF_DETAIL_ENABLE) : 0}]
+set cpu_debug_profile [expr {[info exists ::env(CPU_DEBUG_PROFILE)] ? $::env(CPU_DEBUG_PROFILE) : "full"}]
+if {$cpu_debug_profile ni {full reduced}} { error "Invalid CPU_DEBUG_PROFILE=$cpu_debug_profile" }
+if {!$cpu_m68k040 && $cpu_debug_profile ne "full"} { error "CPU_DEBUG_PROFILE requires CPU=m68k040" }
+puts "=== CPU DEBUG PROFILE: $cpu_debug_profile ==="
+set enable_ipc_ila [expr {[info exists ::env(ENABLE_IPC_ILA)] ? $::env(ENABLE_IPC_ILA) : 0}]
+if {$perf_detail_enable ni {0 1} || $enable_ipc_ila ni {0 1}} {
+    error "PERF_DETAIL_ENABLE and ENABLE_IPC_ILA must be 0 or 1"
+}
+if {$enable_ipc_ila && (!$perf_detail_enable || !$cpu_m68k040)} {
+    error "ENABLE_IPC_ILA requires CPU=m68k040 and PERF_DETAIL_ENABLE=1"
+}
 puts "=== CPU SOCKET: CPU=$cpu_sel ==="
 
 set cpu040_dir      $proj_root/cpu040
@@ -116,7 +131,7 @@ if {$cpu_m68k040} {
     }
     puts "=== CPU=m68k040: regenerating $cpu_m68k040_v ==="
     puts "=== CPU=m68k040: cd $cpu040_dir && sbt \"runMain m68k040.top.GenSocketTopVerilog\" ==="
-    if {[catch {exec env DBG_BUILD_ID=$build_id sh -c "cd $cpu040_dir && sbt \"runMain m68k040.top.GenSocketTopVerilog\"" 2>@1} sbt_out]} {
+    if {[catch {exec env DBG_BUILD_ID=$build_id PERF_DETAIL_ENABLE=$perf_detail_enable CPU_IPC_PROFILE=$cpu_ipc_profile CPU_DEBUG_PROFILE=$cpu_debug_profile sh -c "cd $cpu040_dir && sbt \"runMain m68k040.top.GenSocketTopVerilog\"" 2>@1} sbt_out]} {
         puts stderr "ERROR: cpu040 M68kSocketTop.v regeneration failed:"
         puts stderr $sbt_out
         exit 1
@@ -201,6 +216,11 @@ set enable_pcie_xdma [parse_bool_env ENABLE_PCIE_XDMA 0]
 # actively bisecting the A7-drift / boot-wedge HW-only race.
 # See synth/debug_ila.tcl + docs/ila_a7_drift_probes.md.
 set enable_ila [parse_bool_env ENABLE_ILA 0]
+# L2C URAM floorplan gate.  L2C_URAM_FLOORPLAN=0 drops the slice-major LOC on
+# the 64 L2 data-array URAMs (applied after synth_design, see the block right
+# before opt_design) so a build can be A/B'd against an unconstrained one.
+# Inert when the L2C itself is off.  Recorded in fpga_top.buildinfo.
+set l2c_uram_floorplan [parse_bool_env L2C_URAM_FLOORPLAN 1]
 # Ethernet ON by default in its SONIC DMA form -- the configuration the board
 # runs.  ETH_ICMP_RESPONDER=1 selects the OTHER q700_eth_link branch (standalone
 # ICMP responder, no SONIC DMA), so defaulting it to 1 made a plain ETH_ENABLE=1
@@ -877,6 +897,10 @@ if {$enable_vio} {
 # recipes.
 # ──────────────────────────────────────────────────────────────────────────────
 source $synth_dir/debug_ila.tcl
+if {$enable_ipc_ila} {
+    source $synth_dir/ipc_ila.tcl
+    read_ip [gen_ipc_ila_ip $output_dir $part]
+}
 if {$enable_ila} {
     set ip_paths [gen_debug_ila_ip $output_dir $part]
     set ila_xci [lindex $ip_paths 0]
@@ -1031,6 +1055,8 @@ if {$mode eq "ddr_pincheck"} {
     }
     if {$enable_vio} { lappend pincheck_def_args -verilog_define VIO_ENABLE }
     if {$enable_ila} { lappend pincheck_def_args -verilog_define ILA_ENABLE }
+    if {$perf_detail_enable} { lappend pincheck_def_args -verilog_define PERF_DETAIL_ENABLE }
+    if {$enable_ipc_ila} { lappend pincheck_def_args -verilog_define IPC_ILA_ENABLE }
     if {$enable_scsi_trace} { lappend pincheck_def_args -verilog_define SCSI_TRACE_ENABLE }
     if {$enable_jtag_axi} { lappend pincheck_def_args -verilog_define JTAG_AXI_ENABLE }
     if {$enable_pcie_xdma} { lappend pincheck_def_args -verilog_define PCIE_XDMA_ENABLE }
@@ -1066,6 +1092,8 @@ if {$mode eq "dry_run"} {
     if {$use_sim_model} { lappend dry_def_args -verilog_define SIM_MODEL }
     if {$enable_vio}    { lappend dry_def_args -verilog_define VIO_ENABLE }
     if {$enable_ila}    { lappend dry_def_args -verilog_define ILA_ENABLE }
+    if {$perf_detail_enable} { lappend dry_def_args -verilog_define PERF_DETAIL_ENABLE }
+    if {$enable_ipc_ila} { lappend dry_def_args -verilog_define IPC_ILA_ENABLE }
     if {$enable_scsi_trace} { lappend dry_def_args -verilog_define SCSI_TRACE_ENABLE }
     if {$enable_jtag_axi} { lappend dry_def_args -verilog_define JTAG_AXI_ENABLE }
     if {$enable_pcie_xdma} { lappend dry_def_args -verilog_define PCIE_XDMA_ENABLE }
@@ -1099,6 +1127,8 @@ if {$mode eq "clock_report"} {
     if {$use_sim_model} { lappend clock_def_args -verilog_define SIM_MODEL }
     if {$enable_vio}    { lappend clock_def_args -verilog_define VIO_ENABLE }
     if {$enable_ila}    { lappend clock_def_args -verilog_define ILA_ENABLE }
+    if {$perf_detail_enable} { lappend clock_def_args -verilog_define PERF_DETAIL_ENABLE }
+    if {$enable_ipc_ila} { lappend clock_def_args -verilog_define IPC_ILA_ENABLE }
     if {$enable_scsi_trace} { lappend clock_def_args -verilog_define SCSI_TRACE_ENABLE }
     if {$enable_jtag_axi} { lappend clock_def_args -verilog_define JTAG_AXI_ENABLE }
     if {$enable_pcie_xdma} { lappend clock_def_args -verilog_define PCIE_XDMA_ENABLE }
@@ -1162,6 +1192,8 @@ if {[info exists ::env(NO_MACRO_FUSION)] && $::env(NO_MACRO_FUSION) ne "0"} {
 }
 if {$enable_vio}    { lappend synth_def_args -verilog_define VIO_ENABLE }
 if {$enable_ila}    { lappend synth_def_args -verilog_define ILA_ENABLE }
+if {$perf_detail_enable} { lappend synth_def_args -verilog_define PERF_DETAIL_ENABLE }
+if {$enable_ipc_ila} { lappend synth_def_args -verilog_define IPC_ILA_ENABLE }
 if {$enable_scsi_trace} { lappend synth_def_args -verilog_define SCSI_TRACE_ENABLE }
 if {$enable_jtag_axi} { lappend synth_def_args -verilog_define JTAG_AXI_ENABLE }
 if {$enable_pcie_xdma} { lappend synth_def_args -verilog_define PCIE_XDMA_ENABLE }
@@ -2401,6 +2433,233 @@ if {[info exists ::env(CORE_BUDGET_NS)] && $::env(CORE_BUDGET_NS) ne ""} {
     }
 }
 
+# ── async_fifo GRAY-POINTER CROSSINGS ─────────────────────────────────────────
+# MEASURED (2026-09-22): of the twenty *_hold_fix delay cells Vivado inserted to
+# repair hold in the preceding build, FIFTEEN were in
+# u_pb_s1_cdc/u_bridge/{aw,w,b,ar,r}_fifo/{w,r}ptr_gray* -- three per FIFO across
+# all five AXI channel FIFOs. Three quarters of a FINITE hold-repair budget went
+# into an async FIFO's gray pointers, and that build still exited with twelve
+# hold endpoints failing. The inserted cells then show up in setup path dumps at
+# 5.3-6.9 ns, so the repair is not free either.
+#
+# Those legs are timed only because core_clk and pb_clk are deliberately kept
+# phase-related rather than declared asynchronous (fpga_top_clocks.vh: "a
+# well-defined synchronous transfer rather than a CDC").  That is right for the
+# DATA path and is NOT changed here.  It also drags in the gray pointers, which
+# are gray-coded precisely so one bit changes per update and the receiver
+# tolerates arbitrary skew -- a hold check on them is meaningless work.
+#
+# -datapath_only excludes clock phase/skew and drops the min requirement on these
+# legs only, while still BOUNDING the path at one core period (5 ns, the shorter
+# of the two clocks) so a pointer bit is stable before its source can change
+# again.  The synchroniser's own interstage path stays normally timed.  This is
+# NOT set_clock_groups -asynchronous: nothing else about core<->pb moves.
+#
+# WHY HERE AND NOT IN fpga_top.xdc.  That file is read while the design still has
+# unresolved black boxes, so get_cells returns nothing and Vivado defers the whole
+# constraint; and its parser rejects `if`/`puts` (Designutils 20-1307), so the
+# match could not be asserted there.  A CDC constraint change has silently killed
+# a boot on this board once (p183cdc, exc_count=0), so the match IS asserted here:
+# a rename in async_fifo.v fails the build loudly instead of quietly disabling it.
+# ── SONIC HANDSHAKE-QUALIFIED CDC PAYLOAD ────────────────────────────────────
+# MEASURED: the router's "tight setup and hold" report names exactly one pin,
+# build after build:
+#
+#   Launch Setup Clock | Launch Hold Clock | Pin
+#   core_mmcm_clkout0  | core_mmcm_clkout1 | g_sonic_dma_client.u_q700_sonic_rx/state_reg[*]/D
+#
+# Setup is checked against the core clock and hold against the peripheral clock,
+# so the window is whatever those two related clocks happen to leave -- a
+# requirement no amount of routing effort can satisfy, and a direct obstacle to
+# meeting WNS and WHS simultaneously.
+#
+# WHY IT IS SPURIOUS. q700_sonic_rx_cdc is a correct handshake CDC: the VALID is
+# 2FF synchronised (cv1/cv2, ASYNC_REG) while the payload crosses combinationally
+#     assign core_cfg_cdc = pb_cfg_cdc;   ... and 13 siblings
+# The payload is written by the pb side and left stable; the core side may only
+# consume it once the synchronised valid arrives, which is at least two core
+# cycles later. So the payload legitimately needs no synchroniser -- but nothing
+# in the constraints says so, and because core_clk and pb_clk are deliberately
+# phase-related rather than asynchronous (fpga_top_clocks.vh), the tool times it
+# as an ordinary single-cycle transfer.
+#
+# -datapath_only excludes clock phase/skew and drops the min requirement, while
+# still BOUNDING the payload at one core period -- far tighter than the >=2 core
+# cycles the handshake actually guarantees, so the bound is conservative.
+# Scoped to the SONIC CDC crossings only; this is NOT set_clock_groups
+# -asynchronous and nothing else about core<->pb changes.
+#
+# The owner has confirmed the Ethernet side is not latency critical.
+set son_pb   [get_cells -quiet -hier -regexp {.*u_q700_eth_sonic.*} -filter {IS_SEQUENTIAL}]
+set son_core [get_cells -quiet -hier -regexp {.*g_sonic_dma_client.*} -filter {IS_SEQUENTIAL}]
+if {[llength $son_pb] == 0 || [llength $son_core] == 0} {
+    puts stderr "ERROR: SONIC CDC constraint matched nothing (pb=[llength $son_pb] core=[llength $son_core]) -- did the sonic hierarchy get renamed?"
+    exit 1
+}
+puts "=== SONIC CDC payload: [llength $son_pb] pb-side / [llength $son_core] core-side cells, set_max_delay -datapath_only 5.000 both ways ==="
+set_max_delay -datapath_only 5.000 -from $son_pb   -to $son_core
+set_max_delay -datapath_only 5.000 -from $son_core -to $son_pb
+
+set gray_src [get_cells -quiet -hier -regexp {.*/(wptr_gray|rptr_gray)_reg\[\d+\]}]
+set gray_dst [get_cells -quiet -hier -regexp {.*/(wptr_gray_r1_r|rptr_gray_w1_r)_reg\[\d+\]}]
+if {[llength $gray_src] == 0 || [llength $gray_dst] == 0} {
+    puts stderr "ERROR: async_fifo gray-pointer constraint matched nothing (src=[llength $gray_src] dst=[llength $gray_dst]) -- did async_fifo.v rename wptr_gray/rptr_gray/*_r1_r?"
+    exit 1
+}
+puts "=== async_fifo gray pointers: [llength $gray_src] source / [llength $gray_dst] sync cells, set_max_delay -datapath_only 5.000 ==="
+set_max_delay -datapath_only 5.000 -from $gray_src -to $gray_dst
+
+# ── L2C DATA-ARRAY FLOORPLAN: slice-major LOC on the 64 URAM288s ─────────────
+# The only floorplan constraint in this flow, and deliberately NOT a pblock.
+# Whole-core pblocks were measured on this design and made it worse (the
+# core's units are fused at the LUT level, so a box forces their tails in);
+# this pins 64 hard macros and nothing else, and it exists because of a
+# measured net census, not a hunch.
+#
+# MEASURED on the routed dcache-read-base checkpoint (2026-09-22, same flow,
+# WNS -0.143), against the router's "NORTH global/long congestion" band
+# INT_X32-55 / Y126-205 that terminates on URAM_URAM_FT_X51Y150:
+#
+#   * All 64 URAMs sit in ONE column (URAM288_X0Y0..Y63, tile column X51) that
+#     spans the full 240-row die.  Vivado scattered the 8 ways of each 72-bit
+#     slice over the whole column (way 0's eight URAMs were at site Y4, 16, 28,
+#     36, 44, 45, 48, 56).
+#   * Of ALL nets crossing Y=150 inside X32-60, 37% (1675 of 4493) touch a URAM
+#     pin.  By driver, u_l2c/.../u_data + u_mshr are 38% of those crossings and
+#     34% of the summed vertical span in the band -- from ~5% of the design's
+#     LUTs.  The core's ROB/D-cache/DTLB/LSU are the CELLS in the band; the L2
+#     data array is the WIRE.
+#   * The 575 write-data/strobe nets (one per line bit + byte enable) each fan
+#     out to the 8 ways of one slice: mean vertical span 150 rows, 413 of 575
+#     cross Y=150.  The 4096 URAM read-data nets each feed one 8:1 way-mux LUT
+#     whose eight sources are scattered: 171k row-tracks, 1126 cross Y=150.
+#
+# THE CONSTRAINT.  Place slice N, way W at URAM288_X0Y(8*N+W), so the eight
+# ways of every slice are vertically adjacent (two URAM tiles, ~30 rows).  Then
+# every write-data net's 8 loads are local and every way-mux LUT's 8 sources
+# are local.  Simulated on the same checkpoint with all drivers held where
+# they are (conservative -- the placer will move the mux LUTs): write-net mean
+# span 150 -> 82 rows, Y=150 crossings 413 -> 170; the read side becomes
+# ~15-row nets by construction.  The 12 read-address/CE broadcasts to all 64
+# URAMs are unchanged and unavoidable.
+#
+# WHY SLICE-major and not WAY-major.  The L2's own worst paths on that
+# checkpoint were req_tag_reg -> u_data/g_way[W].mem_reg_uram_N/EN_B (87%
+# route): the hit-way write enable, 8 nets each reaching a way's 8 URAMs.
+# Way-major would localise those 8 nets and scatter the other 4671; and it
+# does not even shorten the enable's WORST leg, which is driver-to-farthest-
+# group in either ordering.  uram_7 holds only bits 504..511, so it goes at
+# the top, farthest from the (south-placed) write drivers.
+#
+# Netlist-dependent (get_cells), so it lives here after synth_design, not in
+# an XDC.  The match is asserted: a rename in l2c_data.v or a change in the
+# 8x8 geometry fails the build loudly rather than silently dropping the
+# floorplan.  L2C_URAM_FLOORPLAN=0 disables it for a controlled A/B build.
+# MEASURED (2026-09-22) by a controlled A/B: identical CPU/SoC revisions, ETH
+# on, 200 MHz, AggressiveExplore in a split process, differing only in
+# L2C_URAM_FLOORPLAN.  ON: WNS +0.006 / WHS +0.007, ZERO failing setup and hold
+# endpoints out of 342,482 / 341,781.  OFF: WNS -0.046 with 183 failing setup
+# endpoints, and the post-route phys_opt loop found -0.004 five times but drove
+# hold negative each time and rolled back.  So the floorplan is worth ~52 ps and
+# is what closes this design.  Its one cost is a slow-corner Min Skew violation
+# of -0.018 on one DDR4 XIPHY bitslice site (BITSLICE_RX_TX_X0Y36, inside the
+# MIG's own PHY), absent from every floorplan-off build; the fast corner on the
+# equivalent site passes at +0.292.
+# ($l2c_uram_floorplan is parsed with the other build knobs near ENABLE_ILA.)
+if {$l2c_enable_effective && $l2c_uram_floorplan} {
+    set uram_cells [get_cells -quiet -hier -regexp \
+        {.*u_l2c/g_active\.u_ctrl/u_data/g_way\[[0-7]\]\.mem_reg_uram_[0-7]$} \
+        -filter {REF_NAME == URAM288}]
+    if {[llength $uram_cells] != 64} {
+        puts stderr "ERROR: L2C URAM floorplan expected 64 URAM288 cells named u_l2c/g_active.u_ctrl/u_data/g_way\[W\].mem_reg_uram_N, found [llength $uram_cells] -- did l2c_data.v change geometry or naming? (L2C_URAM_FLOORPLAN=0 disables this)"
+        exit 1
+    }
+    set uram_seen [dict create]
+    foreach c $uram_cells {
+        if {![regexp {g_way\[([0-7])\]\.mem_reg_uram_([0-7])$} [get_property NAME $c] -> uway uslice]} {
+            puts stderr "ERROR: L2C URAM floorplan: cannot parse way/slice from [get_property NAME $c]"
+            exit 1
+        }
+        set uy [expr {8 * $uslice + $uway}]
+        set usite "URAM288_X0Y$uy"
+        if {[llength [get_sites -quiet $usite]] != 1} {
+            puts stderr "ERROR: L2C URAM floorplan: site $usite does not exist on $part"
+            exit 1
+        }
+        if {[dict exists $uram_seen $uy]} {
+            puts stderr "ERROR: L2C URAM floorplan: two cells map to $usite ([dict get $uram_seen $uy] and $c)"
+            exit 1
+        }
+        dict set uram_seen $uy $c
+        set_property LOC $usite $c
+    }
+    puts "=== L2C URAM floorplan: 64 URAM288 LOCed slice-major, URAM288_X0Y(8*slice+way) ==="
+} else {
+    puts "=== L2C URAM floorplan: skipped (l2c_enable=$l2c_enable_effective L2C_URAM_FLOORPLAN=$l2c_uram_floorplan) ==="
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DDR4 XIPHY bitslice Min Skew: pin one MIG write-serializer flop near its byte
+# lane.
+#
+# The last failing timing check on this design was not in our logic at all. The
+# XIPHY RXTX_BITSLICE for byte lane 2 carries a Min Skew requirement between its
+# D[1] and D[2] inputs -- the two arrivals must be at least 90 ps APART in the
+# slow corner -- and the routed design delivered 72 ps, for WPWS -0.018 on one
+# endpoint out of 113,769.
+#
+# WHAT DRIVES THOSE PINS. D[0..7] of the bitslice come from the MIG's own write
+# serializer flops, u_ddr_mc_pi/u_ddr_mc_write/genByte[2].../genBit[7].../
+# dReg_reg[0..7]. Nothing constrains where they go, and the placer scattered
+# this bit's eight across SLICE_X3Y52, X4Y67, X7Y65, X4Y67, X7Y65, X4Y67, X6Y64
+# and X3Y65. The skew between any two of them is then whatever the routing
+# happened to give: MEASURED across the four lanes that carry this check, in one
+# build, 0.072 / 0.543 / 0.270 / 0.144 ns against a 0.090 requirement. The same
+# lane measured 0.161 in the otherwise-identical L2C_URAM_FLOORPLAN=0 build. It
+# is a lottery, not a design property, and it is the reason this check moves for
+# reasons that have nothing to do with the change under test.
+#
+# WHY A SINGLE LOC IS THE FIX. The requirement is a MINIMUM separation, so the
+# lever is to make one of the two arrivals clearly different from the other, and
+# the cheap direction is to pull D[1]'s driver close to the bitslice while D[2]'s
+# stays out at X7: the byte lane's neighbourhood is otherwise full (zero wholly
+# free slices in X4..X12 across Y30..Y79), so D[2] cannot drift inward to close
+# the gap again. MEASURED on the routed checkpoint: moving this one flop to any
+# of eight free slices near the lane (X1Y37, X2Y35, X1Y39, X0Y32, X2Y32, X2Y41,
+# X2Y31, X1Y28) removed the violation, and all eight left WNS +0.006 and WHS
+# +0.007 exactly unchanged. X1Y37 is the closest to the lane and is what is
+# pinned here.
+#
+# WHAT WOULD INVALIDATE IT. A different MIG configuration or a regenerated core
+# can rename or re-shape this hierarchy, and a byte lane other than 2 can be the
+# one that comes out short. So the cell match is asserted rather than assumed,
+# and the post-route report records WPWS in the buildinfo so a build that loses
+# this check says so in its own manifest instead of being found out later.
+# MIG_WR_FLOP_LOC=0 disables it for a controlled A/B.
+# ──────────────────────────────────────────────────────────────────────────────
+set mig_wr_flop_loc [parse_bool_env MIG_WR_FLOP_LOC 1]
+set mig_wr_flop_site "SLICE_X1Y37"
+if {!$use_sim_model && $mig_wr_flop_loc} {
+    set mig_wr_cell [get_cells -quiet -hier -regexp \
+        {.*u_ddr_mc_write/genByte\[2\]\.u_ddr_mc_wr_byte/genBit\[7\]\.u_ddr_mc_wr_bit/dReg_reg\[1\]$}]
+    if {[llength $mig_wr_cell] != 1} {
+        puts stderr "ERROR: DDR4 bitslice Min Skew fix expected exactly one MIG write-serializer flop matching .../u_ddr_mc_write/genByte\[2\].u_ddr_mc_wr_byte/genBit\[7\].u_ddr_mc_wr_bit/dReg_reg\[1\], found [llength $mig_wr_cell] -- did the DDR4 core get regenerated with a different geometry? (MIG_WR_FLOP_LOC=0 disables this)"
+        exit 1
+    }
+    if {[llength [get_sites -quiet $mig_wr_flop_site]] != 1} {
+        puts stderr "ERROR: DDR4 bitslice Min Skew fix: site $mig_wr_flop_site does not exist on $part"
+        exit 1
+    }
+    # LOC only, no BEL: the slice is what sets the net length, and leaving the
+    # flop's BEL free lets the placer use whichever FF in it suits the control
+    # set rather than failing on a hardcoded one. (X1Y37 is a SLICEM on this
+    # part, so a hardcoded SLICEL BEL would be wrong outright.)
+    set_property LOC $mig_wr_flop_site $mig_wr_cell
+    puts "=== DDR4 XIPHY Min Skew: byte-2 write-serializer dReg_reg\[1\] pinned to $mig_wr_flop_site ==="
+} else {
+    puts "=== DDR4 XIPHY Min Skew: flop LOC skipped (use_sim_model=$use_sim_model MIG_WR_FLOP_LOC=$mig_wr_flop_loc) ==="
+}
+
 opt_design -directive Explore
 
 if {!$no_incremental && $incremental_ref_dcp ne "" && \
@@ -2444,6 +2703,28 @@ if {[info exists ::env(PLACE_DIRECTIVE)] && $::env(PLACE_DIRECTIVE) ne ""} {
 }
 
 write_checkpoint -force $output_dir/checkpoints/place.dcp
+
+# ── PLACE/ROUTE PROCESS SPLIT ────────────────────────────────────────────────
+# `place_only` stops here so routing runs in a SEPARATE Vivado process, from
+# this checkpoint, via synth/resume_from_place.tcl.
+#
+# This is not tidiness. route_design's post-routing leaf-clock programmable-delay
+# optimisation ("Phase N.1.1 Leaf ClockOpt Init") segfaults on this design --
+# `Abnormal program termination (11)` -- and it now does so DETERMINISTICALLY for
+# BOTH `Explore` and `AggressiveExplore`, after routing itself has completed. The
+# same placement routed by a freshly started Vivado gets through. The crash
+# therefore tracks accumulated process state, not the placement or the directive,
+# which is why splitting the processes is the fix rather than a workaround.
+#
+# The flow comment further down already prescribed re-opening place.dcp after a
+# crash; this makes that the normal path instead of the recovery path, so an
+# hour of synthesis and placement is never at risk from it.
+if {$mode eq "place_only"} {
+    report_timing_summary -max_paths 10 -file $output_dir/reports/timing_place.rpt
+    puts "=== PLACE COMPLETE (process split): $output_dir/checkpoints/place.dcp ==="
+    puts "=== route it with: vivado -mode batch -source synth/resume_from_place.tcl -tclargs $output_dir <directive> ==="
+    exit 0
+}
 report_timing_summary \
     -max_paths 10 \
     -file $output_dir/reports/timing_place.rpt
@@ -2609,6 +2890,12 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
         set pr_now [_pr_wns]; set pr_hold [_pr_whs]
         puts [format "=== POST-ROUTE PHYS_OPT pass %d (%s): WNS %.3f (was %.3f, delta %+.3f)  WHS %.3f ===" \
                      $pr_i $pr_d $pr_now $pr_prev [expr {$pr_now - $pr_prev}] $pr_hold]
+        # Closure takes precedence over relative gain: a hold-only repair, or
+        # reduced but still positive setup slack, is already a successful route.
+        if {$pr_now >= 0.0 && $pr_hold >= 0.0} {
+            puts "=== POST-ROUTE PHYS_OPT: setup and hold closed ==="
+            break
+        }
         # Judge hold against WHERE WE STARTED, not against zero.  Routing can (and on the
         # 2026-09-15 200 MHz run did) leave WHS already negative -- so there was no
         # hold-clean state to roll back to, and a `$pr_hold < 0` test rejected EVERY pass,
@@ -2631,6 +2918,12 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
                 puts "WARN: phys_opt_design -hold_fix failed: $pr_hf_err"
             }
             set pr_hold [_pr_whs]; set pr_now [_pr_wns]
+            # A successful repair is sufficient even if its positive hold
+            # margin is smaller than the one before this optimization pass.
+            if {$pr_now >= 0.0 && $pr_hold >= 0.0} {
+                puts "=== POST-ROUTE PHYS_OPT: setup and hold closed after repair ==="
+                break
+            }
             if {$pr_hold < $pr_whs0 - 0.001} {
                 puts [format "=== POST-ROUTE PHYS_OPT: hold repair FAILED (WHS %.3f); rolling back to last hold-clean checkpoint ===" $pr_hold]
                 if {[file exists $pr_ckpt]} {
@@ -2658,10 +2951,6 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
             continue
         }
         set pr_prev $pr_now
-        if {$pr_now >= 0.0 && $pr_hold >= 0.0} {
-            puts "=== POST-ROUTE PHYS_OPT: setup and hold closed ==="
-            break
-        }
     }
     # Final hold repair can regress setup even without improving hold.
     # Preserve the current result and roll back on either timing regression
@@ -2876,6 +3165,8 @@ puts $buildinfo_fh "mode=$mode"
 puts $buildinfo_fh "real_fpga_build=$real_fpga_build"
 puts $buildinfo_fh "ddr_path=[expr {$use_sim_model ? {sim_model} : {real_mig}}]"
 puts $buildinfo_fh "enable_vio=$enable_vio"
+puts $buildinfo_fh "perf_detail_enable=$perf_detail_enable"
+puts $buildinfo_fh "enable_ipc_ila=$enable_ipc_ila"
 puts $buildinfo_fh "enable_jtag_axi=$enable_jtag_axi"
 puts $buildinfo_fh "enable_pcie_xdma=$enable_pcie_xdma"
 puts $buildinfo_fh "host_debug=$host_debug_mode"
@@ -2898,11 +3189,50 @@ puts $buildinfo_fh "sd_safe_cmd25=$sd_safe_cmd25"
 # authoritative while missing the thing you need.
 puts $buildinfo_fh "l2c_enable=[expr {$l2c_enable_effective ? 1 : 0}]"
 puts $buildinfo_fh "vram_in_ddr=[expr {$vram_in_ddr_effective ? 1 : 0}]"
+puts $buildinfo_fh "l2c_uram_floorplan=[expr {($l2c_enable_effective && $l2c_uram_floorplan) ? 1 : 0}]"
 puts $buildinfo_fh "cpu=$cpu_sel"
+puts $buildinfo_fh "cpu_ipc_profile=$cpu_ipc_profile"
+if {$cpu_m68k040} {
+    puts $buildinfo_fh "cpu_git_revision=[string trim [exec git -C $cpu040_dir rev-parse HEAD]]"
+}
 puts $buildinfo_fh "eth_enable=$eth_enable"
 puts $buildinfo_fh "eth_icmp_responder=$eth_icmp_responder"
 puts $buildinfo_fh "eth_debug_enable=$eth_debug_enable"
 puts $buildinfo_fh "build_id=$build_id"
+# The artifact's own timing verdict, all three check classes.  Without these the
+# only record of whether a shipped .bit met timing lives in a report file next to
+# it, and when the flow crashes between route and reports (which it has) that
+# record does not exist -- the timing then has to be re-derived by reopening the
+# checkpoint.  WPWS is included because pulse-width is a separate class that
+# report_timing_summary's WNS/WHS pair does not cover, and this design has had a
+# real failing pulse-width endpoint inside the DDR4 PHY while WNS and WHS were
+# both positive.
+set bi_wns [get_property SLACK [get_timing_paths -delay_type max -max_paths 1]]
+set bi_whs [get_property SLACK [get_timing_paths -delay_type min -max_paths 1]]
+puts $buildinfo_fh "wns=$bi_wns"
+puts $buildinfo_fh "whs=$bi_whs"
+set bi_pw_file [file join $output_dir reports pulse_width.rpt]
+report_pulse_width -all_violators -file $bi_pw_file
+set bi_wpws "unknown"
+set bi_pw_fails "unknown"
+if {[catch {
+        set bi_fh [open $bi_pw_file r]; set bi_txt [read $bi_fh]; close $bi_fh
+        set bi_worst ""
+        set bi_n 0
+        foreach bi_line [split $bi_txt "\n"] {
+            # Data rows carry a numeric slack in column 7 of the check table.
+            if {[regexp {^(Min Skew|Max Skew|Min Period|Max Period|Low Pulse Width|High Pulse Width)\s+\S+\s+\S+\s+\S+\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s} $bi_line -> bi_ct bi_req bi_act bi_slk]} {
+                if {$bi_worst eq "" || $bi_slk < $bi_worst} { set bi_worst $bi_slk }
+                if {$bi_slk < 0} { incr bi_n }
+            }
+        }
+        if {$bi_worst ne ""} { set bi_wpws $bi_worst; set bi_pw_fails $bi_n }
+    } bi_err]} {
+    puts "WARN: could not extract WPWS for buildinfo: $bi_err"
+}
+puts $buildinfo_fh "wpws=$bi_wpws"
+puts $buildinfo_fh "pulse_width_failing_endpoints=$bi_pw_fails"
+puts "=== TIMING VERDICT: WNS=$bi_wns WHS=$bi_whs WPWS=$bi_wpws pulse_width_failures=$bi_pw_fails ==="
 puts $buildinfo_fh "bitstream=fpga_top.blank.bit"
 puts $buildinfo_fh "adb_firmware=absent_requires_local_patch"
 puts $buildinfo_fh "debug_probes=fpga_top.ltx"

@@ -94,6 +94,15 @@ set sd_spi_tx_q [get_pins -hier -filter {NAME =~ */spi_clk_reg/Q || NAME =~ */sp
 set_max_delay -datapath_only 4.000 -from $sd_spi_tx_q -to [get_ports {sd_clk sd_mosi sd_cs_n}]
 set_max_delay -datapath_only 3.000 -from [get_ports sd_miso]
 
+# ── async_fifo GRAY-POINTER CROSSINGS ─────────────────────────────────────────
+# Applied in synth/vivado.tcl AFTER synth_design, not here. Vivado reads this
+# file while the design still contains unresolved black boxes, so `get_cells`
+# returns nothing and the whole constraint is deferred ("One or more constraints
+# failed evaluation ... will be read post-synthesis"). The XDC parser also
+# rejects `if` and `puts` outright (Designutils 20-1307), so a guard proving the
+# constraint matched cannot live here at all. See vivado.tcl for the constraint,
+# its rationale and its assertion.
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration / bitstream settings (fallback copy — may already be set
 # by ku5p.xdc; Vivado coalesces identical set_property calls harmlessly).
@@ -143,39 +152,12 @@ set_false_path -to [get_pins -hier -filter {NAME =~ *u_scsi_trace_ring/clear_met
 set_false_path -to [get_pins -hier -filter {NAME =~ *u_scsi_trace_ring/wrptr_meta_reg[*]/D}]
 set_false_path -to [get_pins -hier -filter {NAME =~ *u_scsi_trace_ring/flags_meta_reg[*]/D}]
 
-# ── DEBUG CSR: MULTICYCLE, NOT A FALSE PATH ───────────────────────────────────
-# The debug CSR block (DebugCtrlPlugin) sits on core_clk (200 MHz, 5.0 ns) but is
-# driven ONLY by JTAG. Measured on build/vivado200_rob32, its paths owned ~80 of
-# the 2021 failing setup endpoints INCLUDING the design's worst:
-#     -0.213  DebugCtrlPlugin_csr_awAddr_reg -> RobPlugin_exc_activeReg_reg
-#     -0.208  DebugCtrlPlugin_csr_arAddr_reg -> DebugCtrlPlugin_csr_rData_reg  (x23)
-#     -0.152  DebugCtrlPlugin_csr_awAddr_reg -> DcachePlugin_probeLineLine_reg (x56)
-#
-# WHY A MULTICYCLE IS SOUND HERE. The AXI4-Lite debug slave uses a pend-flag
-# handshake (DebugCtrlPlugin.scala:459):
-#     dbgAxi.awready := !awPend && !bPend && !dbgRst
-# so `awAddr`/`arAddr` are CAPTURED when the pend flag sets and CANNOT CHANGE
-# until that transaction's B/R response retires it. The next transaction cannot
-# even be accepted until then. Every request originates in the JTAG TCK domain,
-# which is orders of magnitude slower than core_clk, so the true interval between
-# successive CSR addresses is thousands of core cycles. 4 is enormously
-# conservative against that.
-#
-# WHY NOT set_false_path. A false path would also excuse the DATA these registers
-# feed, and some of it IS functional -- `haltAfterInvalidate` reaches RobPlugin's
-# retire gate. A multicycle keeps every path CHECKED, just against a realistic
-# requirement. It is a relaxation, not a suppression.
-#
-# The -hold 3 companion is mandatory, not optional: without it the hold check
-# moves to the same relaxed edge and manufactures hold violations that are not
-# real. (N setup / N-1 hold is the standard pairing.)
-#
-# ⚠️ SCOPE. Deliberately anchored to the two CSR ADDRESS registers as SOURCE and
-# rData as DESTINATION -- NOT a blanket exception on the DebugCtrl hierarchy. A
-# blanket rule would silently cover any future functional signal that happens to
-# live in this plugin. If you add a debug output with real-time semantics, it will
-# be timed normally unless you consciously add it here.
-set_multicycle_path 4 -setup -from [get_cells -quiet -hier -filter {NAME =~ *DebugCtrlPlugin_logic_csr_a*Addr_reg*}]
-set_multicycle_path 3 -hold  -from [get_cells -quiet -hier -filter {NAME =~ *DebugCtrlPlugin_logic_csr_a*Addr_reg*}]
-set_multicycle_path 4 -setup -to   [get_cells -quiet -hier -filter {NAME =~ *DebugCtrlPlugin_logic_csr_rData_reg*}]
-set_multicycle_path 3 -hold  -to   [get_cells -quiet -hier -filter {NAME =~ *DebugCtrlPlugin_logic_csr_rData_reg*}]
+# Debug CSR logic uses ordinary core-clock timing. After AR acceptance, doRead
+# samples the regional words on the next edge; readStage2 captures rData one
+# edge later. AW/W acceptance can likewise be followed by doWrite on the next
+# edge. A slow JTAG request rate and address stability until the response do
+# not delay these first capture edges. There is no four-cycle capture interlock
+# that would justify a multicycle exception on address sources or rData sinks.
+# Keep both setup and hold at their normal requirements. Any future relaxation
+# needs a matching hardware capture schedule and a cycle-accurate test, not a
+# debug-hierarchy wildcard. DebugCtrlReadDecodeSpec checks the current schedule.

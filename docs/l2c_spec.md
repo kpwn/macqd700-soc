@@ -50,10 +50,35 @@ Lines can be partially valid. A refill must preserve already resident dirty
 quadrants and install only the missing data; merging into a fetched copy
 must not overwrite a newer write to a valid quadrant.
 
+The MSHR install interface is a registered one-cycle valid pulse, accepted
+by the array-write arbitration without a ready handshake. Its data comes
+from the active-line register: primary/replay byte merges update that
+register on the same edge that asserts install-valid, and it stays unchanged
+through the consuming edge. Data outside a valid install is unspecified.
+There is no separate install-data register and no added cycle. Tag, dirty
+state and byte strobes remain registered alongside the valid pulse.
+
 AXI arbiters hold payloads stable from VALID assertion through acceptance.
 The write path cannot interleave different owners' W bursts: AXI4 has no
 WID. Victim writeback completion and refill ordering must prevent an old
 dirty eviction from overwriting newer data at the same address.
+
+Lookup completion factors outcome readiness separately from the common
+live-request, skew and victim-buffer guards. This lets the late victim CAM
+result qualify completion directly rather than traverse each action's
+qualification before reaching the shared array enable. No pipeline stage,
+acceptance rule or response cycle changes. The individual action wires keep
+their original conditions; `make check-l2-completion` exhaustively compares
+the completion decision with their original combination over 65,536 two-state
+input combinations. This is a logical equivalence check, not a timing claim.
+
+The MSHR lookup exports both its binary index and a one-hot selected entry.
+Both choose the same lowest-index match; no match produces a zero mask.
+The one-hot result is formed directly from the match vector, not by decoding
+the binary index. Same-ID merge ordering masks only this selected entry;
+all other entries, replay slots and the bypass owner retain their existing
+ordering checks. Preserve priority even for a multi-match input rather than
+assuming such an input cannot occur. No state, cycle or acceptance rule changes.
 
 See the [fabric concurrency contract](fabric_concurrency_contract.md) for
 the shared interface requirements. Capacity changes must retain correctness

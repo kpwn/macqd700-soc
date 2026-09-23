@@ -26,7 +26,7 @@ module l2c_victim_sel (
     wire [7:0] inv_free_c = (~rvalid) & (~busy_mask);
     wire        any_inv_c;
     wire [2:0]  inv_way_c;
-    l2c_pri8 u_inv (.req(inv_free_c), .hit(any_inv_c), .idx(inv_way_c));
+    l2c_pri8 u_inv (.req(inv_free_c), .hit(any_inv_c), .idx(inv_way_c), .onehot());
 
     wire [2:0] plru_way_c = l2c_plru_victim(plru_t);
     wire       plru_ok_c  = !busy_mask[plru_way_c];
@@ -34,7 +34,7 @@ module l2c_victim_sel (
     wire [7:0] free_mask_c = ~busy_mask;
     wire        any_free_c;
     wire [2:0]  free_way_c;
-    l2c_pri8 u_free (.req(free_mask_c), .hit(any_free_c), .idx(free_way_c));
+    l2c_pri8 u_free (.req(free_mask_c), .hit(any_free_c), .idx(free_way_c), .onehot());
 
     assign victim_way = any_inv_c ? inv_way_c : (plru_ok_c ? plru_way_c : free_way_c);
     assign victim_ok  = any_inv_c || plru_ok_c || any_free_c;

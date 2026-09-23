@@ -562,6 +562,7 @@ module mame_axi_periph_top (
         .rtc_enb(rtc_enb), .rtc_clk(rtc_clk), .rtc_data_o(rtc_data_o),
         // PRAM is battery-backed (survives rst); no zap source here.
         .rtc_data_oe(rtc_data_oe), .pram_clear(1'b0),
+        .pram_busy(),
         // PRAM snapshot/restore back door (rtl/soc/pram_sd.v) — unused here.
         .pram_ext_addr(8'h00), .pram_ext_we(1'b0),
         .pram_ext_wdata(8'h00), .pram_ext_rdata(),

@@ -415,6 +415,11 @@ static void idle_inputs() {
 
 // Full reset of the logic AND an explicit PRAM zap, so each scenario
 // starts from rtc.v's post-reset image.
+static void wait_pram_clear() {
+    for (int i = 0; i < 600 && top->rtc_pram_busy; ++i) tick();
+    if (top->rtc_pram_busy) VL_FATAL_MT(__FILE__, __LINE__, "", "PRAM clear timeout");
+}
+
 static void reset_all() {
     idle_inputs();
     card = SdCard();
@@ -429,6 +434,7 @@ static void reset_all() {
     for (int i = 0; i < 40; i++) tick();
     top->rtc_pram_clear = 0;
     for (int i = 0; i < 20; i++) tick();
+    wait_pram_clear();
 }
 
 // Pulse the operator zap (Cmd-Opt-P-R) without resetting anything else.
@@ -437,6 +443,7 @@ static void pram_zap() {
     for (int i = 0; i < 40; i++) tick();
     top->rtc_pram_clear = 0;
     for (int i = 0; i < 20; i++) tick();
+    wait_pram_clear();
 }
 
 static uint32_t run_cmd(uint32_t cmd, uint64_t budget = 4000000) {

@@ -98,8 +98,10 @@ module rtc #(
     // Macintosh's Cmd-Opt-P-R.  PRAM models battery-backed storage and
     // therefore deliberately survives `rst`; this synchronous input is
     // the ONLY way to force all 256 bytes back to their power-on image.
-    // Hold high for >=1 clk.  Tie to 1'b0 if unused.
+    // Hold high for >=1 clk. A rising edge starts a 256-clock sweep.
+    // Serial transactions must start after pram_busy falls.
     input  wire        pram_clear,
+    output wire        pram_busy,
 
     // ── External PRAM snapshot / restore port ─────────────────────────
     //
@@ -109,8 +111,8 @@ module rtc #(
     // Mac's address map: the 68k still sees PRAM exclusively through the
     // bit-banged RTC command protocol above.
     //
-    //   pram_ext_rdata  combinational read of pram[pram_ext_addr].
-    //   pram_ext_we     one-clock write strobe (this clock domain).
+    //   pram_ext_rdata  one-clock synchronous read (read-before-write).
+    //   pram_ext_we     write strobe, accepted only when !pram_busy.
     //
     // Tie pram_ext_we to 1'b0 and leave the rest unconnected if unused.
     // See rtl/soc/pram_cdc.v for the core_clk <-> pb_clk handshake that
@@ -238,7 +240,7 @@ module rtc #(
     // profile instead of X/host-dependent NVRAM contents.  The non-zero
     // bytes mirror the command-visible portion of a known-good Q700 PRAM
     // image; all other bytes start at zero and remain writable.
-    reg [7:0] pram [0:255];
+    (* ram_style = "block" *) reg [7:0] pram [0:255];
     integer idx;
 
     function [7:0] pram_reset_byte(input [7:0] addr);
@@ -305,11 +307,22 @@ module rtc #(
     // behaviour); the populated SCBI image is a sim-only opt-in.
     initial for (idx = 0; idx < 256; idx = idx + 1) pram[idx] = pram_reset_value(idx[7:0]);
 
-    // Combinational read for the external snapshot port.  The array is
-    // already flop-based (pram_clear rewrites all 256 entries in one
-    // cycle, which forbids RAM inference), so this is one more 256:1 mux,
-    // not a second memory port.
-    assign pram_ext_rdata = pram[pram_ext_addr];
+    // No array reset: explicit clear walks port A independently of rst.
+    reg clear_active = 1'b0;
+    reg clear_q = 1'b0;
+    reg [7:0] clear_addr = 8'h00;
+    wire clear_start = pram_clear && !clear_q;
+    assign pram_busy = pram_clear || clear_active;
+    always @(posedge clk) begin
+        clear_q <= pram_clear;
+        if (clear_start) begin
+            clear_active <= 1'b1;
+            clear_addr <= 8'h00;
+        end else if (clear_active) begin
+            clear_addr <= clear_addr + 8'd1;
+            if (clear_addr == 8'hff) clear_active <= 1'b0;
+        end
+    end
 
     // ── Bit-level shift FSM ───────────────────────────────────────────
     //
@@ -362,12 +375,7 @@ module rtc #(
             5'd3, 5'd7: read_byte_for_cmd = seconds[31:24];
             5'd12: read_byte_for_cmd = {test_mode, 7'b0};
             5'd13: read_byte_for_cmd = {write_protect, 7'b0};
-            default: begin
-                if (is_pram_reg(c[6:2]))
-                    read_byte_for_cmd = pram[{3'b000, c[6:2]}];
-                else
-                    read_byte_for_cmd = 8'h00;
-            end
+            default: read_byte_for_cmd = 8'h00; // PRAM uses its synchronous port
         endcase
     endfunction
 
@@ -378,6 +386,45 @@ module rtc #(
     function [7:0] xp_addr_for(input [7:0] c, input [7:0] addr_byte);
         xp_addr_for = {c[2:0], addr_byte[6:2]};
     endfunction
+
+    wire [7:0] incoming_cmd = {cmd_byte[6:0], host_data_bit};
+    wire normal_pram_read = state == S_CMD && bit_cnt == 4'd7 &&
+        cmd_byte[6] && !is_extended_cmd(incoming_cmd) &&
+        is_pram_reg(incoming_cmd[6:2]);
+    wire extended_pram_read = state == S_XP && is_extended &&
+        !xp_addr_done && bit_cnt == 4'd7 && is_read;
+    wire serial_read = !rst && !pram_busy && !rtc_enb && rtc_clk_fall &&
+        (normal_pram_read || extended_pram_read);
+    wire serial_write = !rst && !pram_busy && rtc_enb_rise &&
+        !is_read && bit_cnt == 4'd8 &&
+        ((state == S_DATA && !is_extended && !write_protect &&
+          is_pram_reg(cmd_byte[6:2])) || (state == S_XP && is_extended));
+    wire [7:0] serial_addr = serial_read ?
+        (extended_pram_read ? xp_addr_for(cmd_byte, {xp_addr_byte[6:0], host_data_bit}) :
+                             {3'b000, incoming_cmd[6:2]}) :
+        (is_extended ? xp_addr : {3'b000, cmd_byte[6:2]});
+    wire ext_write = pram_ext_we && !pram_busy;
+    wire port_a_write = clear_active ||
+        (serial_write && !(ext_write && serial_addr == pram_ext_addr));
+    wire [7:0] port_a_addr = clear_active ? clear_addr : serial_addr;
+    reg [7:0] serial_ram_data, ext_ram_data;
+    reg serial_read_pending;
+
+    // Common-clock READ_FIRST ports; inhibit simultaneous same-address writes.
+    // Keep memory outputs separate from resettable protocol registers so Vivado
+    // can absorb them into the block RAM. The slow serial wire hides the latency.
+    always @(posedge clk) begin
+        if (clear_active || serial_read || serial_write) begin
+            if (port_a_write)
+                pram[port_a_addr] <= clear_active ? pram_reset_value(clear_addr) : shift_in;
+            serial_ram_data <= pram[port_a_addr];
+        end
+    end
+    always @(posedge clk) begin
+        if (ext_write) pram[pram_ext_addr] <= pram_ext_wdata;
+        ext_ram_data <= pram[pram_ext_addr];
+    end
+    assign pram_ext_rdata = ext_ram_data;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -402,14 +449,21 @@ module rtc #(
             seconds_wr_data    <= 8'h00;
             write_protect      <= 1'b0;
             test_mode          <= 1'b0;
+            serial_read_pending <= 1'b0;
             // NOTE: `pram` is intentionally NOT reset here.  It models the
             // battery-backed PRAM of a real Macintosh RTC IC, so user
             // settings (display depth, boot device, volume, AppleTalk
             // node) must survive a warm reset the way they do in silicon.
             // Its power-on image comes from the configuration-time
             // `initial` above; the only way to clear it is the explicit
-            // `pram_clear` strobe handled at the bottom of this block.
+            // `pram_clear` sweep handled independently of this block.
         end else begin
+            serial_read_pending <= serial_read;
+            if (serial_read_pending) shift_out <= serial_ram_data;
+`ifndef SYNTHESIS
+            if (serial_read_pending && trace_mode)
+                $display("rtc: PRAM read data=0x%02x", serial_ram_data);
+`endif
             rtc_clk_q <= rtc_clk;
             rtc_enb_q <= rtc_enb;
             seconds_wr_pending <= 1'b0;
@@ -469,7 +523,6 @@ module rtc #(
                                          cmd_byte, seconds_index_for_cmd(cmd_byte), shift_in);
 `endif
                         end else if (is_pram_reg(cmd_byte[6:2])) begin
-                            pram[{3'b000, cmd_byte[6:2]}] <= shift_in;
 `ifndef SYNTHESIS
                             if (trace_mode)
                                 $display("rtc: write pram cmd=0x%02x addr=0x%02x data=0x%02x",
@@ -491,7 +544,6 @@ module rtc #(
                     // / AppleTalk settings in extended PRAM even with WP
                     // engaged, so gating here would diverge from real
                     // silicon and from MAME.
-                    pram[xp_addr] <= shift_in;
 `ifndef SYNTHESIS
                     if (trace_mode)
                         $display("rtc: write xpram cmd=0x%02x addr=0x%02x data=0x%02x",
@@ -558,7 +610,7 @@ module rtc #(
                             if (cmd_byte[6]) begin
                                 shift_out <= read_byte_for_cmd({cmd_byte[6:0], host_data_bit});
 `ifndef SYNTHESIS
-                                if (trace_mode)
+                                if (trace_mode && !normal_pram_read)
                                     $display("rtc: cmd read cmd=0x%02x reg=%0d data=0x%02x",
                                              {cmd_byte[6:0], host_data_bit},
                                              (({cmd_byte[6:0], host_data_bit} >> 2) & 8'h1f),
@@ -581,14 +633,13 @@ module rtc #(
                         xp_addr_done <= 1'b1;
                         bit_cnt <= 4'd0;
                         if (is_read) begin
-                            shift_out <= pram[xp_addr_for(cmd_byte, {xp_addr_byte[6:0], host_data_bit})];
+                            // PRAM read completes through serial_read_pending.
                             state <= S_DATA;
 `ifndef SYNTHESIS
                             if (trace_mode)
-                                $display("rtc: read xpram cmd=0x%02x addr=0x%02x data=0x%02x",
+                                $display("rtc: read xpram cmd=0x%02x addr=0x%02x",
                                          cmd_byte,
-                                         xp_addr_for(cmd_byte, {xp_addr_byte[6:0], host_data_bit}),
-                                         pram[xp_addr_for(cmd_byte, {xp_addr_byte[6:0], host_data_bit})]);
+                                         xp_addr_for(cmd_byte, {xp_addr_byte[6:0], host_data_bit}));
 `endif
                         end else begin
                             shift_in <= 8'h00;
@@ -619,28 +670,15 @@ module rtc #(
                 rtc_data_i <= rtc_data_o;
             else if (state != S_DATA || !is_read)
                 rtc_data_i <= 1'b0;
-        end
-
-        // ── External snapshot/restore write port ──────────────────────
-        //
-        // Deliberately OUTSIDE the if(rst)/else above, for the same reason
-        // as the zap below: PRAM is battery-backed, and a restore has to
-        // work while the machine is held in reset (load PRAM first, then
-        // release reset).  Placed BEFORE the zap so that if a restore and
-        // a zap ever coincide, the zap still wins deterministically.
-        if (pram_ext_we) pram[pram_ext_addr] <= pram_ext_wdata;
-
-        // ── Explicit PRAM zap (Cmd-Opt-P-R) ───────────────────────────
-        //
-        // Deliberately OUTSIDE the if(rst)/else above so the strobe works
-        // whether or not the machine is held in reset — if a bad PRAM
-        // image ever wedges the ROM, the recovery path must not itself
-        // depend on the CPU running.  Placed last in the block so that on
-        // the (harmless) cycle where a PRAM write and a zap coincide, the
-        // zap wins deterministically.
-        if (pram_clear) begin
-            for (idx = 0; idx < 256; idx = idx + 1)
-                pram[idx] <= pram_reset_value(idx[7:0]);
+            // Clear aborts the serial transaction, not the seconds counter or
+            // control registers. The host must start a new transaction afterward.
+            if (pram_busy) begin
+                state <= S_IDLE;
+                bit_cnt <= 4'd0;
+                selected_idle_cnt <= 8'h00;
+                serial_read_pending <= 1'b0;
+                rtc_data_i <= 1'b0;
+            end
         end
     end
 

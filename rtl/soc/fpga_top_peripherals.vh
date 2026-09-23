@@ -1357,6 +1357,7 @@
     wire [7:0]  rtc_pram_ext_addr;    // pb_clk, to rtc
     wire [7:0]  rtc_pram_ext_wdata;
     wire        rtc_pram_ext_we;
+    wire        rtc_pram_busy;
     wire [7:0]  rtc_pram_ext_rdata;   // pb_clk, from rtc
 
     pram_cdc u_pram_cdc (
@@ -1376,6 +1377,7 @@
         .b_addr  (rtc_pram_ext_addr),
         .b_wdata (rtc_pram_ext_wdata),
         .b_we    (rtc_pram_ext_we),
+        .b_ready (!rtc_pram_busy),
         .b_rdata (rtc_pram_ext_rdata)
     );
     // pb_full_rst is the pb_clk equivalent of soc_full_rst — board cold
@@ -1698,6 +1700,7 @@
         // path if a bad PRAM image ever wedges the ROM boot.  JTAG REPL
         // command: `pram-clear`.
         .pram_clear (pram_clear_pb_sync),
+        .pram_busy (rtc_pram_busy),
         // Snapshot/restore back door for rtl/soc/pram_sd.v — manual JTAG
         // `pram-save` / `pram-load` only.  Not reachable from the 68k.
         .pram_ext_addr  (rtc_pram_ext_addr ),
@@ -2026,6 +2029,18 @@
     (* ASYNC_REG = "TRUE" *) reg [31:0] vhdd_rd_blocks_meta;
     (* ASYNC_REG = "TRUE" *) reg [31:0] vhdd_rd_blocks_sync;
     reg [31:0] vhdd_rd_blocks_pb;
+    // PLACEMENT (2026-09-22): scsi_disk_num_lbas is a core_clk register that was
+    // handed RAW to three pb_clk consumers below (u_vhdd_mux a_num_lbas,
+    // u_vhdd_readahead num_lbas, u_vhdd_sd num_lbas).  Measured in this SoC's own
+    // post-place report, `scsi_disk_num_lbas_reg -> u_vhdd_readahead` contributed
+    // NINE violated paths at -0.296 ns -- it never survives to the routed report,
+    // but it constrains placement, and placement is what the router then has to
+    // live with.  It is also the only core->pb crossing in this file without a
+    // synchroniser, while its sibling vhdd_rd_blocks_* forty lines above has the
+    // full meta/sync pair.  Same pattern, same reset bank, same stability guard.
+    (* ASYNC_REG = "TRUE" *) reg [31:0] scsi_disk_lbas_meta;
+    (* ASYNC_REG = "TRUE" *) reg [31:0] scsi_disk_lbas_sync;
+    reg [31:0] scsi_disk_lbas_pb;
 `ifdef ENABLE_NET_VHDD
     // The Ethernet-backed volume occupies the slot the RAM disk vacated, so
     // ID 1 has a provider again and the mask below must NOT apply.  It still
@@ -2060,6 +2075,9 @@
             vhdd_rd_blocks_meta <= 32'd0;
             vhdd_rd_blocks_sync <= 32'd0;
             vhdd_rd_blocks_pb   <= 32'd0;
+            scsi_disk_lbas_meta <= 32'd0;
+            scsi_disk_lbas_sync <= 32'd0;
+            scsi_disk_lbas_pb   <= 32'd0;
         end else begin
             vhdd_dev_en_meta    <= vhdd_dev_en_core;
             vhdd_dev_en_sync    <= vhdd_dev_en_meta;
@@ -2069,6 +2087,15 @@
             vhdd_rd_blocks_sync <= vhdd_rd_blocks_meta;
             if (!vhdd_rd_busy_pb)
                 vhdd_rd_blocks_pb <= vhdd_rd_blocks_sync;
+            // The capacity is loaded once at card enumeration and constant after,
+            // but a 32-bit value crossing unguarded can TEAR, and a torn LBA count
+            // is a silent capacity corruption.  Commit to the pb copy only once the
+            // synchronised value has been stable for a second sample, so no partial
+            // update is ever visible to the providers.
+            scsi_disk_lbas_meta <= scsi_disk_num_lbas;
+            scsi_disk_lbas_sync <= scsi_disk_lbas_meta;
+            if (scsi_disk_lbas_sync == scsi_disk_lbas_meta)
+                scsi_disk_lbas_pb <= scsi_disk_lbas_sync;
         end
     end
 
@@ -2315,7 +2342,7 @@
         .m_wr_data        (scsi_vh_wr_data_w),
         .m_wr_avail       (scsi_vh_wr_avail_w),
 
-        .a_num_lbas       (scsi_disk_num_lbas),
+        .a_num_lbas       (scsi_disk_lbas_pb),
         .a_chk_lba        (vha_chk_lba_w),
         .a_chk_blocks     (vha_chk_blocks_w),
         .a_chk_ok         (vha_chk_ok_w),
@@ -2403,7 +2430,7 @@
         .rst              (pb_full_rst_bank[2]),
         .inval            (vhdd_ra_inval_pb),
 
-        .num_lbas         (scsi_disk_num_lbas),
+        .num_lbas         (scsi_disk_lbas_pb),
         .chk_lba          (vha_chk_lba_w),
         .chk_blocks       (vha_chk_blocks_w),
         .chk_ok           (vha_chk_ok_w),
@@ -2446,7 +2473,7 @@
     vhdd_sd #(
         .RESERVED_LBAS(SD_RESERVED_LBAS)
     ) u_vhdd_sd (
-        .num_lbas       (scsi_disk_num_lbas),
+        .num_lbas       (scsi_disk_lbas_pb),
         .chk_lba        (vhc_chk_lba_w),
         .chk_blocks     (vhc_chk_blocks_w),
         .chk_ok         (vhc_chk_ok_w),

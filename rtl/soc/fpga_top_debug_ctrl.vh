@@ -210,7 +210,13 @@
 `endif
 
 `ifdef CPU_M68K040
+`ifdef PERF_DETAIL_ENABLE
+    wire [94:0] ipc_trace;
+`endif
     M68kSocketTop u_cpu (
+`ifdef PERF_DETAIL_ENABLE
+        .perf_trace (ipc_trace),
+`endif
         .clk(core_clk), .rst(cpu_rst),
 
         // ── axi_i_* : instruction read master → xbar M2 / l2c fetch port (ifa_*)

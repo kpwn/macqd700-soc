@@ -37,3 +37,13 @@ installed loader used basic protection detection for this unrecognized chip.
    then check `build-id` and `halt-status`. Use `perf live` for running
    instruction counts: `inst-count` is a halt snapshot and can legitimately
    read zero while the machine is running.
+
+Verified on 2026-09-19: build `b22df792`, CPU `8dccf93d`, 200 MHz,
+bitstream SHA-256
+`390205857a11cf7fbc69100d73b870581dc56150278fce96653602d40fdcd598`.
+Flash read-back passed; subsequent attachment reported that build ID,
+retiring instructions and no halt/double fault. This was a flash boot,
+not a separate physical power-cycle test.
+
+This local verification used a firmware-patched image. Published bitstreams
+exclude Apple firmware.

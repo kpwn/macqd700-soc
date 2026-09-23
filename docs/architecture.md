@@ -21,6 +21,9 @@ details belong in the CPU repository.
 
 ## Memory paths
 
+RTC parameter RAM uses block RAM with a bounded explicit-clear sweep; see
+[PRAM storage](pram-storage.md) for reset, serial-port and SD-persistence rules.
+
 With L2 and DDR-backed VRAM enabled:
 
 ```text

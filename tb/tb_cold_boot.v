@@ -1868,6 +1868,7 @@ module tb_cold_boot #(
         .rtc_data_oe(via1_rtc_data_oe),
         // PRAM is battery-backed (survives rst); no zap source here.
         .pram_clear (1'b0),
+        .pram_busy (),
         // PRAM snapshot/restore back door (rtl/soc/pram_sd.v) — unused here.
         .pram_ext_addr(8'h00), .pram_ext_we(1'b0),
         .pram_ext_wdata(8'h00), .pram_ext_rdata(),

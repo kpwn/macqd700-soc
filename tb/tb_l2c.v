@@ -222,6 +222,35 @@ module tb_l2c #(
                                  dut.g_active.u_ctrl.victim_sel_ok &&
                                  !dut.g_active.u_ctrl.victim_push_ready;
         assign dbg_vb_drain_busy = dut.g_active.u_victim.drain_busy_c;
+        // Independent old-style registered install payload. The implementation
+        // may share its active-line register, but valid install beats must still
+        // equal this separately captured pre-edge line plus dynamic byte merge.
+        reg [511:0] install_shadow;
+        integer install_byte;
+        always @(posedge clk) begin
+            if (!dut.g_active.u_ctrl.u_mshr.rst) begin
+                if (dut.g_active.u_ctrl.u_mshr.inst_valid &&
+                    dut.g_active.u_ctrl.u_mshr.inst_data !== install_shadow)
+                    $fatal(1, "L2 install payload differs from registered reference");
+                if (!dut.g_active.u_ctrl.u_mshr.m_fill_err[dut.g_active.u_ctrl.u_mshr.act]) begin
+                    if (dut.g_active.u_ctrl.u_mshr.st == dut.g_active.u_ctrl.u_mshr.S_INSTALL) begin
+                        install_shadow <= dut.g_active.u_ctrl.u_mshr.act_line;
+                        if (dut.g_active.u_ctrl.u_mshr.p_wr[dut.g_active.u_ctrl.u_mshr.act])
+                            for (install_byte = 0; install_byte < 16; install_byte = install_byte + 1)
+                                if (dut.g_active.u_ctrl.u_mshr.p_wstrb_act_c[install_byte])
+                                    install_shadow[dut.g_active.u_ctrl.u_mshr.p_qoff_act_c*128 + install_byte*8 +: 8]
+                                        <= dut.g_active.u_ctrl.u_mshr.p_wdata_act_c[install_byte*8 +: 8];
+                    end
+                    if (dut.g_active.u_ctrl.u_mshr.st == dut.g_active.u_ctrl.u_mshr.S_SWR) begin
+                        install_shadow <= dut.g_active.u_ctrl.u_mshr.act_line;
+                        for (install_byte = 0; install_byte < 16; install_byte = install_byte + 1)
+                            if (dut.g_active.u_ctrl.u_mshr.r_wstrb_act_c[install_byte])
+                                install_shadow[dut.g_active.u_ctrl.u_mshr.r_qoff_act_c*128 + install_byte*8 +: 8]
+                                    <= dut.g_active.u_ctrl.u_mshr.r_wdata_act_c[install_byte*8 +: 8];
+                    end
+                end
+            end
+        end
         assign dbg_vb_seq_busy   = dut.g_active.u_victim.seq_busy_c;
         assign dbg_vb_wb_err     = dut.g_active.u_victim.wb_err_count[7:0];
         assign dbg_by_slots      = dut.g_active.u_bypass.slots_c;
