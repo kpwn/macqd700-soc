@@ -121,7 +121,20 @@ if {$enable_ipc_ila && (!$perf_detail_enable || !$cpu_m68k040)} {
 }
 puts "=== CPU SOCKET: CPU=$cpu_sel ==="
 
+# CPU040_SRC_DIR IS AN OVERRIDE, AND IT MUST BE HONOURED HERE.
+#
+# This line used to be an unconditional `$proj_root/cpu040`, and this script
+# REGENERATES the Verilog itself (below) rather than consuming what the Makefile built.
+# So `make impl-split CPU040_SRC_DIR=<dev tree>` silently synthesised the checked-in
+# cpu040 clone instead -- whatever commit that clone happened to be sitting on. On
+# 2026-09-24 that clone was parked on an older commit for an unrelated ROM-sim baseline,
+# and TWO conclusions were drawn from bitstreams that did not contain the code under
+# test: a Dhrystone number and a 200 MHz closure verdict. Both were wrong.
 set cpu040_dir      $proj_root/cpu040
+if {[info exists ::env(CPU040_SRC_DIR)] && [string length $::env(CPU040_SRC_DIR)]} {
+    set cpu040_dir [file normalize $::env(CPU040_SRC_DIR)]
+    puts "=== CPU SOCKET: CPU040_SRC_DIR override -> $cpu040_dir ==="
+}
 set cpu_m68k040_v   $cpu040_dir/generated/M68kSocketTop.v
 if {$cpu_m68k040} {
     if {![file isdirectory $cpu040_dir]} {

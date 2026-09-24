@@ -2367,7 +2367,7 @@ CPU_M68K040_IDIRS :=
 
 .PHONY: cpu040-gen
 cpu040-gen:
-	@echo "cpu040-gen: CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE)"
+	@echo "cpu040-gen: CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE) CPU040_SRC_DIR=$(CPU040_SRC_DIR)"
 	@echo "cpu040-gen: regenerating M68kSocketTop.v via sbt (cd $(CPU040_SRC_DIR) && sbt \"runMain m68k040.top.GenSocketTopVerilog\") ..."
 	cd $(CPU040_SRC_DIR) && CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE) sbt "runMain m68k040.top.GenSocketTopVerilog"
 
@@ -3205,6 +3205,12 @@ VIVADO_RUN_ENV := PCIE_TEST_DIR=$(PCIE_TEST_DIR) INCREMENTAL_REF_DCP=$(INCREMENT
 # CPU socket select for synth/impl — same CPU=stub|m68k knob as the
 # Verilator flow (see "CPU build select" above); consumed by vivado.tcl.
 VIVADO_RUN_ENV += CPU=$(CPU)
+# And the CPU SOURCE TREE. synth/vivado.tcl regenerates M68kSocketTop.v itself from
+# this directory, so without forwarding it the tcl silently used the checked-in
+# cpu040 clone and `CPU040_SRC_DIR=<dev tree>` on the make line did nothing to the
+# synthesised netlist. Two board conclusions were drawn from bitstreams that did not
+# contain the code under test before this was found.
+VIVADO_RUN_ENV += CPU040_SRC_DIR=$(CPU040_SRC_DIR)
 ifneq ($(NO_INCREMENTAL),)
 VIVADO_RUN_ENV += NO_INCREMENTAL=$(NO_INCREMENTAL)
 endif
@@ -3554,12 +3560,20 @@ impl-split: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V)) check-synth-sources 
 	flock -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado.tcl -tclargs place_only $(VIVADO_IMPL_DIR)' \
 	  || { status=$$?; echo "ERROR: placement stage failed ($$status)"; exit $$status; }
 	@test -s $(VIVADO_IMPL_DIR)/checkpoints/place.dcp || { echo "ERROR: place_only produced no place.dcp"; exit 1; }
-	@printf 'cpu040_sha=%s\ncpu040_dirty=%s\nverilog_mtime=%s\ncpu_ipc_profile=%s\ncpu_debug_profile=%s\n' \
+	@printf 'cpu040_sha=%s\ncpu040_dirty=%s\nverilog_mtime=%s\ncpu_ipc_profile=%s\ncpu_debug_profile=%s\ntarget_freq_mhz=%s\ncore_clk_hz=%s\npb_clk_hz=%s\n' \
 	  "$$(git -C $(CPU040_SRC_DIR) rev-parse HEAD 2>/dev/null || echo unknown)" \
 	  "$$(test -n "$$(git -C $(CPU040_SRC_DIR) status --porcelain 2>/dev/null)" && echo yes || echo no)" \
 	  "$$(stat -c %y $(CPU_M68K040_V) 2>/dev/null || echo missing)" \
 	  "$(CPU_IPC_PROFILE)" "$(CPU_DEBUG_PROFILE)" \
+	  "$(TARGET_FREQ_MHZ)" "$(CORE_CLK_HZ)" "$(PB_CLK_HZ)" \
 	  | tee $(VIVADO_IMPL_DIR)/cpu040.provenance
+	@echo "=== BUILD: ${TARGET_FREQ_MHZ} MHz core, CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) ==="
+	@# ⚠️ TARGET_FREQ_MHZ DEFAULTS TO 100. A 200 MHz image needs
+	@# `TARGET_FREQ_MHZ=200`; without it the design is CONSTRAINED AND CLOCKED at 100,
+	@# meets timing trivially, boots fine, and runs at HALF SPEED. Measured 2026-09-24:
+	@# 55K vs 110K Dhrystones/s for the same CPU. This is the second recorded instance of
+	@# the class (see the CORE_CLK_HZ comment above), so the clock is now in the
+	@# provenance file and echoed here.
 	@echo "=== place/route split: placement banked, restarting Vivado to route ==="
 	flock -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/resume_from_place.tcl -tclargs $(VIVADO_IMPL_DIR) $${ROUTE_DIRECTIVE:-AggressiveExplore}' \
 	  || { status=$$?; echo "ERROR: route stage failed ($$status); place.dcp retained for a retry with another directive"; exit $$status; }
