@@ -961,7 +961,20 @@
     // the CPU is released regardless and the operator sees the verdict in
     // pram_sd's STATUS.  A convenience feature must never be able to brick
     // the boot.
+`ifdef FPGA_ROM_SIM
+    // SIM ONLY. The real hold is 2^24 core clocks (~84 ms at 200 MHz), which is a
+    // sane real-world window for the PRAM autoload to finish, but it makes the
+    // ROM-boot simulation harness useless: the CPU is held in reset for 17M cycles,
+    // so any run short enough to be practical retires ZERO instructions and looks
+    // like a dead CPU. 2^12 keeps the same gating structure (the hold still exists,
+    // still expires, still depends on pram_autoload_pending) while letting the
+    // harness reach real ROM execution in ~1M cycles.
+    // (Do not begin a comment line with the simulator's name -- it is parsed as a
+    // tool directive and fails elaboration.)
+    localparam integer PRAM_HOLD_LOG2 = 12;
+`else
     localparam integer PRAM_HOLD_LOG2 = 24;
+`endif
     reg [PRAM_HOLD_LOG2:0] pram_hold_cnt = {(PRAM_HOLD_LOG2+1){1'b0}};
     wire pram_hold_expired = pram_hold_cnt[PRAM_HOLD_LOG2];
     always @(posedge core_clk) begin
