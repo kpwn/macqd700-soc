@@ -71,7 +71,29 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
         # including ones that left hold untouched: it discarded +0.213 ns of real setup
         # gain and still finished hold-broken.  A pass is only bad if it makes hold WORSE
         # than the netlist we started from.
-        if {$pr_hold < $pr_whs0 - 0.001} {
+        # ...BUT "worse than where we started" ALONE OVERCORRECTED, and that is why
+        # post-route phys_opt contributed NOTHING to any 200 MHz build on 2026-09-24/25.
+        # Measured, three builds in a row:
+        #
+        #     start WNS -0.467 WHS 0.009
+        #     pass 1 drove HOLD negative (WHS 0.001); attempting repair
+        #     hold repair FAILED (WHS 0.001); rolling back
+        #     restored WNS -0.467
+        #
+        # WHS 0.001 is POSITIVE -- hold is MET. The pass was discarded purely because the
+        # hold MARGIN shrank (0.009 -> 0.001) while never violating. Every marginal build
+        # therefore finished with final WNS exactly equal to the ROUTE WNS (-0.198,
+        # -0.271, -0.467), and the only build that closed did so because route met timing
+        # unaided and this loop was skipped. That made 200 MHz closure a placement lottery
+        # while silently discarding 200-400 ps of real setup recovery.
+        #
+        # A pass is bad only if it leaves hold ACTUALLY VIOLATED *and* worse than the
+        # netlist we started from. Both earlier fixes stay intact:
+        #   start +0.009 -> +0.001 : hold met, KEEP the setup gain (was wrongly rejected)
+        #   start -0.050 -> -0.060 : violated and worse, roll back
+        #   start -0.050 -> -0.040 : violated but better, keep going
+        #   start +0.009 -> -0.020 : violated and worse, roll back
+        if {$pr_hold < 0.0 && $pr_hold < $pr_whs0 - 0.001} {
             # A pass traded hold away.  Two things were wrong with simply breaking here:
             #   1. It STOPPED THE WHOLE CAMPAIGN on the first hold blip, so passes 2..N
             #      never ran -- the 2026-09-14 200 MHz build earned +0.291 ns on pass 1
@@ -82,7 +104,7 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
             # Correct behaviour: try to repair hold, keep the setup gain if repair works,
             # otherwise ROLL BACK to the last hold-clean checkpoint and continue trying
             # other directives from there.
-            puts "=== POST-ROUTE PHYS_OPT: pass $pr_i drove HOLD negative (WHS $pr_hold); attempting repair ==="
+            puts "=== POST-ROUTE PHYS_OPT: pass $pr_i left HOLD VIOLATED and worse than start (WHS $pr_hold); attempting repair ==="
             if {[catch {phys_opt_design -hold_fix} pr_hf_err]} {
                 puts "WARN: phys_opt_design -hold_fix failed: $pr_hf_err"
             }
@@ -93,7 +115,7 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
                 puts "=== POST-ROUTE PHYS_OPT: setup and hold closed after repair ==="
                 break
             }
-            if {$pr_hold < $pr_whs0 - 0.001} {
+            if {$pr_hold < 0.0 && $pr_hold < $pr_whs0 - 0.001} {
                 puts [format "=== POST-ROUTE PHYS_OPT: hold repair FAILED (WHS %.3f); rolling back to last hold-clean checkpoint ===" $pr_hold]
                 if {[file exists $pr_ckpt]} {
                     close_design
