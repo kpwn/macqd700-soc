@@ -852,6 +852,16 @@ INDEX_HTML = b"""<!doctype html><meta charset=utf-8>
     <button id=nmi class=danger title="Breaks into a spinning machine WITHOUT losing its state, unlike reset.">NMI (level 7)</button>
    </div>
   </div>
+
+  <div class=box>
+   <h3>REPL console</h3>
+   <div class=row>
+    <input id=rc placeholder="perf | exc-count | dump-mem 0x509010B8 2 | halt-kind" style="flex:1;min-width:220px">
+    <button id=rcgo>run</button>
+    <label title="seconds to wait for the REPL to answer; the JTAG lock is held for this long, so keep it short">wait <input id=rcw type=number value=5 min=0 max=30 style="width:52px"></label>
+   </div>
+   <pre id=rcout style="max-height:220px;overflow:auto;background:#111;color:#ccc;padding:6px;margin:6px 0 0;font-size:12px;white-space:pre-wrap"></pre>
+  </div>
  </div>
 
  <div id=st></div>
@@ -999,6 +1009,25 @@ function sendText(){
   txt.value = '';
 }
 document.getElementById('send').onclick = sendText;
+const rc = document.getElementById('rc'), rcout = document.getElementById('rcout');
+async function runRepl(){
+  const line = rc.value.trim();
+  if(!line) return;
+  const wait = Math.max(0, Math.min(30, +document.getElementById('rcw').value || 0));
+  rcout.textContent += '> ' + line + '\n';
+  rcout.scrollTop = rcout.scrollHeight;
+  try{
+    const res = await fetch('/input?a=repl&wait=' + wait + '&c=' + encodeURIComponent(line));
+    rcout.textContent += (await res.text()).trim() + '\n';
+  }catch(e){ rcout.textContent += 'request failed: ' + e + '\n'; }
+  rcout.scrollTop = rcout.scrollHeight;
+  rc.value = '';
+}
+document.getElementById('rcgo').onclick = runRepl;
+rc.addEventListener('keydown', e => {
+  if(e.key === 'Enter'){ e.preventDefault(); runRepl(); }
+  e.stopPropagation();          // arrows in the box must not drive the mouse pad
+});
 txt.addEventListener('keydown', e => {
   if(e.key === 'Enter'){ e.preventDefault(); sendText(); }
   e.stopPropagation();          // don't let arrows in the box drive the pad
@@ -1329,6 +1358,47 @@ class MJPEGHandler(http.server.BaseHTTPRequestHandler):
                     "pramdump":  ["pram-dump"],
                     "pramclear": ["pram-clear"],
                 }[act]
+            elif act == "repl":
+                # Arbitrary REPL command line, typed in the panel's console.
+                #
+                # Everything else in this dispatch is a CURATED verb: a fixed
+                # command with validated parameters.  This one is deliberately
+                # not, because the REPL is the real interface to the machine and
+                # curating it one verb at a time means the panel is always
+                # missing whatever is needed today (perf, dump-mem, break-pc,
+                # ram-window, halt-kind, tcl ...).  It goes through the SAME
+                # jtag_send path as every other verb, so it takes the same
+                # cross-process lock and lands in the same audit log.
+                #
+                # `wait` is opt-in and capped: the reply wait happens with the
+                # JTAG lock HELD (see jtag_send), so an unbounded value here
+                # would block every other writer -- including the mouse.
+                line = (q.get("c") or [""])[0].strip()
+                if not line:
+                    return self._simple(400, "text/plain",
+                                        b"repl: c=<command> is required\n")
+                if "\n" in line or "\r" in line:
+                    return self._simple(400, "text/plain",
+                                        b"repl: one command per request\n")
+                # The one refusal.  `q`/`quit`/`exit` make the REPL call
+                # exit 0, which drops the Vivado session that owns hw_target --
+                # and getting it back means a reprogram unless someone knows to
+                # use JTAG_REPL_NO_PROGRAM=1, so a stray word in a text box
+                # would cost the running OS.  Every other verb, dangerous ones
+                # included, is allowed through: they are all recoverable, and
+                # several are already exposed as buttons on this same page.
+                if line.split()[0].lower() in ("q", "quit", "exit"):
+                    return self._simple(400, "text/plain",
+                                        b"repl: refusing to quit the REPL -- that drops the\n"
+                                        b"JTAG session and needs a reprogram to recover.\n"
+                                        b"Restart it with tools/p141_start_repl.sh, or\n"
+                                        b"JTAG_REPL_NO_PROGRAM=1 to reattach without reprogramming.\n")
+                cmds = [line]
+                try:
+                    reply_s = float((q.get("wait") or ["5"])[0])
+                except ValueError:
+                    reply_s = 5.0
+                reply_s = max(0.0, min(30.0, reply_s))
             else:
                 return self._simple(400, "text/plain", b"unknown action\n")
         except ValueError:
