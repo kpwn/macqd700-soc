@@ -1014,12 +1014,12 @@ async function runRepl(){
   const line = rc.value.trim();
   if(!line) return;
   const wait = Math.max(0, Math.min(30, +document.getElementById('rcw').value || 0));
-  rcout.textContent += '> ' + line + '\n';
+  rcout.textContent += '> ' + line + '\\n';
   rcout.scrollTop = rcout.scrollHeight;
   try{
     const res = await fetch('/input?a=repl&wait=' + wait + '&c=' + encodeURIComponent(line));
-    rcout.textContent += (await res.text()).trim() + '\n';
-  }catch(e){ rcout.textContent += 'request failed: ' + e + '\n'; }
+    rcout.textContent += (await res.text()).trim() + '\\n';
+  }catch(e){ rcout.textContent += 'request failed: ' + e + '\\n'; }
   rcout.scrollTop = rcout.scrollHeight;
   rc.value = '';
 }
