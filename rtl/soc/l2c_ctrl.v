@@ -261,7 +261,47 @@ module l2c_ctrl #(
     // Per-MSHR-entry secondary-merge FIFO depth, and its index width
     // (ceil(log2(MSHR_REPLAY_N)), minimum 1).  See l2c.v's own
     // MSHR_REPLAY_N for the sizing argument and the measured area cost.
-    parameter MSHR_REPLAY_N = 4, parameter MSHR_REPLAY_K = 2
+    parameter MSHR_REPLAY_N = 4, parameter MSHR_REPLAY_K = 2,
+    // ===================== P6: THE D-SIDE HOT DOOR ======================
+    // D_PORT_EN (default 0) gates EVERYTHING this task added, as one knob:
+    // the third front door (d_ar*), the 2-bit source tag, WRAP bursts on
+    // the two HOT doors, and hot > cold priority at S0.  With it 0 every
+    // added expression collapses to the byte-for-byte pre-existing one and
+    // every added register loses its only consumer, so the OFF netlist is
+    // the netlist that shipped.  See docs/2026-09-29-throughput-architecture
+    // (P6) in the CPU repo for the design this implements.
+    parameter D_PORT_EN = 0,
+    // Width of the front-door SOURCE tag.  1 = {LSU, FETCH} (the shipped
+    // encoding, one bit, exactly `cur_is_fetch` under its old name); 2 =
+    // {LSU, FETCH, DH}.  It is a parameter rather than a localparam derived
+    // from D_PORT_EN because it also sizes this module's response-tag
+    // PORTS, which l2c.v has to declare wires for -- one expression, in one
+    // place, passed down.  The generate guard below makes an inconsistent
+    // pair an elaboration error rather than a silent aliasing of DH onto
+    // LSU (which is the `mmu-config-latch-vs-live` failure shape: one value
+    // latched here, re-derived there).
+    parameter SRC_BITS = 1,
+    // Native AXI ID width of the d_ar* hot door, BEFORE zero-extension to
+    // ID_WIDTH.  4 IDs = AxiIds.dRefill(0..3), the four the CPU reserves.
+    parameter DH_ID_WIDTH = 2,
+    // Bounded fairness backstop for the COLD path under hot > cold fixed
+    // priority.  After this many consecutive cycles in which a cold beat is
+    // available at the door and no cold beat is accepted, the cold path
+    // wins the next arbitration once.  0 disables it (pure fixed priority,
+    // which is what the design doc literally specifies).
+    //
+    // WHY IT IS HERE AND NOT ARGUED AWAY.  The spec's starvation argument
+    // is "the hot ports are idle far more often than not" -- a statement
+    // about the measured workload, not a property of the fabric.  The cold
+    // path carries L1D copyback WRITEBACKS and DMA, and the split's one
+    // cross-path ordering rule (a hot read must not overtake a cold
+    // writeback of the same line) is enforced by the CORE HOLDING THAT
+    // READ until the writeback's B returns.  A cold path that can be
+    // starved without bound therefore turns a fairness question into a
+    // forward-progress question on the very path the ordering rule depends
+    // on.  `cold_starved_q` is a REGISTER, so the door's select cone sees a
+    // flop, not a comparator.
+    parameter DH_COLD_FAIR_N = 64
 ) (
     input  wire clk, rst,
     // s_axi accept side (AW/W/AR -- the R/B response side is arbitrated
@@ -279,19 +319,28 @@ module l2c_ctrl #(
     // comment.  Read-only: there is no f_aw*/f_w* -- fetch never writes.
     input  wire [ID_WIDTH-1:0]   f_arid,   input wire [ADDR_WIDTH-1:0] f_araddr, input wire [7:0] f_arlen,
     input  wire [2:0] f_arsize,  input wire [1:0] f_arburst, input wire f_arvalid, output wire f_arready,
-    // Hit-path response (to l2c.v's R/B arbiter).  hit_rsp_is_fetch tags
+    // P6: the D-side HOT door (axi_dh).  A FOURTH accept candidate into the
+    // same front door, read-only, 128 b native -- so unlike f_ar* there is
+    // no quadrant decompose in l2c.v and arlen/arsize arrive unmodified.
+    // Present in the port list unconditionally (Verilog cannot declare a
+    // port conditionally); inert, and removed by synthesis, when
+    // D_PORT_EN == 0, because d_arready is then a constant 0 and every
+    // register behind it loses its consumers.
+    input  wire [ID_WIDTH-1:0]   d_arid,   input wire [ADDR_WIDTH-1:0] d_araddr, input wire [7:0] d_arlen,
+    input  wire [2:0] d_arsize,  input wire [1:0] d_arburst, input wire d_arvalid, output wire d_arready,
+    // Hit-path response (to l2c.v's R/B arbiter).  hit_rsp_src tags
     // which of the two front-door sources (LSU s_axi vs. the fetch f_ar*
     // port above) this particular skid-register occupant came from, so
     // l2c.v's response arbiter can route it to the correct physical bus
     // -- purely a passthrough tag alongside hit_rsp_is_write, set at the
     // exact same 3 S_LOOKUP resolve sites; no hit-detection logic changes.
-    output reg  hit_rsp_valid, output reg hit_rsp_is_write, output reg hit_rsp_is_fetch, output reg [ID_WIDTH-1:0] hit_rsp_id,
+    output reg  hit_rsp_valid, output reg hit_rsp_is_write, output reg [SRC_BITS-1:0] hit_rsp_src, output reg [ID_WIDTH-1:0] hit_rsp_id,
     output reg  [127:0] hit_rsp_rdata, output reg hit_rsp_last, output reg [1:0] hit_rsp_resp, input wire hit_rsp_ready,
     // MSHR replay response (pass-through, to l2c.v's R/B arbiter).
-    // mshr_rsp_is_fetch: same source tag as hit_rsp_is_fetch above,
+    // mshr_rsp_src: same source tag as hit_rsp_src above,
     // derived from the extra source bit folded into the MSHR's internal
     // ID compare (Critical-3 fix, see the l2c_mshr instantiation below).
-    output wire mshr_rsp_valid, output wire mshr_rsp_is_write, output wire mshr_rsp_is_fetch, output wire [ID_WIDTH-1:0] mshr_rsp_id,
+    output wire mshr_rsp_valid, output wire mshr_rsp_is_write, output wire [SRC_BITS-1:0] mshr_rsp_src, output wire [ID_WIDTH-1:0] mshr_rsp_id,
     output wire [127:0] mshr_rsp_rdata, output wire mshr_rsp_last, output wire [1:0] mshr_rsp_resp, input wire mshr_rsp_ready,
     // Victim-buffer push + hazard query (l2c_victim lives in l2c.v).
     output reg  victim_push_valid, output reg [ADDR_WIDTH-1:0] victim_push_addr, output reg [LINE_BITS-1:0] victim_push_data,
@@ -334,6 +383,34 @@ module l2c_ctrl #(
     output wire [3:0]  dbg_mshr_occupancy
 );
     `include "l2c_plru_funcs.vh"
+    // -- P6: front-door SOURCE encoding ----------------------------------
+    // 2 bits when the D hot door exists, 1 bit (= the shipped
+    // `cur_is_fetch` bit, renamed) when it does not.
+    localparam [1:0] SRC_ENC_LSU = 2'b00, SRC_ENC_FETCH = 2'b01, SRC_ENC_DH = 2'b10;
+    localparam [SRC_BITS-1:0] SRCV_LSU   = SRC_ENC_LSU  [SRC_BITS-1:0];
+    localparam [SRC_BITS-1:0] SRCV_FETCH = SRC_ENC_FETCH[SRC_BITS-1:0];
+    localparam [SRC_BITS-1:0] SRCV_DH    = SRC_ENC_DH   [SRC_BITS-1:0];
+    // Sized copy of the fairness limit, so the comparison below has no
+    // implicit-width surprises.  8 bits: the ledger only has to reach the
+    // limit, and this module is in the 200 MHz tail -- a 16-bit counter and
+    // comparator here would be 8 flops and a wider compare spent on nothing.
+    // A limit above 254 is refused at elaboration rather than silently
+    // truncated (that is the `mmu-config-latch-vs-live` shape: a value
+    // configured in one place and re-derived narrower in another).
+    localparam [7:0] COLD_FAIR_V = DH_COLD_FAIR_N[7:0];
+    // An inconsistent (D_PORT_EN, SRC_BITS) pair would alias SRCV_DH onto
+    // SRCV_LSU -- a DH request would then share the LSU's MSHR id
+    // namespace and its responses would be routed onto s_axi.  That is a
+    // silent wrong answer, so it is an ELABORATION ERROR: the instantiated
+    // module below does not exist.
+    generate
+    if ((D_PORT_EN != 0) && (SRC_BITS < 2)) begin : g_src_bits_misconfigured
+        l2c_ctrl_SRC_BITS_must_be_2_when_D_PORT_EN_is_set u_elaboration_error ();
+    end
+    if (DH_COLD_FAIR_N > 254) begin : g_cold_fair_out_of_range
+        l2c_ctrl_DH_COLD_FAIR_N_must_be_0_to_254 u_elaboration_error ();
+    end
+    endgenerate
     // WLAST isn't relied on -- beat-count tracking (aw_cur_last) drives it.
     /* verilator lint_off UNUSEDSIGNAL */
     wire unused_wlast = s_wlast;
@@ -430,14 +507,71 @@ module l2c_ctrl #(
     reg [7:0] fetch_ar_len; reg [2:0] fetch_ar_size; reg [7:0] fetch_ar_beat; reg [1:0] fetch_ar_burst;
     reg fetch_ar_pend_v; reg [ID_WIDTH-1:0] fetch_ar_pend_id; reg [ADDR_WIDTH-1:0] fetch_ar_pend_addr;
     reg [7:0] fetch_ar_pend_len; reg [2:0] fetch_ar_pend_size; reg [1:0] fetch_ar_pend_burst;
+    // P6: the D hot door's tracker, a structural CLONE of the fetch one
+    // above -- active slot + one-entry header pre-latch, for the same
+    // reason (`d_arready` must stay a plain register bit and never pull
+    // do_accept_c onto the AXI ready path).
+    reg dh_ar_have; reg [ID_WIDTH-1:0] dh_ar_id; reg [ADDR_WIDTH-1:0] dh_ar_base;
+    reg [7:0] dh_ar_len; reg [2:0] dh_ar_size; reg [7:0] dh_ar_beat; reg [1:0] dh_ar_burst;
+    reg dh_ar_pend_v; reg [ID_WIDTH-1:0] dh_ar_pend_id; reg [ADDR_WIDTH-1:0] dh_ar_pend_addr;
+    reg [7:0] dh_ar_pend_len; reg [2:0] dh_ar_pend_size; reg [1:0] dh_ar_pend_burst;
     assign s_awready = !aw_pend_v && !rst_busy; assign s_arready = !ar_pend_v && !rst_busy;
     assign f_arready = !fetch_ar_pend_v && !rst_busy;
+    assign d_arready = (D_PORT_EN != 0) && !dh_ar_pend_v && !rst_busy;
     wire [ADDR_WIDTH-1:0] aw_cur_addr = aw_cur;
     wire [ADDR_WIDTH-1:0] ar_cur_addr = ar_cur;
-    wire [ADDR_WIDTH-1:0] fetch_ar_cur_addr = fetch_ar_base + ({{(ADDR_WIDTH-8){1'b0}}, fetch_ar_beat} << fetch_ar_size);
+    // ── P6: WRAP BURSTS ON THE HOT DOORS ────────────────────────────────
+    //
+    // The hot doors' beat address was `base + (beat << size)`, and the
+    // front door rejected every non-INCR burst (`cur_burst_ill_c`).  A
+    // 64 B line with 16 B sectors wants DEMANDED SECTOR FIRST, which is a
+    // WRAP burst, so the walker gains a wrapped form.
+    //
+    // The wrap is done with a MASK rather than a modular counter, which is
+    // both smaller and exactly AXI's definition: for a legal WRAP burst the
+    // wrap block is (arlen+1) x (1<<arsize) bytes, naturally aligned, and
+    // arlen+1 is a power of two -- so the block's byte offset mask is
+    // ((arlen+1) << arsize) - 1, and the wrapped address is the base's bits
+    // ABOVE that mask combined with the linear address's bits INSIDE it.
+    // (The linear sum preserves the base's sub-beat bits, because every
+    // increment is a whole multiple of 1<<size, so no separate term for
+    // them is needed.)
+    //
+    // Both operands are registers, exactly as the linear form's were, so
+    // this adds one mask AND/OR pair (~2 LUT levels of 32-bit-wide LUT2s)
+    // to a path that starts at flops -- it does NOT touch the accept cone,
+    // which reads cur_addr only through the set/tag compares it already had.
+    //
+    // Non-power-of-two (arlen+1) with WRAP is not a legal AXI burst and is
+    // REJECTED at the door (see cur_burst_ill_c) rather than silently given
+    // a nonsense mask.
+    wire [ADDR_WIDTH-1:0] fetch_lin_addr_c = fetch_ar_base + ({{(ADDR_WIDTH-8){1'b0}}, fetch_ar_beat} << fetch_ar_size);
+    wire [ADDR_WIDTH-1:0] fetch_wrap_mask_c = (({{(ADDR_WIDTH-8){1'b0}}, fetch_ar_len} + {{(ADDR_WIDTH-1){1'b0}}, 1'b1}) << fetch_ar_size)
+                                            - {{(ADDR_WIDTH-1){1'b0}}, 1'b1};
+    wire [ADDR_WIDTH-1:0] fetch_ar_cur_addr =
+        ((D_PORT_EN != 0) && (fetch_ar_burst == 2'b10))
+            ? ((fetch_ar_base & ~fetch_wrap_mask_c) | (fetch_lin_addr_c & fetch_wrap_mask_c))
+            : fetch_lin_addr_c;
+    wire [ADDR_WIDTH-1:0] dh_lin_addr_c = dh_ar_base + ({{(ADDR_WIDTH-8){1'b0}}, dh_ar_beat} << dh_ar_size);
+    wire [ADDR_WIDTH-1:0] dh_wrap_mask_c = (({{(ADDR_WIDTH-8){1'b0}}, dh_ar_len} + {{(ADDR_WIDTH-1){1'b0}}, 1'b1}) << dh_ar_size)
+                                         - {{(ADDR_WIDTH-1){1'b0}}, 1'b1};
+    wire [ADDR_WIDTH-1:0] dh_ar_cur_addr =
+        (dh_ar_burst == 2'b10)
+            ? ((dh_ar_base & ~dh_wrap_mask_c) | (dh_lin_addr_c & dh_wrap_mask_c))
+            : dh_lin_addr_c;
+    // A WRAP burst's length must make (len+1) a power of two.  Only 2/4/8/16
+    // beats are reachable on these doors (a 64 B line at 16 B or 32 B
+    // granularity, with the fetch door's decompose doubling both the beat
+    // count and the beat size so the BLOCK is the same either way), so the
+    // test is spelled out rather than built from a popcount.
+    wire fetch_wrap_len_ok_c = (fetch_ar_len == 8'd1) || (fetch_ar_len == 8'd3) ||
+                               (fetch_ar_len == 8'd7) || (fetch_ar_len == 8'd15);
+    wire dh_wrap_len_ok_c    = (dh_ar_len == 8'd1) || (dh_ar_len == 8'd3) ||
+                               (dh_ar_len == 8'd7) || (dh_ar_len == 8'd15);
     wire aw_cur_last = (aw_beat == aw_len);
     wire ar_cur_last = ar_last_q;
     wire fetch_ar_cur_last = (fetch_ar_beat == fetch_ar_len);
+    wire dh_ar_cur_last = (dh_ar_beat == dh_ar_len);
     // ── AR BEAT ADDRESS: the adder is NOT in the select cone ─────────────
     //
     // 2026-09-17.  `ar_cur <= ar_cur + ar_step` written inside
@@ -506,6 +640,10 @@ module l2c_ctrl #(
     wire fetch_ar_take_c = door_take_c && fetch_read_sel;
     wire fetch_ar_ends_c = fetch_ar_take_c && fetch_ar_cur_last;
     wire fetch_ar_act_free_c = !fetch_ar_have || fetch_ar_ends_c;
+    // P6: same three signals for the D hot door.
+    wire dh_ar_take_c = door_take_c && dh_read_sel;
+    wire dh_ar_ends_c = dh_ar_take_c && dh_ar_cur_last;
+    wire dh_ar_act_free_c = !dh_ar_have || dh_ar_ends_c;
     // -- Full-line-write gather (see the header) ---------------------------
     // aw_flw: THIS burst's shape permits gathering.  Decided once, at AW
     // accept, from the header alone -- INCR, 16 B beats, 64 B-aligned base,
@@ -572,40 +710,80 @@ module l2c_ctrl #(
     // (fetch) are pending in the same cycle -- same alternation shape as
     // rw_favor, so neither read source can starve the other.
     reg fetch_favor;
-    wire read_avail  = ar_have || fetch_ar_have;
+    // P6: a third, independent alternator, between the two HOT read doors
+    // (f_ar* and d_ar*).  Same shape and same purpose as fetch_favor: two
+    // sources of one priority class must not starve each other.
+    reg hot_favor;
+    // P6: registered "the cold path has been refused for DH_COLD_FAIR_N
+    // consecutive cycles" -- see the parameter's comment for why a bounded
+    // guarantee and not an argument about the workload.  A REGISTER, so it
+    // enters the select cone as a flop and not as a comparator.
+    reg cold_starved_q;
+    reg [7:0] cold_wait_q;
+    wire dh_avail_c = (D_PORT_EN != 0) && dh_ar_have;
+    wire hot_read_avail_c = fetch_ar_have || dh_avail_c;
+    wire read_avail  = ar_have || hot_read_avail_c;
     // A beat destined for the gather is NOT offered to the tag pipeline;
     // an assembled line (flw_avail_c) is offered INSTEAD of a raw beat.
     wire write_avail = flw_avail_c ||
                        (aw_have && s_wvalid && (gst == G_IDLE) && !flw_gath_rdy_c);
-    wire read_sel  = read_avail && (!write_avail || !rw_favor);
+    // ── P6: HOT > COLD FIXED PRIORITY AT S0 ─────────────────────────────
+    //
+    // OFF (D_PORT_EN == 0): byte-for-byte the shipped expressions.  `read_sel`
+    // is "any read pending, and either no write is pending or it is a read's
+    // turn"; f_ar* vs s_ar* alternate on fetch_favor.
+    //
+    // ON: the two hot READ doors are a class that OUTRANKS everything on
+    // s_axi, reads and writes alike, because latency on the hot ports is the
+    // whole point and the cold path is allowed to be slower.  Within the hot
+    // class d_ar* and f_ar* alternate on hot_favor.  `cold_starved_q` is the
+    // bounded backstop: when it is set and the cold path has work, the hot
+    // class stands down for one arbitration.
+    wire cold_avail_c = ar_have || write_avail;
+    wire hot_take_c   = hot_read_avail_c && !(cold_starved_q && cold_avail_c);
+    wire read_sel  = (D_PORT_EN != 0)
+                   ? (hot_take_c || (ar_have && (!write_avail || !rw_favor)))
+                   : (read_avail && (!write_avail || !rw_favor));
     wire write_sel = !read_sel && write_avail;
     wire any_sel    = read_sel || write_sel;
     // Sub-pick within read_sel: fetch wins only if it's actually pending
     // AND (LSU isn't pending OR it's fetch's turn); LSU wins the rest of
     // read_sel's cycles.  When only one read source is pending, the other
     // term is structurally forced regardless of fetch_favor.
-    wire fetch_read_sel = read_sel && fetch_ar_have && (!ar_have || fetch_favor);
-    wire lsu_read_sel   = read_sel && !fetch_read_sel;
+    //
+    // P6 ON: `hot_take_c` (which implies read_sel) replaces the
+    // fetch_favor-vs-LSU tie-break entirely -- a hot read does not share
+    // turns with a cold one, it pre-empts it.
+    wire dh_read_sel    = (D_PORT_EN != 0) && hot_take_c && dh_avail_c &&
+                          (!fetch_ar_have || hot_favor);
+    wire fetch_read_sel = (D_PORT_EN != 0)
+                        ? (hot_take_c && fetch_ar_have && !dh_read_sel)
+                        : (read_sel && fetch_ar_have && (!ar_have || fetch_favor));
+    wire lsu_read_sel   = read_sel && !fetch_read_sel && !dh_read_sel;
     // G_FULL dispatches the line base (qoff 0, full strobe); G_RPLY walks
     // the four quadrants exactly as the raw beats would have arrived.
     wire [ADDR_WIDTH-1:0] flw_disp_addr = (gst == G_FULL)
                                         ? flw_addr
                                         : {flw_addr[ADDR_WIDTH-1:6], flw_rq, 4'b0000};
     wire flw_disp_last_c = flw_last && ((gst == G_FULL) || (flw_rq == 2'd3));
-    wire [ADDR_WIDTH-1:0] cur_addr = fetch_read_sel ? fetch_ar_cur_addr
+    wire [ADDR_WIDTH-1:0] cur_addr = dh_read_sel ? dh_ar_cur_addr
+                                   : (fetch_read_sel ? fetch_ar_cur_addr
                                    : (lsu_read_sel ? ar_cur_addr
-                                   : (flw_avail_c ? flw_disp_addr : aw_cur_addr));
-    wire [ID_WIDTH-1:0]   cur_id   = fetch_read_sel ? fetch_ar_id
+                                   : (flw_avail_c ? flw_disp_addr : aw_cur_addr)));
+    wire [ID_WIDTH-1:0]   cur_id   = dh_read_sel ? dh_ar_id
+                                   : (fetch_read_sel ? fetch_ar_id
                                    : (lsu_read_sel ? ar_id
-                                   : (flw_avail_c ? flw_id : aw_id));
-    wire                  cur_last = fetch_read_sel ? fetch_ar_cur_last
+                                   : (flw_avail_c ? flw_id : aw_id)));
+    wire                  cur_last = dh_read_sel ? dh_ar_cur_last
+                                   : (fetch_read_sel ? fetch_ar_cur_last
                                    : (lsu_read_sel ? ar_cur_last
-                                   : (flw_avail_c ? flw_disp_last_c : aw_cur_last));
+                                   : (flw_avail_c ? flw_disp_last_c : aw_cur_last)));
     wire                  cur_need = read_sel ? 1'b1 : cur_last;
-    // Level A (task #269): tags this accept as fetch-sourced for the
+    // Level A (task #269) / P6: tags this accept's SOURCE for the
     // downstream MSHR id-source-qualification (Q5) and the hit/mshr
-    // response routing tag (hit_rsp_is_fetch/mshr_rsp_is_fetch).
-    wire                  cur_is_fetch = fetch_read_sel;
+    // response routing tag (hit_rsp_src/mshr_rsp_src).
+    wire [SRC_BITS-1:0]   cur_src = dh_read_sel    ? SRCV_DH
+                                  : (fetch_read_sel ? SRCV_FETCH : SRCV_LSU);
     wire [127:0]          cur_wdata = flw_avail_c ? flw_data[flw_rq*128 +: 128] : s_wdata;
     wire [15:0]           cur_wstrb = flw_avail_c ? flw_strb[flw_rq*16  +: 16]  : s_wstrb;
     wire [1:0]              cur_qoff = cur_addr[5:4];
@@ -630,9 +808,21 @@ module l2c_ctrl #(
     // bursts are required -- awsize is not restricted to 16B.  A gathered
     // line's legality was settled at AW accept (aw_flw requires INCR), and
     // aw_burst may by then describe the NEXT burst, so it is not re-read.
-    wire cur_burst_ill_c = fetch_read_sel ? (fetch_ar_burst != 2'b01)
+    // P6: the two HOT doors additionally accept WRAP (2'b10) when the D
+    // port exists -- with the AXI legality test on its length, so an
+    // illegal WRAP gets an honest SLVERR instead of a garbage mask.  The
+    // COLD path is unchanged: INCR only, which is what every master that
+    // reaches s_axi emits.
+    wire fetch_burst_ill_c = (D_PORT_EN != 0)
+                           ? !((fetch_ar_burst == 2'b01) ||
+                               ((fetch_ar_burst == 2'b10) && fetch_wrap_len_ok_c))
+                           : (fetch_ar_burst != 2'b01);
+    wire dh_burst_ill_c    = !((dh_ar_burst == 2'b01) ||
+                               ((dh_ar_burst == 2'b10) && dh_wrap_len_ok_c));
+    wire cur_burst_ill_c = dh_read_sel ? dh_burst_ill_c
+                         : (fetch_read_sel ? fetch_burst_ill_c
                          : (lsu_read_sel ? (ar_burst != 2'b01)
-                         : (flw_avail_c ? 1'b0 : (aw_burst != 2'b01)));
+                         : (flw_avail_c ? 1'b0 : (aw_burst != 2'b01))));
     wire illegal_c = cur_burst_ill_c;
     // Critical-3: hold off accept while cur_id has a live op in MSHR/bypass.
     //
@@ -670,7 +860,7 @@ module l2c_ctrl #(
     //
     // Level A (task #269), Q5: mshr_idq_busy is already source-qualified
     // -- it is driven by the u_mshr instance below, whose idq_id/alloc_id/
-    // merge_id all carry an extra {is_fetch, id} bit so axi_i and axi_d
+    // merge_id all carry an extra SRC_BITS-wide source field so axi_i, axi_dh and axi_d
     // (independently-numbered AXI masters) can never alias each other's
     // IDs in the MSHR table.  The byp_active_id compare below is NOT
     // qualified -- l2c_bypass.v carries no source tag (out of scope for
@@ -680,7 +870,7 @@ module l2c_ctrl #(
     // throughput stall, not a correctness issue), and bypass windows are
     // never legitimate fetch targets in practice.  The NEW idq2_id/idq2_vec
     // ordering check the 2026-08-20 pipelining added (see u_mshr below)
-    // is likewise widened with the {is_fetch, id} tag, for the same
+    // is likewise widened with the {src, id} tag, for the same
     // reason -- an unwidened idq2_id would silently miss a same-numeric-ID
     // match between a live fetch entry and an LSU query (or vice versa),
     // reopening exactly the response-ordering hazard idq2 exists to close.
@@ -698,15 +888,15 @@ module l2c_ctrl #(
     reg a_is_write; reg [ID_WIDTH-1:0] a_id; reg [127:0] a_wdata; reg [15:0] a_wstrb;
     reg [1:0] a_qoff; reg a_last; reg a_need; reg a_illegal; reg a_full;
     reg [3:0] a_cov, a_dty, a_want; reg [LINE_BITS-1:0] a_line;
-    reg a_is_fetch;
+    reg [SRC_BITS-1:0] a_src;
     reg [ADDR_WIDTH-1:0] q_addr; reg [SET_BITS-1:0] q_set; reg [TAG_BITS-1:0] q_tag;
     reg q_is_write; reg [ID_WIDTH-1:0] q_id; reg [127:0] q_wdata; reg [15:0] q_wstrb;
     reg [1:0] q_qoff; reg q_last; reg q_need; reg q_illegal; reg q_full;
     reg [3:0] q_cov, q_dty, q_want; reg [LINE_BITS-1:0] q_line;
-    // Level A (task #269): stage-1 copy of the fetch source tag, threaded
-    // to req_is_fetch (stage 2) the same way every other q_*->req_* field
+    // Level A (task #269) / P6: stage-1 copy of the source tag, threaded
+    // to req_src (stage 2) the same way every other q_*->req_* field
     // is -- see the S0->S1 / S1->S2 blocks below.
-    reg q_is_fetch;
+    reg [SRC_BITS-1:0] q_src;
     // Forward declaration for pipe_id_haz_c below, which is written before
     // req_id is declared.  2026-09-15: req_set_w/req_tag_w/req_is_write_w
     // went with it -- set_haz_c no longer reads the resolve stage at all
@@ -787,7 +977,7 @@ module l2c_ctrl #(
     //    bypass beat NEVER ENTERS STAGE A, so "the stage a new request
     //    would enter is free" is not a statement about it at all.  Nothing
     //    is lost: capacity is `byp_req_ready`, and ordering is
-    //    `pipe_id_haz_c` (all three stages, {is_fetch,id}-tagged) and
+    //    `pipe_id_haz_c` (all three stages, {src,id}-tagged) and
     //    `id_busy_c`, none of which this term participates in.  It also
     //    SHRINKS the accept cone rather than growing it.  Not done here
     //    because of (2).
@@ -936,7 +1126,7 @@ module l2c_ctrl #(
                      (q_same_set_c && !(q_same_line_c && !q_is_write && !write_sel));
     // Response-ordering hazard for a BYPASS dispatch: the pipeline holds
     // ops whose ids are not in the MSHR yet, so `mshr_idq_busy` alone no
-    // longer sees them. Widened with the {is_fetch, id} tag for the same
+    // longer sees them. Widened with the {src, id} tag for the same
     // reason idq_id/idq2_id/alloc_id/merge_id all are (see the Level A
     // task #269 comment above `id_busy_c`): axi_i and axi_d are
     // independently-numbered AXI masters, so an unwidened q_id/req_id_w
@@ -957,9 +1147,9 @@ module l2c_ctrl #(
     // its MSHR entry does not exist until that edge -- so `mshr_idq_busy`
     // cannot see it this cycle either.  Dropping the stage-2 term would
     // open exactly the window Critical-3 exists to close.
-    assign pipe_id_haz_c = (a_v   && (a_id     == cur_id) && (a_is_fetch   == cur_is_fetch)) ||
-                           (q_v   && (q_id     == cur_id) && (q_is_fetch   == cur_is_fetch)) ||
-                           (req_v && (req_id_w == cur_id) && (req_is_fetch == cur_is_fetch));
+    assign pipe_id_haz_c = (a_v   && (a_id     == cur_id) && (a_src   == cur_src)) ||
+                           (q_v   && (q_id     == cur_id) && (q_src   == cur_src)) ||
+                           (req_v && (req_id_w == cur_id) && (req_src == cur_src));
     // s_wready must track do_accept_c's WRITE-side readiness EXACTLY
     // (every accept term included) -- a blanket "aw_have && !ar_have"
     // proxy was only valid back when reads had fixed absolute priority; it
@@ -1010,11 +1200,11 @@ module l2c_ctrl #(
     reg [ADDR_WIDTH-1:0] req_addr; reg [SET_BITS-1:0] req_set; reg [TAG_BITS-1:0] req_tag;
     reg req_is_write; reg [ID_WIDTH-1:0] req_id; reg [127:0] req_wdata; reg [15:0] req_wstrb;
     reg [1:0] req_qoff; reg req_last; reg req_need; reg req_illegal;
-    // Level A (task #269): source tag for THIS accepted request, latched
-    // alongside req_is_write at accept time.  Consumed only for response
-    // routing (hit_rsp_is_fetch/mshr_rsp_is_fetch below) and the MSHR
+    // Level A (task #269) / P6: source tag for THIS accepted request,
+    // latched alongside req_is_write at accept time.  Consumed only for
+    // response routing (hit_rsp_src/mshr_rsp_src below) and the MSHR
     // id-source qualification -- never read by hit-detection/eviction.
-    reg req_is_fetch;
+    reg [SRC_BITS-1:0] req_src;
     assign req_id_w = req_id;
     // This request is a whole 64 B line with every strobe set: it needs no
     // fill and its data comes from `req_line`, not req_wdata.
@@ -1791,8 +1981,8 @@ module l2c_ctrl #(
     // numbered AXI masters (each starts its own IDs from 0), so a raw
     // ID_WIDTH-wide compare at idq_id/alloc_id/merge_id would let an LSU
     // op and an unrelated fetch op sharing the same numeric ID spuriously
-    // block each other (Critical-3, id_busy_c).  Fix: fold cur_is_fetch/
-    // req_is_fetch in as an EXTRA top bit ONLY for this instance's
+    // block each other (Critical-3, id_busy_c).  Fix: fold cur_src/
+    // req_src in as EXTRA TOP BITS ONLY for this instance's
     // internal ID bookkeeping (idq_id compare, p_id/r_id storage, rsp_id)
     // -- widen just this instantiation's ID_WIDTH by 1.  m_arid/m_rid are
     // NOT part of that bookkeeping (m_arid is the MSHR's own entry-index
@@ -1805,36 +1995,36 @@ module l2c_ctrl #(
     // EXACTLY ID_WIDTH bits, unchanged.  No change to l2c_mshr.v itself:
     // its ID matching is a plain equality/storage compare over whatever
     // width its parameter gives it.
-    wire [ID_WIDTH:0] mshr_m_arid_x; wire [ID_WIDTH:0] mshr_rsp_id_x;
+    wire [ID_WIDTH+SRC_BITS-1:0] mshr_m_arid_x; wire [ID_WIDTH+SRC_BITS-1:0] mshr_rsp_id_x;
     assign mf_arid = mshr_m_arid_x[ID_WIDTH-1:0];
     // synthesis translate_off
     // mshr_m_arid_x's extra top bit is always 0 (it's zero-padded from
     // ar_idx_c, which is only IDX_BITS wide -- see l2c_mshr.v's m_arid
     // assign), so dropping it above is lossless; assert that invariant
     // rather than trust the comment.
-    always @(posedge clk) if (!rst && mshr_m_arid_x[ID_WIDTH]) begin
+    always @(posedge clk) if (!rst && (mshr_m_arid_x[ID_WIDTH+SRC_BITS-1:ID_WIDTH] != {SRC_BITS{1'b0}})) begin
         $display("L2C_CTRL ASSERT: mshr fill-AR id top bit unexpectedly set: 0x%0x", mshr_m_arid_x);
         $fatal(1);
     end
     // synthesis translate_on
-    assign mshr_rsp_id = mshr_rsp_id_x[ID_WIDTH-1:0];
-    assign mshr_rsp_is_fetch = mshr_rsp_id_x[ID_WIDTH];
+    assign mshr_rsp_id  = mshr_rsp_id_x[ID_WIDTH-1:0];
+    assign mshr_rsp_src = mshr_rsp_id_x[ID_WIDTH+SRC_BITS-1:ID_WIDTH];
     l2c_mshr #(.SET_BITS(SET_BITS), .TAG_BITS(TAG_BITS), .WAY_BITS(WAY_BITS),
-               .ADDR_WIDTH(ADDR_WIDTH), .LINE_BITS(LINE_BITS), .ID_WIDTH(ID_WIDTH+1),
+               .ADDR_WIDTH(ADDR_WIDTH), .LINE_BITS(LINE_BITS), .ID_WIDTH(ID_WIDTH+SRC_BITS),
                .REPLAY_N(MSHR_REPLAY_N), .RK_BITS(MSHR_REPLAY_K)) u_mshr (
         .clk(clk), .rst(rst || rst_busy),
         .lu_set(req_set), .lu_tag(req_tag), .lu_hit(mshr_lu_hit), .lu_idx(mshr_lu_idx),
         .lu_onehot(lu_onehot_c),
         .bw_set(req_set), .bw_mask(mshr_bw_mask),
         .bwq_set(q_set),  .bwq_mask(mshr_bwq_mask),
-        .idq_id({cur_is_fetch, cur_id}), .idq_busy(mshr_idq_busy),
-        .idq2_id({req_is_fetch, req_id}), .idq2_vec(idq2_vec),
+        .idq_id({cur_src, cur_id}), .idq_busy(mshr_idq_busy),
+        .idq2_id({req_src, req_id}), .idq2_vec(idq2_vec),
         .alloc_valid(alloc_valid_c), .alloc_ready(mshr_alloc_ready), .alloc_set(req_set), .alloc_tag(req_tag),
-        .alloc_way(sel_way_c), .alloc_is_write(req_is_write), .alloc_id({req_is_fetch, req_id}), .alloc_wdata(req_wdata),
+        .alloc_way(sel_way_c), .alloc_is_write(req_is_write), .alloc_id({req_src, req_id}), .alloc_wdata(req_wdata),
         .alloc_wstrb(req_wstrb), .alloc_qoff(req_qoff), .alloc_last(req_last), .alloc_need_resp(req_need),
         .alloc_vsec_pre(base_vsec_c), .alloc_dsec_pre(base_dsec_c),
         .merge_valid(merge_valid_c), .merge_ready(mshr_merge_ready), .merge_idx(mshr_lu_idx),
-        .merge_is_write(req_is_write), .merge_id({req_is_fetch, req_id}), .merge_wdata(req_wdata), .merge_wstrb(req_wstrb),
+        .merge_is_write(req_is_write), .merge_id({req_src, req_id}), .merge_wdata(req_wdata), .merge_wstrb(req_wstrb),
         .merge_qoff(req_qoff), .merge_last(req_last), .merge_need_resp(req_need),
         .inst_valid(mshr_inst_valid), .inst_set(mshr_inst_set),
         .inst_way(mshr_inst_way), .inst_tag(mshr_inst_tag),
@@ -1845,7 +2035,7 @@ module l2c_ctrl #(
         .occupancy(dbg_mshr_occupancy),
         .m_arid(mshr_m_arid_x), .m_araddr(mf_araddr), .m_arlen(mf_arlen), .m_arsize(mf_arsize),
         .m_arburst(mf_arburst), .m_arvalid(mf_arvalid), .m_arready(mf_arready),
-        .m_rid({1'b0, mf_rid}), .m_rdata(mf_rdata), .m_rresp(mf_rresp), .m_rlast(mf_rlast), .m_rvalid(mf_rvalid), .m_rready(mf_rready)
+        .m_rid({{SRC_BITS{1'b0}}, mf_rid}), .m_rdata(mf_rdata), .m_rresp(mf_rresp), .m_rlast(mf_rlast), .m_rvalid(mf_rvalid), .m_rready(mf_rready)
     );
     // synthesis translate_off
     // ALLOC-vs-LIVE-MASK (2026-09-16, victim precompute).  The victim way is
@@ -1959,9 +2149,9 @@ module l2c_ctrl #(
     // out at the first sim, not on hardware.  See docs/fabric_concurrency_contract.md
     // clause C4/C5 for the door and same-ID rules this sits alongside.
     always @(posedge clk) begin
-        if (!rst && do_bypass_c && cur_is_fetch) begin
-            $display("L2C_CTRL ASSERT: FETCH-sourced address 0x%08x (id=%0d) routed to the BYPASS engine -- l2c_bypass has no fetch tag; its response would misroute onto s_axi R/B and the fetch port would hang",
-                     cur_addr, cur_id);
+        if (!rst && do_bypass_c && (cur_src != SRCV_LSU)) begin
+            $display("L2C_CTRL ASSERT: non-LSU-sourced (src=%0d) address 0x%08x (id=%0d) routed to the BYPASS engine -- l2c_bypass has no source tag; its response would misroute onto s_axi R/B and the hot port would hang",
+                     cur_src, cur_addr, cur_id);
             $fatal(1);
         end
     end
@@ -1988,7 +2178,9 @@ module l2c_ctrl #(
         if (rst) begin
             aw_have <= 1'b0; ar_have <= 1'b0; aw_pend_v <= 1'b0; ar_pend_v <= 1'b0;
             fetch_ar_have <= 1'b0; fetch_ar_pend_v <= 1'b0;
-            rw_favor <= 1'b0; fetch_favor <= 1'b0; hit_rsp_valid <= 1'b0;
+            dh_ar_have <= 1'b0; dh_ar_pend_v <= 1'b0;
+            rw_favor <= 1'b0; fetch_favor <= 1'b0; hot_favor <= 1'b0;
+            cold_wait_q <= 8'd0; cold_starved_q <= 1'b0; hit_rsp_valid <= 1'b0;
             a_v <= 1'b0; q_v <= 1'b0; req_v <= 1'b0; rr_p1 <= 1'b0; rr_p2 <= 1'b0;
             q_stale <= 1'b0; req_stale <= 1'b0;
             victim_push_valid <= 1'b0; byp_req_valid <= 1'b0;
@@ -2131,6 +2323,32 @@ module l2c_ctrl #(
             end else if (fetch_ar_act_free_c && fetch_ar_pend_v) begin
                 fetch_ar_pend_v <= 1'b0;
             end
+            // P6: the D hot door's header door.  Line-for-line the fetch
+            // door directly above -- active slot, then one-entry pre-latch.
+            if (dh_ar_act_free_c) begin
+                if (dh_ar_pend_v) begin
+                    dh_ar_have <= 1'b1; dh_ar_id <= dh_ar_pend_id;
+                    dh_ar_base <= dh_ar_pend_addr; dh_ar_len <= dh_ar_pend_len;
+                    dh_ar_size <= dh_ar_pend_size; dh_ar_burst <= dh_ar_pend_burst;
+                    dh_ar_beat <= 8'd0;
+                end else if (d_arvalid && d_arready) begin
+                    dh_ar_have <= 1'b1; dh_ar_id <= d_arid;
+                    dh_ar_base <= d_araddr; dh_ar_len <= d_arlen;
+                    dh_ar_size <= d_arsize; dh_ar_burst <= d_arburst;
+                    dh_ar_beat <= 8'd0;
+                end else begin
+                    dh_ar_have <= 1'b0;
+                end
+            end else if (dh_ar_take_c) begin
+                dh_ar_beat <= dh_ar_beat + 8'd1;
+            end
+            if (d_arvalid && d_arready && !(dh_ar_act_free_c && !dh_ar_pend_v)) begin
+                dh_ar_pend_v <= 1'b1; dh_ar_pend_id <= d_arid;
+                dh_ar_pend_addr <= d_araddr; dh_ar_pend_len <= d_arlen;
+                dh_ar_pend_size <= d_arsize; dh_ar_pend_burst <= d_arburst;
+            end else if (dh_ar_act_free_c && dh_ar_pend_v) begin
+                dh_ar_pend_v <= 1'b0;
+            end
             // Full-line-write gather.  A gathered beat is consumed HERE and
             // never reaches the tag pipeline, so it owns the aw_beat/aw_have
             // accounting for itself; the S_IDLE arm below skips that update
@@ -2177,6 +2395,42 @@ module l2c_ctrl #(
             // still driven from here.
             if (door_take_c && read_sel) begin
                 fetch_favor <= !fetch_favor;
+            end
+            // P6: the hot-class alternator, and the cold path's bounded
+            // fairness ledger.  `cold_wait_q` counts CONSECUTIVE cycles in
+            // which the cold path had a beat to offer and no cold beat was
+            // accepted; `cold_starved_q` is its registered comparison, so
+            // the door's select cone sees a flop.  Both are held at 0 when
+            // the feature is compiled out, so they lose their consumers and
+            // synthesis removes them.
+            if ((D_PORT_EN != 0) && door_take_c && hot_take_c) begin
+                hot_favor <= !hot_favor;
+            end
+            if (D_PORT_EN != 0) begin
+                if (!cold_avail_c || (door_take_c && (lsu_read_sel || write_sel))) begin
+                    cold_wait_q    <= 8'd0;
+                    cold_starved_q <= 1'b0;
+                end else if (cold_starved_q) begin
+                    // ONE arbitration slot, used or not, then release the hot
+                    // class and restart the ledger.  Without this arm the
+                    // guarantee is "hot stands down until a cold beat is
+                    // ACCEPTED", and a cold beat can be refused for reasons
+                    // that have nothing to do with arbitration (set_haz_c
+                    // against a stage the hot door filled, a bypass op whose
+                    // engine is full).  The hot class would then be pinned
+                    // shut by a beat that was never going to go this cycle
+                    // either -- a coupling between two unrelated mechanisms,
+                    // which is the shape worth deleting even when it is only
+                    // bounded and not a deadlock.  Guarantee as written: cold
+                    // gets absolute priority for one cycle out of every
+                    // DH_COLD_FAIR_N+1 while it is continuously refused.
+                    cold_wait_q    <= 8'd0;
+                    cold_starved_q <= 1'b0;
+                end else if (cold_wait_q != 8'hFF) begin
+                    cold_wait_q    <= cold_wait_q + 8'd1;
+                    cold_starved_q <= (DH_COLD_FAIR_N != 0) &&
+                                      ((cold_wait_q + 8'd1) >= COLD_FAIR_V);
+                end
             end
             // Gather release.  BOTH shapes now release at ACCEPT: G_RPLY
             // walks its four quadrants one per accept as before, and
@@ -2232,7 +2486,7 @@ module l2c_ctrl #(
                     a_want <= cur_want_c;
                     // Level A (task #269): thread the fetch source tag
                     // through stage A alongside every other cur_* field.
-                    a_is_fetch <= cur_is_fetch;
+                    a_src <= cur_src;
                 end
                 // ---- A -> Q -----------------------------------------
                 // This edge IS stage A's array read, so the sticky starts
@@ -2245,7 +2499,7 @@ module l2c_ctrl #(
                     q_need <= a_need; q_illegal <= a_illegal;
                     q_full <= a_full; if (a_full) q_line <= a_line;
                     q_cov <= a_cov; q_dty <= a_dty; q_want <= a_want;
-                    q_is_fetch <= a_is_fetch;
+                    q_src <= a_src;
                 end
                 // ---- Q -> S2 ----------------------------------------
                 req_stale <= q_stale || inst_on_q_c;
@@ -2256,7 +2510,7 @@ module l2c_ctrl #(
                     req_need <= q_need; req_illegal <= q_illegal;
                     req_full <= q_full; if (q_full) req_line <= q_line;
                     req_cov <= q_cov; req_dty <= q_dty; req_want <= q_want;
-                    req_is_fetch <= q_is_fetch;
+                    req_src <= q_src;
                 end
             end
             // ---- S2: resolve -----------------------------------------
@@ -2268,7 +2522,7 @@ module l2c_ctrl #(
                         $display("L2C_CTRL: rejecting illegal burst id=%0d addr=0x%08x with SLVERR", req_id, req_addr);
                         // synthesis translate_on
                         if (req_need) begin
-                            hit_rsp_valid <= 1'b1; hit_rsp_is_write <= req_is_write; hit_rsp_is_fetch <= req_is_fetch; hit_rsp_id <= req_id;
+                            hit_rsp_valid <= 1'b1; hit_rsp_is_write <= req_is_write; hit_rsp_src <= req_src; hit_rsp_id <= req_id;
                             hit_rsp_rdata <= {4{32'hDEADBEEF}}; hit_rsp_last <= req_last; hit_rsp_resp <= 2'b10;
                         end
                     end // else: skid full or id-ordered behind a live op, retry
@@ -2281,7 +2535,7 @@ module l2c_ctrl #(
                     if (s_lookup_hit_go) begin
                         dbg_hit_count <= dbg_hit_count + 32'd1;
                         if (req_need) begin // Critical-1: non-last write beat gets no B
-                            hit_rsp_valid <= 1'b1; hit_rsp_is_write <= req_is_write; hit_rsp_is_fetch <= req_is_fetch; hit_rsp_id <= req_id;
+                            hit_rsp_valid <= 1'b1; hit_rsp_is_write <= req_is_write; hit_rsp_src <= req_src; hit_rsp_id <= req_id;
                             hit_rsp_rdata <= rd_line_c[req_qoff*128 +: 128];
                             hit_rsp_last <= req_last; hit_rsp_resp <= 2'b00;
                         end
@@ -2300,13 +2554,13 @@ module l2c_ctrl #(
                     // DDR read it would have caused is never issued.
                     dbg_miss_count <= dbg_miss_count + 32'd1;
                     if (req_need) begin
-                        // Level A (task #269): this hit_rsp_is_fetch <=
+                        // Level A (task #269): this hit_rsp_src <=
                         // was silently absent here even though it exists
                         // at the two S2 sites above -- this branch's text
                         // is byte-identical to what upstream's own 3-way
                         // merge algorithm treated as unconflicted, which
                         // means it took upstream's version verbatim.
-                        hit_rsp_valid <= 1'b1; hit_rsp_is_write <= 1'b1; hit_rsp_is_fetch <= req_is_fetch; hit_rsp_id <= req_id;
+                        hit_rsp_valid <= 1'b1; hit_rsp_is_write <= 1'b1; hit_rsp_src <= req_src; hit_rsp_id <= req_id;
                         hit_rsp_rdata <= rd_line_c[req_qoff*128 +: 128];
                         hit_rsp_last <= req_last; hit_rsp_resp <= 2'b00;
                     end

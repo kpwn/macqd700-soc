@@ -558,6 +558,212 @@ static bool req_ready_gate(int pct_ready) {
     return static_cast<int>(rng() % 100) < pct_ready;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// P6: the D-side HOT DOOR master model (axi_dh)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// A second, independently-numbered READ-ONLY master, 128 b, 4 IDs
+// (AxiIds.dRefill(0..3)), driving tb_l2c.v's dh_axi_* pins -- which are the
+// WINDOW GUARD's upstream pins, not l2c's, so everything below exercises
+// guard + door together, the way fpga_top_ddr.vh composes them.
+//
+// Deliberately separate from the s_axi master model (`RBurst`/`r_awaiting`)
+// rather than parameterised into it: the two are different AXI masters with
+// disjoint ID namespaces, and letting one bookkeeping structure serve both
+// would hide exactly the response-misrouting class these tests exist to
+// catch (a DH-tagged completion presented on s_axi's R would then simply
+// look like an s_axi response arriving early).
+//
+// dh_rng is its OWN generator.  It must never draw from `rng` or `ddr_rng`:
+// the OFF build (`make tb-l2c`) has to be cycle-identical to the RTL before
+// P6, and a shared draw stream would shift every randomized decision after
+// the first dh scenario.
+static std::mt19937 dh_rng(DEFAULT_SEED ^ 0x0D000D00u);
+
+struct DhBurst {
+    uint32_t id = 0;
+    uint64_t addr = 0;
+    int      beats = 1;
+    int      arburst = 1;        // 1 = INCR, 2 = WRAP
+    int      arsize = 4;         // 16 B = the port's native beat
+    std::vector<std::array<uint8_t,16>> got;
+    uint8_t  last_resp = 0;
+    bool     any_decerr = false;
+    bool     done = false;
+    uint64_t t_ar = 0, t_r0 = 0, t_rl = 0;
+};
+static std::deque<std::shared_ptr<DhBurst>> dh_pending_issue;
+static std::shared_ptr<DhBurst>             dh_issuing;
+static std::map<uint32_t, std::deque<std::shared_ptr<DhBurst>>> dh_awaiting;
+static std::map<uint32_t, std::shared_ptr<DhBurst>> dh_done;
+static bool     g_dh_unmatched_resp = false;
+static uint64_t g_dh_ar_hs = 0, g_dh_ar_pres = 0, g_dh_ar_refused = 0;
+static uint64_t g_dh_rlast_hs = 0, g_dh_r_beats = 0;
+// Stream-mode bursts accepted but not yet closed by an RLAST.  The
+// whole-run misroute check must not fire on a beat belonging to a
+// stream burst that was still in flight when the stream was switched
+// off -- that is a late response, not a misrouted one.  Counting it is
+// exact; "suppress while g_dh_stream" is not, and was wrong.
+static int64_t g_dh_stream_out = 0;
+// Continuous-stream mode, for the arbitration scenarios: keep a header
+// presented every cycle so the door is genuinely contended rather than
+// merely observed.  Its beats are NOT checked against golden (the stream
+// walks a warmed region), which is what the directed scenarios are for.
+static bool     g_dh_stream = false;
+static uint64_t g_dh_stream_base = 0, g_dh_stream_addr = 0, g_dh_stream_span = 4096;
+static int      g_dh_stream_arlen = 0, g_dh_stream_nid = 4, g_dh_stream_id = 0;
+static int      g_dh_stream_burst = 1;
+// Guard configuration.  lg2 24 = the tb's 16 MB cacheable window, so
+// BYPASS_BASE (0x0100_0000) is OUT of window and is a ready-made
+// "cacheable-but-not-memory" address for the guard scenario.
+static int      g_dh_win_lg2 = 24;
+static bool     g_dh_is_rom  = false;
+// Per-source front-door accept counters, sampled from tb_l2c.v's taps.
+struct DhFdStats {
+    uint64_t cycles = 0;
+    uint64_t acc_dh = 0, acc_fetch = 0, acc_lsu = 0, acc_write = 0;
+    uint64_t cold_avail = 0, cold_starved = 0;
+    uint64_t dh_ar_pres = 0, dh_ar_refused = 0;
+    uint64_t victim_query_hit = 0;
+};
+static DhFdStats g_dhfd;
+static DhFdStats dhfd_diff(const DhFdStats& n, const DhFdStats& t) {
+    DhFdStats d;
+    d.cycles = n.cycles - t.cycles;
+    d.acc_dh = n.acc_dh - t.acc_dh;       d.acc_fetch = n.acc_fetch - t.acc_fetch;
+    d.acc_lsu = n.acc_lsu - t.acc_lsu;    d.acc_write = n.acc_write - t.acc_write;
+    d.cold_avail = n.cold_avail - t.cold_avail;
+    d.cold_starved = n.cold_starved - t.cold_starved;
+    d.dh_ar_pres = n.dh_ar_pres - t.dh_ar_pres;
+    d.dh_ar_refused = n.dh_ar_refused - t.dh_ar_refused;
+    d.victim_query_hit = n.victim_query_hit - t.victim_query_hit;
+    return d;
+}
+
+// Host-side model of the DUT's per-beat address walk.  This is the ONLY
+// place the WRAP arithmetic is written on the host, and it is written from
+// the AXI definition (wrap block = beats x size, naturally aligned) rather
+// than transcribed from the RTL's mask form -- so a mistake in the RTL's
+// mask cannot be mirrored here and cancel out.
+static uint64_t dh_beat_addr(const DhBurst& b, int beat) {
+    const uint64_t size = 1ull << b.arsize;
+    const uint64_t lin  = b.addr + static_cast<uint64_t>(beat) * size;
+    if (b.arburst == 2) {
+        const uint64_t block = static_cast<uint64_t>(b.beats) * size;
+        const uint64_t base  = b.addr - (b.addr % block);
+        return base + ((b.addr - base + static_cast<uint64_t>(beat) * size) % block);
+    }
+    return lin;
+}
+
+static bool dh_ready_gate() {
+    if (g_perf_always_ready) return true;
+    if (std::getenv("L2C_NO_BACKPRESSURE")) return true;
+    // 85%, same as s_axi -- the point is to create VALID-but-not-READY
+    // cycles on the dh R channel so the 2-deep output register slice's tail
+    // slot is actually occupied at some point in the run.
+    return static_cast<int>(dh_rng() % 100) < 85;
+}
+
+static void dh_drive_comb() {
+    dut->dh_ram_window_lg2 = g_dh_win_lg2;
+    dut->dh_ar_is_rom      = g_dh_is_rom ? 1 : 0;
+    if (dh_issuing) {
+        dut->dh_axi_arvalid = 1;
+        dut->dh_axi_arid    = dh_issuing->id;
+        dut->dh_axi_araddr  = static_cast<uint32_t>(dh_issuing->addr);
+        dut->dh_axi_arlen   = dh_issuing->beats - 1;
+        dut->dh_axi_arsize  = dh_issuing->arsize;
+        dut->dh_axi_arburst = dh_issuing->arburst;
+    } else if (g_dh_stream) {
+        dut->dh_axi_arvalid = 1;
+        dut->dh_axi_arid    = g_dh_stream_id;
+        dut->dh_axi_araddr  = static_cast<uint32_t>(g_dh_stream_addr);
+        dut->dh_axi_arlen   = g_dh_stream_arlen;
+        dut->dh_axi_arsize  = 4;
+        dut->dh_axi_arburst = g_dh_stream_burst;
+    } else {
+        dut->dh_axi_arvalid = 0;
+    }
+    dut->dh_axi_rready = dh_ready_gate() ? 1 : 0;
+}
+
+static void dh_pump_issue() {
+    if (!dh_issuing && !dh_pending_issue.empty()) {
+        dh_issuing = dh_pending_issue.front(); dh_pending_issue.pop_front();
+    }
+}
+
+static void dh_latch_edge() {
+    if (dut->dh_axi_arvalid) {
+        g_dh_ar_pres++;
+        if (!dut->dh_axi_arready) g_dh_ar_refused++;
+    }
+    if (dut->dh_axi_arvalid && dut->dh_axi_arready) {
+        g_dh_ar_hs++;
+        if (dh_issuing) {
+            dh_issuing->t_ar = sim_time;
+            dh_awaiting[dh_issuing->id].push_back(dh_issuing);
+            dh_issuing = nullptr;
+        } else if (g_dh_stream) {
+            // Stream mode: no per-burst bookkeeping, just walk on.
+            g_dh_stream_out++;
+            g_dh_stream_addr += static_cast<uint64_t>(g_dh_stream_arlen + 1) * 16u;
+            if (g_dh_stream_addr >= g_dh_stream_base + g_dh_stream_span)
+                g_dh_stream_addr = g_dh_stream_base;
+            if (g_dh_stream_nid > 1)
+                g_dh_stream_id = (g_dh_stream_id + 1) % g_dh_stream_nid;
+        }
+    }
+    if (dut->dh_axi_rvalid && dut->dh_axi_rready) {
+        g_dh_r_beats++;
+        const uint32_t id = dut->dh_axi_rid;
+        auto it = dh_awaiting.find(id);
+        const bool have = (it != dh_awaiting.end()) && !it->second.empty();
+        if (!have && g_dh_stream_out <= 0 && !g_suppress_unmatched_check) {
+            printf("  UNEXPECTED dh R for id=%u t=%llu -- a hot-door response with no "
+                   "outstanding burst (duplicate/phantom/misrouted)\n",
+                   id, (unsigned long long)sim_time);
+            g_dh_unmatched_resp = true;
+        }
+        if (have) {
+            auto& front = it->second.front();
+            std::array<uint8_t,16> beat{};
+            get_wide_bytes(dut->dh_axi_rdata, beat.data(), 16);
+            if (front->got.empty()) front->t_r0 = sim_time;
+            front->got.push_back(beat);
+            front->last_resp = dut->dh_axi_rresp;
+            if (dut->dh_axi_rresp == 3) front->any_decerr = true;
+            if (dut->dh_axi_rlast) {
+                front->t_rl = sim_time; front->done = true;
+                dh_done[id] = front;
+                it->second.pop_front();
+                if (it->second.empty()) dh_awaiting.erase(it);
+            }
+        }
+        if (dut->dh_axi_rlast) {
+            g_dh_rlast_hs++;
+            if (!have && g_dh_stream_out > 0) g_dh_stream_out--;
+        }
+    }
+}
+
+static void dh_sample_taps() {
+    g_dhfd.cycles++;
+    if (dut->dbg_acc_dh)    g_dhfd.acc_dh++;
+    if (dut->dbg_acc_fetch) g_dhfd.acc_fetch++;
+    if (dut->dbg_acc_lsu)   g_dhfd.acc_lsu++;
+    if (dut->dbg_acc_write) g_dhfd.acc_write++;
+    if (dut->dbg_cold_avail)   g_dhfd.cold_avail++;
+    if (dut->dbg_cold_starved) g_dhfd.cold_starved++;
+    if (dut->dh_axi_arvalid) {
+        g_dhfd.dh_ar_pres++;
+        if (!dut->dh_axi_arready) g_dhfd.dh_ar_refused++;
+    }
+    if (dut->dbg_victim_query_hit) g_dhfd.victim_query_hit++;
+}
+
+
 static void req_drive_comb() {
     const std::shared_ptr<WBurst>& aw_cur = g_aw_runahead ? aw_issuing : w_issuing;
     if (aw_cur && !aw_cur->aw_done) {
@@ -804,8 +1010,8 @@ static bool g_ev_tap_violation = false;
 
 static void tick() {
     dut->clk = 0; eval();
-    req_pump_issue();
-    mem_drive_comb(); mem_drive_rdata(); req_drive_comb();
+    req_pump_issue(); dh_pump_issue();
+    mem_drive_comb(); mem_drive_rdata(); req_drive_comb(); dh_drive_comb();
     eval();
     g_ev.cycles++;
     {
@@ -846,6 +1052,7 @@ static void tick() {
     if (dut->dbg_vb_drain_busy) g_ev.drain_busy++;
     if (dut->dbg_vb_seq_busy)   g_ev.seq_busy++;
     by_sample_taps();
+    dh_sample_taps();
     if (dut->rst) by_reset_epoch();
     {
         // Front-door sampling.  Same phase as the eviction taps above:
@@ -886,7 +1093,7 @@ static void tick() {
         prev_hdr_refused = dut->dbg_fd_ar_stall || dut->dbg_fd_aw_stall;
     }
     if (dut->m_axi_rvalid && !dut->m_axi_rready) g_r_stall_cycles++;
-    mem_latch_edge(); by_latch_edge(); req_latch_edge();
+    mem_latch_edge(); by_latch_edge(); req_latch_edge(); dh_latch_edge();
     mem_check_stability(); req_check_stability();
     dut->clk = 1; eval();
     sim_time++;
@@ -898,6 +1105,10 @@ static void reset_dut() {
     dut->s_axi_awvalid = 0; dut->s_axi_wvalid = 0; dut->s_axi_arvalid = 0;
     dut->s_axi_bready = 1; dut->s_axi_rready = 1;
     dut->f_axi_arvalid = 0; dut->f_axi_rready = 1;
+    // P6: the hot door starts quiet, with the guard's window set to the
+    // tb's 16 MB cacheable span.
+    dut->dh_axi_arvalid = 0; dut->dh_axi_rready = 1;
+    dut->dh_ram_window_lg2 = g_dh_win_lg2; dut->dh_ar_is_rom = 0;
     dut->m_axi_awready = 0; dut->m_axi_wready = 0; dut->m_axi_arready = 0;
     dut->m_axi_bvalid = 0; dut->m_axi_rvalid = 0;
     eval();
@@ -908,6 +1119,40 @@ static void reset_dut() {
     int waited = 0;
     while (dut->s_axi_awready == 0 && dut->s_axi_arready == 0 && waited < 6000) { tick(); waited++; }
 }
+
+// dh issue/wait helpers, mirroring issue_read/wait_read_done.
+static std::shared_ptr<DhBurst> dh_issue(uint64_t addr, int beats, int arburst = 1,
+                                         int id = -1, int arsize = 4) {
+    static int rr = 0;
+    auto b = std::make_shared<DhBurst>();
+    b->id = (id >= 0) ? static_cast<uint32_t>(id) : static_cast<uint32_t>((rr++) & 3);
+    b->addr = addr; b->beats = beats; b->arburst = arburst; b->arsize = arsize;
+    dh_pending_issue.push_back(b);
+    return b;
+}
+static bool dh_wait(const std::shared_ptr<DhBurst>& b, int max_cycles = 40000) {
+    for (int i = 0; i < max_cycles && !b->done; i++) tick();
+    return b->done;
+}
+static void dh_free(const std::shared_ptr<DhBurst>& b) { dh_done.erase(b->id); }
+static void dh_drain(int max_cycles = 40000) {
+    for (int i = 0; i < max_cycles; i++) {
+        if (dh_pending_issue.empty() && !dh_issuing && dh_awaiting.empty()) return;
+        tick();
+    }
+}
+// Quiesce the hot door the way fetch_door_run does: a sustained quiet
+// WINDOW, not one cycle that happens to look idle.  The active-slot +
+// pre-latch pair can still be walking a burst's beats while arready is high.
+static void dh_quiesce(int quiet_needed = 32, int max_cycles = 40000) {
+    int quiet = 0;
+    for (int i = 0; i < max_cycles && quiet < quiet_needed; i++) {
+        tick();
+        if (dut->dh_axi_arready && !dut->dh_axi_rvalid && !dut->dbg_dh_ar_have) quiet++;
+        else quiet = 0;
+    }
+}
+static bool dh_enabled() { return dut->dbg_dh_en != 0; }
 
 // ─── High-level helpers: enqueue + block-wait for completion ─────────────
 static std::array<uint8_t,16> mkbeat(uint64_t addr) {
@@ -3798,6 +4043,770 @@ static bool test_bypass_all_equivalence() {
 }
 #endif
 
+// ═══════════════════════════════════════════════════════════════════════════
+// P6: the D-side hot door (axi_dh) -- directed scenarios
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Every one of these is a no-op (reported SKIP) in the DH_EN=0 build, so
+// `make tb-l2c` stays the byte-identical OFF baseline and `make tb-l2c-dh`
+// is the only thing that exercises them.  They are registered LAST among
+// the directed tests so the rng/ddr_rng draw streams every pre-existing
+// scenario sees are unchanged in BOTH builds.
+#define DH_SKIP_IF_OFF(name) do { \
+    if (!dh_enabled()) { printf("  SKIP %s: built with DH_EN=0\n", name); return true; } \
+} while (0)
+
+// ── 1. The door works at all ─────────────────────────────────────────────
+static bool test_dh_read_miss_then_hit() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_read_miss_then_hit");
+    // NO `reset_dut` call here, deliberately.  A mid-suite reset DROPS
+    // every still-dirty L2 line, which desynchronises the tb's golden model
+    // from memory for every address any earlier test wrote; the randomized
+    // scoreboard's final-verify pass then reports mismatches hundreds of
+    // thousands of cycles later, attributed to the wrong change.  That is
+    // exactly what these scenarios did on their first run -- one live
+    // mismatch plus five final-verify ones, every address one of THESE
+    // tests had written.  test_reset_walk's golden/backing resync comment
+    // is the established rule.  None of these needs a fresh cache.
+    const uint64_t a = 0x0006'0000ull;
+    const uint64_t fc0 = dut->dh_guard_fault_count;
+
+    auto b0 = dh_issue(a, /*beats=*/1);
+    CHECK("dh cold read completes", dh_wait(b0));
+    if (b0->done) {
+        CHECK("dh cold read is OKAY", b0->last_resp == 0);
+        CHECK("dh cold read returned one beat", b0->got.size() == 1);
+        CHECK("dh cold read data is byte-exact",
+              b0->got.size() == 1 && std::memcmp(b0->got[0].data(), &golden[a], 16) == 0);
+        dh_free(b0);
+    }
+    // Same line again: must now be a tag hit, and must still be exact.
+    auto b1 = dh_issue(a, 1);
+    CHECK("dh warm read completes", dh_wait(b1));
+    if (b1->done) {
+        CHECK("dh warm read is OKAY", b1->last_resp == 0);
+        CHECK("dh warm read data is byte-exact",
+              std::memcmp(b1->got[0].data(), &golden[a], 16) == 0);
+        dh_free(b1);
+    }
+    // An in-window address must never be charged to the guard.
+    CHECK("in-window hot reads do not trip the window guard",
+          dut->dh_guard_fault_count == fc0);
+    // ...and the LSU door must be unaffected by all of it.
+    CHECK("LSU door still serves the same line", do_read_check(a, "dh_then_lsu"));
+    dh_drain();
+    return ok;
+}
+
+// ── 2. INCR and WRAP bursts, and an illegal WRAP ─────────────────────────
+//
+// WRAP is what P6 is for on this door: a 64 B line with 16 B sectors wants
+// the DEMANDED SECTOR FIRST and the rest of the line behind it, as ONE
+// burst.  The beat order is therefore the whole point, and it is checked
+// beat by beat against a host-side model written from the AXI definition
+// (dh_beat_addr), not transcribed from the RTL's mask.
+static bool test_dh_incr_and_wrap_bursts() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_incr_and_wrap_bursts");
+    // NO `reset_dut` call here, deliberately.  A mid-suite reset DROPS
+    // every still-dirty L2 line, which desynchronises the tb's golden model
+    // from memory for every address any earlier test wrote; the randomized
+    // scoreboard's final-verify pass then reports mismatches hundreds of
+    // thousands of cycles later, attributed to the wrong change.  That is
+    // exactly what these scenarios did on their first run -- one live
+    // mismatch plus five final-verify ones, every address one of THESE
+    // tests had written.  test_reset_walk's golden/backing resync comment
+    // is the established rule.  None of these needs a fresh cache.
+    const uint64_t line = 0x0006'4000ull;   // 64 B aligned
+
+    struct Case { const char* what; uint64_t addr; int beats; int burst; };
+    const Case cases[] = {
+        { "INCR 4x16B from the line base",      line,      4, 1 },
+        { "WRAP 4x16B from the line base",      line,      4, 2 },
+        { "WRAP 4x16B from quadrant 2 (demanded-sector-first)", line + 32, 4, 2 },
+        { "WRAP 4x16B from quadrant 3",         line + 48, 4, 2 },
+        { "WRAP 2x16B from quadrant 1",         line + 16, 2, 2 },
+        { "INCR 1x16B",                          line + 16, 1, 1 },
+    };
+    for (const Case& c : cases) {
+        auto b = dh_issue(c.addr, c.beats, c.burst);
+        const bool done = dh_wait(b);
+        CHECK("dh burst completes", done);
+        if (!done) { printf("  dh burst TIMEOUT: %s\n", c.what); ok = false; continue; }
+        CHECK("dh burst is OKAY", b->last_resp == 0);
+        bool shape = (static_cast<int>(b->got.size()) == c.beats);
+        CHECK("dh burst returned exactly arlen+1 beats", shape);
+        if (shape) {
+            for (int i = 0; i < c.beats; i++) {
+                const uint64_t exp_addr = dh_beat_addr(*b, i);
+                const bool m = std::memcmp(b->got[i].data(), &golden[exp_addr], 16) == 0;
+                if (!m)
+                    printf("  dh %s: beat %d expected addr 0x%llx got=%02x%02x.. exp=%02x%02x..\n",
+                           c.what, i, (unsigned long long)exp_addr,
+                           b->got[i][0], b->got[i][1], golden[exp_addr], golden[exp_addr+1]);
+                CHECK("dh burst beat lands at the modelled (wrapped) address", m);
+            }
+        }
+        dh_free(b);
+    }
+    // ANTI-VACUITY: a WRAP from quadrant 2 must NOT return the same beat
+    // order an INCR would.  If the RTL silently ignored ARBURST and walked
+    // linearly, every check above would still pass on the line base cases
+    // and the q2 case would return q2,q3,q(+4),q(+5) -- which is a
+    // DIFFERENT LINE's data.  Assert the first and third beats explicitly.
+    {
+        auto b = dh_issue(line + 32, 4, 2);
+        if (dh_wait(b) && b->got.size() == 4) {
+            CHECK("WRAP beat 0 is the demanded sector",
+                  std::memcmp(b->got[0].data(), &golden[line + 32], 16) == 0);
+            CHECK("WRAP beat 2 has wrapped back to the line base (an INCR would "
+                  "have left the line)",
+                  std::memcmp(b->got[2].data(), &golden[line], 16) == 0);
+            dh_free(b);
+        } else { CHECK("WRAP anti-vacuity burst completes", false); }
+    }
+    // An illegal WRAP length (3 beats: arlen+1 not a power of two) is a
+    // protocol error and must be answered SLVERR, not given a nonsense
+    // wrap mask.
+    {
+        auto b = dh_issue(line, 3, 2);
+        const bool done = dh_wait(b);
+        CHECK("illegal-length WRAP is answered (not dropped)", done);
+        if (done) {
+            CHECK("illegal-length WRAP is SLVERR", b->last_resp == 2);
+            dh_free(b);
+        }
+    }
+    dh_drain();
+    return ok;
+}
+
+// ── 3. The window guard ──────────────────────────────────────────────────
+//
+// This is correction #1 of the design doc, and it is the one place the
+// split can be WRONG rather than merely slow.  The hot door has no address
+// decode and the DDR side serves (addr mod 64 MB); the DTLB reports
+// WRITETHROUGH for EVERY address with TC.E=0 and no TTR match, so "the MMU
+// says cacheable, therefore it is memory" is false at boot.  That is
+// exactly how the I side once executed NuBus-slot filler.
+static bool test_dh_window_guard_refuses_non_memory() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_window_guard_refuses_non_memory");
+    // NO `reset_dut` call here, deliberately.  A mid-suite reset DROPS
+    // every still-dirty L2 line, which desynchronises the tb's golden model
+    // from memory for every address any earlier test wrote; the randomized
+    // scoreboard's final-verify pass then reports mismatches hundreds of
+    // thousands of cycles later, attributed to the wrong change.  That is
+    // exactly what these scenarios did on their first run -- one live
+    // mismatch plus five final-verify ones, every address one of THESE
+    // tests had written.  test_reset_walk's golden/backing resync comment
+    // is the established rule.  None of these needs a fresh cache.
+    // BYPASS_BASE is outside the tb's 16 MB RAM window (dh_ram_window_lg2 =
+    // 24) -- a "cacheable-but-not-memory" address in the guard's terms.
+    const uint64_t bad = BYPASS_BASE + 0x40;
+    const uint64_t fc0 = dut->dh_guard_fault_count;
+    const DhFdStats s0 = g_dhfd;
+
+    auto b = dh_issue(bad, /*beats=*/4);
+    const bool done = dh_wait(b, 4000);
+    CHECK("out-of-window hot read is ANSWERED (a dropped AR would hang the CPU)", done);
+    if (done) {
+        CHECK("out-of-window hot read is DECERR", b->last_resp == 3);
+        CHECK("out-of-window hot read returned arlen+1 beats with RLAST on the last",
+              b->got.size() == 4);
+        dh_free(b);
+    }
+    const DhFdStats d = dhfd_diff(g_dhfd, s0);
+    CHECK("the guard counted the fault (this is OFF_DH_GUARD_HITS)",
+          dut->dh_guard_fault_count == fc0 + 1);
+    CHECK("the guard latched the faulting address",
+          dut->dh_guard_fault_sticky != 0 &&
+          (dut->dh_guard_fault_addr == static_cast<uint32_t>(bad) || fc0 != 0));
+    // THE LOAD-BEARING CHECK: the request never reached l2c's front door at
+    // all, so no tag was allocated, no MSHR was spent, and no DDR read was
+    // issued at (bad mod DRAM size).
+    CHECK("no hot-door accept happened -- the request never reached l2c",
+          d.acc_dh == 0);
+
+    // The door must still work afterwards: the guard holds ONE faulting
+    // request at a time and drops arready while it is outstanding, so a
+    // wedge here would be silent.
+    const uint64_t good = 0x0006'8000ull;
+    auto b2 = dh_issue(good, 1);
+    CHECK("the hot door still serves an in-window read after a fault", dh_wait(b2));
+    if (b2->done) {
+        CHECK("post-fault read is OKAY", b2->last_resp == 0);
+        CHECK("post-fault read is byte-exact",
+              std::memcmp(b2->got[0].data(), &golden[good], 16) == 0);
+        dh_free(b2);
+    }
+    dh_drain();
+    return ok;
+}
+
+// ── 4/5/6. Arbitration: hot > cold, hot-internal fairness, cold's bound ──
+//
+// These count PER-SOURCE ACCEPTS from tb_l2c.v's taps rather than inferring
+// arbitration from a cycle total, because the two conclusions a cycle total
+// supports -- "hot > cold held" and "cold happened to offer nothing" -- are
+// the interesting ones to tell apart.
+struct ColdStream {
+    std::vector<uint32_t> ids;
+    uint64_t base = 0;
+    int next = 0;
+    int span_lines = 64;
+};
+// Keep `window` s_axi reads in flight against a warmed region, so the cold
+// path is genuinely offering a header nearly every cycle.
+static void cold_stream_drain(int max_cycles = 60000) {
+    for (int i = 0; i < max_cycles; i++) {
+        if (!r_issuing && r_pending_issue.empty() && r_awaiting.empty()) break;
+        tick();
+    }
+    for (auto& kv : r_done) free_ids.insert(kv.first);
+    r_done.clear();
+}
+static void cold_stream_pump(ColdStream& cs, int window) {
+    for (auto it = r_done.begin(); it != r_done.end(); ) {
+        free_ids.insert(it->first);
+        it = r_done.erase(it);
+    }
+    while (static_cast<int>(r_awaiting.size() + r_pending_issue.size()) < window &&
+           free_ids.size() > 4) {
+        const uint64_t a = cs.base + static_cast<uint64_t>(cs.next % cs.span_lines) * LINE_BYTES;
+        cs.next++;
+        issue_read(a);
+    }
+}
+
+static bool test_dh_hot_beats_cold_at_the_front_door() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_hot_beats_cold_at_the_front_door");
+    // NO `reset_dut` call here, deliberately.  A mid-suite reset DROPS
+    // every still-dirty L2 line, which desynchronises the tb's golden model
+    // from memory for every address any earlier test wrote; the randomized
+    // scoreboard's final-verify pass then reports mismatches hundreds of
+    // thousands of cycles later, attributed to the wrong change.  That is
+    // exactly what these scenarios did on their first run -- one live
+    // mismatch plus five final-verify ones, every address one of THESE
+    // tests had written.  test_reset_walk's golden/backing resync comment
+    // is the established rule.  None of these needs a fresh cache.
+    const bool old_always = g_perf_always_ready; const bool old_force = g_mem_force_ready;
+    const int old_lat = g_ddr_latency_base, old_jit = g_ddr_latency_jitter, old_gap = g_ddr_beat_gap_max;
+    g_perf_always_ready = true; g_mem_force_ready = true;
+    g_ddr_latency_base = 40; g_ddr_latency_jitter = 0; g_ddr_beat_gap_max = 0;
+
+    // Warm a 4 KiB region through the hot door and a disjoint one through
+    // the cold door, so the measured window is hits on both sides and the
+    // door -- not a DRAM round trip -- is what is being observed.
+    const uint64_t hot_base  = 0x000A'0000ull;
+    const uint64_t cold_base = 0x000B'0000ull;
+    for (uint64_t a = hot_base; a < hot_base + 4096; a += LINE_BYTES) {
+        auto b = dh_issue(a, 4); if (!dh_wait(b)) { CHECK("hot warm-up", false); break; } dh_free(b);
+    }
+    ColdStream cs; cs.base = cold_base; cs.span_lines = 64;
+    for (int i = 0; i < 64; i++) {
+        if (!do_read_check(cold_base + static_cast<uint64_t>(i) * LINE_BYTES, "cold warm")) {
+            CHECK("cold warm-up", false); break;
+        }
+    }
+    dh_quiesce();
+
+    // Measured window: both sources saturated.
+    g_dh_stream_base = hot_base; g_dh_stream_addr = hot_base; g_dh_stream_span = 4096;
+    g_dh_stream_arlen = 3; g_dh_stream_nid = 4; g_dh_stream_id = 0; g_dh_stream_burst = 1;
+    const DhFdStats s0 = g_dhfd;
+    g_dh_stream = true;
+    for (int i = 0; i < 3000; i++) { cold_stream_pump(cs, 8); tick(); }
+    g_dh_stream = false;
+    const DhFdStats d = dhfd_diff(g_dhfd, s0);
+    for (int i = 0; i < 4000 && (!r_awaiting.empty() || !dh_awaiting.empty()); i++) tick();
+
+    const uint64_t hot  = d.acc_dh;
+    const uint64_t cold = d.acc_lsu + d.acc_write;
+    printf("  dh arbitration: %llu cyc, accepts hot(dh)=%llu fetch=%llu cold(lsu)=%llu cold(w)=%llu; "
+           "cold offered %llu cyc, cold-starved flag set %llu cyc\n",
+           (unsigned long long)d.cycles, (unsigned long long)d.acc_dh,
+           (unsigned long long)d.acc_fetch, (unsigned long long)d.acc_lsu,
+           (unsigned long long)d.acc_write, (unsigned long long)d.cold_avail,
+           (unsigned long long)d.cold_starved);
+
+    // ANTI-VACUITY FIRST: the cold path really was contending.  Without
+    // this the priority check below passes on an idle cold port.
+    CHECK("the cold path was offering a beat for most of the window",
+          d.cold_avail > d.cycles / 2);
+    CHECK("the hot door took the large majority of the front door",
+          hot > 0 && hot > 4 * cold);
+    // ...and the cold path still made forward progress, which is the whole
+    // reason DH_COLD_FAIR_N exists.
+    CHECK("the cold path was not starved to a standstill", cold > 0);
+    if (dut->dbg_dh_cold_fair_n != 0)
+        CHECK("the cold-fairness bound actually engaged (it is not dead logic)",
+              d.cold_starved > 0);
+
+    g_perf_always_ready = old_always; g_mem_force_ready = old_force;
+    g_ddr_latency_base = old_lat; g_ddr_latency_jitter = old_jit; g_ddr_beat_gap_max = old_gap;
+    // DRAIN the cold stream; do not discard it.  Returning an id to the
+    // free pool while its read is still outstanding lets a later scenario
+    // reuse it and silently inherit the older burst's beats -- which is how
+    // this test first showed up as five final-verify mismatches in the
+    // randomized scoreboard 600 000 cycles later.
+    cold_stream_drain();
+    CHECK("the cold stream drained completely before the test returned",
+          r_awaiting.empty() && !r_issuing && r_pending_issue.empty());
+    dh_drain();
+    return ok;
+}
+
+static bool test_dh_and_fetch_share_the_hot_class() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_and_fetch_share_the_hot_class");
+    // NO `reset_dut` call here, deliberately.  A mid-suite reset DROPS
+    // every still-dirty L2 line, which desynchronises the tb's golden model
+    // from memory for every address any earlier test wrote; the randomized
+    // scoreboard's final-verify pass then reports mismatches hundreds of
+    // thousands of cycles later, attributed to the wrong change.  That is
+    // exactly what these scenarios did on their first run -- one live
+    // mismatch plus five final-verify ones, every address one of THESE
+    // tests had written.  test_reset_walk's golden/backing resync comment
+    // is the established rule.  None of these needs a fresh cache.
+    const bool old_always = g_perf_always_ready; const bool old_force = g_mem_force_ready;
+    const int old_lat = g_ddr_latency_base, old_jit = g_ddr_latency_jitter, old_gap = g_ddr_beat_gap_max;
+    g_perf_always_ready = true; g_mem_force_ready = true;
+    g_ddr_latency_base = 40; g_ddr_latency_jitter = 0; g_ddr_beat_gap_max = 0;
+
+    // Warm both hot regions (the fetch driver's default base is 0x0008_0000).
+    const uint64_t hot_base = 0x000C'0000ull;
+    for (uint64_t a = hot_base; a < hot_base + 4096; a += LINE_BYTES) {
+        auto b = dh_issue(a, 4); if (!dh_wait(b)) { CHECK("hot warm-up", false); break; } dh_free(b);
+    }
+    g_fetch_arlen = 127; g_fetch_stride = 0; g_fetch_nid = 1;
+    g_fetch_addr = g_fetch_base; g_fetch_id = 0; g_fetch_rlast_hs = 0;
+    g_fetch_stream = true;
+    for (int i = 0; i < 40000 && g_fetch_rlast_hs == 0; i++) tick();
+    g_fetch_stream = false;
+    dh_quiesce();
+
+    g_dh_stream_base = hot_base; g_dh_stream_addr = hot_base; g_dh_stream_span = 4096;
+    g_dh_stream_arlen = 1; g_dh_stream_nid = 4; g_dh_stream_id = 0; g_dh_stream_burst = 1;
+    g_fetch_arlen = 1; g_fetch_stride = 64; g_fetch_nid = 4;
+    g_fetch_addr = g_fetch_base; g_fetch_id = 0;
+    const DhFdStats s0 = g_dhfd;
+    g_dh_stream = true; g_fetch_stream = true;
+    for (int i = 0; i < 3000; i++) {
+        tick();
+        if (g_fetch_addr >= g_fetch_base + 4096) g_fetch_addr = g_fetch_base;
+    }
+    g_dh_stream = false; g_fetch_stream = false;
+    const DhFdStats d = dhfd_diff(g_dhfd, s0);
+    for (int i = 0; i < 20000 && (dut->f_axi_rvalid || !dh_awaiting.empty()); i++) tick();
+
+    const uint64_t hot = d.acc_dh + d.acc_fetch;
+    printf("  dh vs fetch: %llu cyc, dh accepts %llu, fetch accepts %llu (hot total %llu)\n",
+           (unsigned long long)d.cycles, (unsigned long long)d.acc_dh,
+           (unsigned long long)d.acc_fetch, (unsigned long long)hot);
+    CHECK("both hot doors were served", d.acc_dh > 0 && d.acc_fetch > 0);
+    // hot_favor alternates, so neither door may fall below a quarter of the
+    // hot class's accepts -- a much weaker bound than 50/50, chosen so a
+    // legitimate difference in burst length cannot fail it.
+    CHECK("the D hot door is not starved by the I hot door", 4 * d.acc_dh > hot);
+    CHECK("the I hot door is not starved by the D hot door", 4 * d.acc_fetch > hot);
+
+    g_perf_always_ready = old_always; g_mem_force_ready = old_force;
+    g_ddr_latency_base = old_lat; g_ddr_latency_jitter = old_jit; g_ddr_beat_gap_max = old_gap;
+    g_fetch_arlen = 127; g_fetch_stride = 0; g_fetch_nid = 1;
+    g_fetch_addr = g_fetch_base; g_fetch_id = 0;
+    dh_drain();
+    // NO `reset_dut` call here, deliberately.  A mid-suite reset DROPS
+    // every still-dirty L2 line, which desynchronises the tb's golden model
+    // from memory for every address any earlier test wrote; the randomized
+    // scoreboard's final-verify pass then reports mismatches hundreds of
+    // thousands of cycles later, attributed to the wrong change.  That is
+    // exactly what these scenarios did on their first run -- one live
+    // mismatch plus five final-verify ones, every address one of THESE
+    // tests had written.  test_reset_walk's golden/backing resync comment
+    // is the established rule.  None of these needs a fresh cache.
+    return ok;
+}
+
+// ── 7. COHERENCE BETWEEN DOORS: a dirty line must never read as DRAM ─────
+//
+// ⚠ THIS IS THE ORDERING TEST, and it is written the way the
+// `mmu-config-latch-vs-live` family says to write one: every instance of
+// that family produced a clean-looking result with no fault, so the
+// question is not "does it look right" but "what exactly would fail".
+//
+// The state under test: a line that is DIRTY IN L2, has been EVICTED into
+// l2c_victim, and whose writeback has NOT yet reached DRAM.  The tag array
+// no longer holds it, so a read of it MISSES and would allocate an MSHR and
+// fill from DRAM -- returning the PRE-WRITE bytes.  `victim_query_hit` at
+// the resolve stage is the only thing that stops that, and it is shared
+// front-door machinery, so the question this test answers is whether it
+// covers a HOT-DOOR request as well as an LSU one.
+//
+// It is measured, not argued: the test requires dbg_victim_query_hit to
+// have FIRED during the read (otherwise it never reached the state it
+// claims to test) and requires the returned bytes to be the dirty ones.
+static bool test_dh_reads_dirty_line_held_in_victim_buffer() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_reads_dirty_line_held_in_victim_buffer");
+    // NO `reset_dut` call here -- see the note in the first dh scenario.
+    const int old_lat = g_ddr_latency_base, old_jit = g_ddr_latency_jitter;
+    g_ddr_latency_base = 200; g_ddr_latency_jitter = 0;
+
+    const uint64_t set_stride = 4096ull * LINE_BYTES;
+    const uint64_t base = 0x000D'0000ull;
+    constexpr int WAYS = 8;
+
+    // Every way of one set, dirty, with DRAM still holding the pre-write
+    // bytes: a 16 B full-strobe write installs its quadrant with no fill at
+    // all, so nothing has been read from or written to DRAM for these lines.
+    for (int w = 0; w < WAYS; w++)
+        CHECK("prime a dirty way", do_write_apply(base + static_cast<uint64_t>(w) * set_stride,
+                                                  static_cast<uint8_t>(0x91 + w), "dh_vb_prime"));
+    bool differs = false;
+    for (int w = 0; w < WAYS && !differs; w++) {
+        const uint64_t a = base + static_cast<uint64_t>(w) * set_stride;
+        differs = std::memcmp(&golden[a], &backing[a], 16) != 0;
+    }
+    CHECK("ANTI-VACUITY: the dirty bytes differ from what DRAM holds", differs);
+
+    // ⚠ PIN THE WRITEBACK.  The first version of this test let the victim
+    // drain naturally and it did NOT discriminate: the tb's memory model
+    // applies a write to `backing` as soon as the burst lands, so by the
+    // time a 200-cycle fill returned, DRAM already held the dirty bytes and
+    // a broken interlock still produced the right answer.  That is the same
+    // false-negative shape as the victim_buffer_hazard test's own withdrawn
+    // "Critical-2 negative control" note.  Holding m_axi_awready at 0 makes
+    // the writeback physically unable to start, so DRAM provably still holds
+    // the PRE-WRITE bytes for as long as the test wants.
+    g_mem_block_awready = true;
+    const uint64_t trigger = base + static_cast<uint64_t>(WAYS) * set_stride;
+    // The trigger is itself a fully-strobed 16 B write, so it installs with
+    // no fill and its B returns without DRAM -- it completes even with the
+    // write channel pinned shut.
+    uint32_t tid = issue_write_full(trigger, 0x99);
+    CHECK("eviction trigger completes with the DDR write channel pinned",
+          wait_write_done(tid, 20000));
+    if (w_done.count(tid)) {
+        for (int b = 0; b < 16; b++) golden[trigger + b] = static_cast<uint8_t>((0x99 + b) & 0xFF);
+        touched[trigger] = true;
+        free_write(tid);
+    }
+    CHECK("the victim buffer is holding the evicted dirty line",
+          (dut->dbg_vb_occ & 0x1F) > 0);
+
+    // Now read every way through the HOT door.  Whichever one PLRU evicted
+    // exists ONLY in the victim buffer: the tag array no longer has it, so
+    // the read misses, and the fill it would issue reads DRAM -- which still
+    // holds the pre-write bytes.  victim_query_hit at the resolve stage is
+    // the only thing standing between that and stale data.
+    const DhFdStats s0 = g_dhfd;
+    std::vector<std::shared_ptr<DhBurst>> bs;
+    for (int w = 0; w < WAYS; w++)
+        bs.push_back(dh_issue(base + static_cast<uint64_t>(w) * set_stride, 1,
+                              /*INCR*/1, /*id=*/w & 3));
+    // Run with the write channel still pinned.  Correct RTL: the read of the
+    // evicted line CANNOT finish here.  Broken RTL: it finishes, with DRAM's
+    // stale bytes.
+    int unfinished = 0;
+    for (int i = 0; i < 4000; i++) tick();
+    for (auto& b : bs) if (!b->done) unfinished++;
+    const DhFdStats dpin = dhfd_diff(g_dhfd, s0);
+    printf("  dh_vb: with the DDR write channel pinned, %d of %d hot reads are still "
+           "held; victim interlock asserted for %llu cycles\n",
+           unfinished, WAYS, (unsigned long long)dpin.victim_query_hit);
+    // ANTI-VACUITY: if nothing was held, the test never reached the state it
+    // exists to test and a PASS would mean nothing.
+    CHECK("ANTI-VACUITY: the victim-buffer interlock engaged for a hot-door read",
+          dpin.victim_query_hit > 0);
+    CHECK("a hot-door read of a line whose dirty copy cannot yet reach DRAM is HELD, "
+          "not answered from DRAM", unfinished > 0);
+    // Any read that DID finish under the pin was a tag hit and must still be
+    // exact -- checked below with the rest.
+
+    // Release the write channel; every read must now complete with the DIRTY
+    // bytes.
+    g_mem_block_awready = false;
+    for (size_t i = 0; i < bs.size(); i++) {
+        const bool done = dh_wait(bs[i], 60000);
+        CHECK("hot read of a possibly-evicted dirty line completes", done);
+        if (!done) { ok = false; break; }
+        const uint64_t a = bs[i]->addr;
+        const bool m = std::memcmp(bs[i]->got[0].data(), &golden[a], 16) == 0;
+        if (!m)
+            printf("  dh_vb: STALE DATA @0x%llx got=%02x%02x%02x%02x exp=%02x%02x%02x%02x "
+                   "(DRAM held %02x%02x%02x%02x) -- a hot-door read overtook a dirty line "
+                   "still in the writeback buffer\n",
+                   (unsigned long long)a,
+                   bs[i]->got[0][0], bs[i]->got[0][1], bs[i]->got[0][2], bs[i]->got[0][3],
+                   golden[a], golden[a+1], golden[a+2], golden[a+3],
+                   backing[a], backing[a+1], backing[a+2], backing[a+3]);
+        CHECK("hot-door read of a dirty line returns the DIRTY bytes, not DRAM's", m);
+        dh_free(bs[i]);
+    }
+    // And the LSU door must agree, line for line.
+    for (int w = 0; w < WAYS; w++)
+        CHECK("cold door agrees with the hot door",
+              do_read_check(base + static_cast<uint64_t>(w) * set_stride, "dh_vb_cold"));
+    CHECK("cold door reads the eviction trigger", do_read_check(trigger, "dh_vb_cold_trig"));
+
+    g_ddr_latency_base = old_lat; g_ddr_latency_jitter = old_jit;
+    dh_drain();
+    return ok;
+}
+
+// ── 8. CROSS-PATH ORDERING: hot reads against cold writes, same set ──────
+//
+// The other half of the ordering question, and the one that is about the
+// LOOKUP PIPELINE rather than the victim buffer.  l2c resolves two cycles
+// after its array read, so a request cannot see the tag write of anything
+// still inside the pipeline; `set_haz_c` refuses to overlap two requests in
+// the same SET unless they are the same LINE and both reads.
+//
+// The split puts a SECOND READ SOURCE into that pipeline, and the hot door
+// now PRE-EMPTS the cold one -- so hot reads and cold writes to the same set
+// interleave in a pattern that never occurred before P6.  If set_haz_c did
+// not cover the hot source, a hot read leader that misses and evicts way W
+// would leave a follower resolving against a stale array view: it would
+// allocate a second MSHR onto a way the leader's fill already owns, or
+// reinstate an evicted tag over a placeholder.  Both are silent corruption,
+// which is why this is a data test and not a counter test.
+static bool test_dh_same_set_vs_cold_writes() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_same_set_vs_cold_writes");
+    // NO `reset_dut` call here, deliberately.  A mid-suite reset DROPS
+    // every still-dirty L2 line, which desynchronises the tb's golden model
+    // from memory for every address any earlier test wrote; the randomized
+    // scoreboard's final-verify pass then reports mismatches hundreds of
+    // thousands of cycles later, attributed to the wrong change.  That is
+    // exactly what these scenarios did on their first run -- one live
+    // mismatch plus five final-verify ones, every address one of THESE
+    // tests had written.  test_reset_walk's golden/backing resync comment
+    // is the established rule.  None of these needs a fresh cache.
+    const uint64_t set_stride = 4096ull * LINE_BYTES;
+    const uint64_t base = 0x000E'0000ull;
+    const int RESIDENT = 8;    // == WAYS, so every fresh tag evicts
+    const int FRESH    = 32;
+    const int ROUNDS   = 24;
+
+    for (int t = 0; t < RESIDENT; t++)
+        CHECK("prime partially-valid same-set way",
+              do_write_apply(base + static_cast<uint64_t>(t) * set_stride,
+                             static_cast<uint8_t>(0x30 + t), "dh_sset_prime"));
+
+    const FdStats f0 = g_fd;
+    const DhFdStats s0 = g_dhfd;
+    for (int r = 0; r < ROUNDS && ok; r++) {
+        std::vector<std::shared_ptr<DhBurst>> hot;
+        std::vector<uint64_t> hot_a;
+        std::vector<uint32_t> cold_id;
+        std::vector<uint64_t> cold_a;
+        std::vector<uint8_t>  cold_seed;
+        for (int k = 0; k < 4; k++) {
+            const int n = r * 4 + k;
+            // A fresh tag (full miss, must evict) and a resident tag whose
+            // quadrant 1 is invalid (tag match, fills INTO that way) --
+            // the pair the interlock exists for -- both through the HOT door.
+            const uint64_t fresh = base +
+                static_cast<uint64_t>(RESIDENT + (n % FRESH)) * set_stride + 16;
+            const uint64_t resid = base +
+                static_cast<uint64_t>(n % RESIDENT) * set_stride + 16;
+            hot_a.push_back(fresh); hot.push_back(dh_issue(fresh, 1, 1, n & 3));
+            hot_a.push_back(resid); hot.push_back(dh_issue(resid, 1, 1, (n + 1) & 3));
+            // ...and a COLD WRITE into the same set, concurrently.  This is
+            // the cross-path interleave the split creates: a writeback or a
+            // DMA store landing while the hot door streams refills.
+            const uint64_t wa = base +
+                static_cast<uint64_t>(n % RESIDENT) * set_stride + 32;
+            const uint8_t seed = static_cast<uint8_t>(0xA0 + (n & 0x1F));
+            cold_a.push_back(wa); cold_seed.push_back(seed);
+            cold_id.push_back(issue_write_full(wa, seed));
+        }
+        for (size_t i = 0; i < cold_id.size(); i++) {
+            const bool done = wait_write_done(cold_id[i], 60000);
+            CHECK("cold same-set write completes", done);
+            if (!done) { ok = false; break; }
+            CHECK("cold same-set write is OKAY", w_done[cold_id[i]]->resp_ok);
+            for (int b = 0; b < 16; b++)
+                golden[cold_a[i] + b] = static_cast<uint8_t>((cold_seed[i] + b) & 0xFF);
+            touched[cold_a[i]] = true;
+            free_write(cold_id[i]);
+        }
+        for (size_t i = 0; i < hot.size(); i++) {
+            const bool done = dh_wait(hot[i], 60000);
+            CHECK("hot same-set read completes", done);
+            if (!done) { ok = false; break; }
+            const bool m = std::memcmp(hot[i]->got[0].data(), &golden[hot_a[i]], 16) == 0;
+            if (!m)
+                printf("  dh_sset: DATA MISMATCH @0x%llx got=%02x%02x.. exp=%02x%02x..\n",
+                       (unsigned long long)hot_a[i], hot[i]->got[0][0], hot[i]->got[0][1],
+                       golden[hot_a[i]], golden[hot_a[i] + 1]);
+            CHECK("hot same-set read returns correct data", m);
+            dh_free(hot[i]);
+        }
+    }
+    const FdStats fd = fd_diff(g_fd, f0);
+    const DhFdStats d = dhfd_diff(g_dhfd, s0);
+    printf("  dh_sset: %llu hot accepts, %llu cold write accepts, "
+           "%llu set-hazard refusals, %llu skew re-reads\n",
+           (unsigned long long)d.acc_dh, (unsigned long long)d.acc_write,
+           (unsigned long long)fd.sethaz, (unsigned long long)fd.s2_reread);
+    // ANTI-VACUITY: the array read-after-write interlock must actually have
+    // refused accepts during this window, or the traffic never overlapped
+    // and the test is not testing the interlock.
+    CHECK("ANTI-VACUITY: the array RAW interlock engaged during the "
+          "hot/cold same-set interleave", fd.sethaz > 0);
+    CHECK("ANTI-VACUITY: both sources really did use the door",
+          d.acc_dh > 0 && d.acc_write > 0);
+    // Every primed quadrant must survive: a double-allocation marks the
+    // loser's quadrants valid over the winner's data without writing them.
+    for (int t = 0; t < RESIDENT; t++)
+        CHECK("primed quadrant survives hot/cold same-set pressure",
+              do_read_check(base + static_cast<uint64_t>(t) * set_stride, "dh_sset_q0"));
+    dh_drain();
+    return ok;
+}
+
+// ── 9. The two doors' AXI ID namespaces are independent ─────────────────
+//
+// axi_dh and axi_d are separately-numbered masters, so hot ID 0 and LSU
+// ID 0 are different transactions.  Before P6 the MSHR's id bookkeeping
+// carried ONE source bit; it now carries two, and if the third encoding
+// aliased onto LSU (the SRC_BITS misconfiguration the elaboration guard
+// exists for), a hot op and an LSU op sharing a numeric id would either
+// stall each other indefinitely (pipe_id_haz_c / idq_busy) or -- worse --
+// have their responses routed to the wrong bus.
+static bool test_dh_id_namespace_independent_of_lsu() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_id_namespace_independent_of_lsu");
+    // NO `reset_dut` call here, deliberately.  A mid-suite reset DROPS
+    // every still-dirty L2 line, which desynchronises the tb's golden model
+    // from memory for every address any earlier test wrote; the randomized
+    // scoreboard's final-verify pass then reports mismatches hundreds of
+    // thousands of cycles later, attributed to the wrong change.  That is
+    // exactly what these scenarios did on their first run -- one live
+    // mismatch plus five final-verify ones, every address one of THESE
+    // tests had written.  test_reset_walk's golden/backing resync comment
+    // is the established rule.  None of these needs a fresh cache.
+    static constexpr uint64_t lsu_addrs[] = { 0x0000'90a0ull, 0x0000'01c0ull,
+                                              0x0000'0230ull, 0x0000'0300ull };
+    const uint64_t hot_base = 0x000F'0000ull;
+
+    for (int iter = 0; iter < 400 && ok; iter++) {
+        const uint64_t la = lsu_addrs[iter & 3];
+        const uint64_t ha = hot_base + static_cast<uint64_t>(iter % 64) * LINE_BYTES;
+        // Same NUMERIC id (0) on both masters, live at the same time.
+        issue_read_explicit_id(la, 0);
+        auto hb = dh_issue(ha, 1, 1, /*id=*/0);
+        const uint64_t start = sim_time;
+        while ((!r_done.count(0) || !hb->done) && sim_time - start < 20000) tick();
+        CHECK("LSU id0 completes while hot id0 is live", r_done.count(0) != 0);
+        CHECK("hot id0 completes while LSU id0 is live", hb->done);
+        if (!r_done.count(0) || !hb->done) { ok = false; break; }
+        CHECK("LSU id0 kept its own line",
+              std::memcmp(r_done[0]->got[0].data(), &golden[la], 16) == 0);
+        CHECK("hot id0 kept its own line",
+              std::memcmp(hb->got[0].data(), &golden[ha], 16) == 0);
+        r_done.erase(0);
+        dh_free(hb);
+    }
+    dh_drain();
+    return ok;
+}
+
+// ── 10. The P6 falsifier, in the form this tb can actually run ───────────
+//
+// The design doc's falsifier is "`memcpy-64k` bit-identical with N_MSHR=1",
+// and its subject is THE CROSSBAR HOP: if adding axi_dh does not remove
+// (hops x misses) cycles, the crossbar was never on the critical path and
+// the port is purely an enabler for the L1D MSHR file.
+//
+// tb_l2c CANNOT RUN THAT FALSIFIER, and saying so is more useful than
+// running a lookalike: this harness drives l2c's s_axi DIRECTLY, with no
+// axi_xbar in the chain at all, so the hop the falsifier is about does not
+// exist here in either arm.  What IS measurable here is the DOOR-LOCAL
+// half of the claim, and it is the half that could go wrong in this repo:
+// a single-outstanding read stream must cost the SAME through the hot door
+// as through the cold one.  If the hot door were slower, the split would be
+// a latency REGRESSION at the fabric before the crossbar hop ever paid for
+// it; if it were faster, the doors are not the equivalent front ends this
+// design claims they are.
+//
+// The number is printed either way, because the honest output of a
+// falsifier is a measurement.
+static bool test_dh_single_outstanding_parity() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_single_outstanding_parity");
+    // NO `reset_dut` call here, deliberately.  A mid-suite reset DROPS
+    // every still-dirty L2 line, which desynchronises the tb's golden model
+    // from memory for every address any earlier test wrote; the randomized
+    // scoreboard's final-verify pass then reports mismatches hundreds of
+    // thousands of cycles later, attributed to the wrong change.  That is
+    // exactly what these scenarios did on their first run -- one live
+    // mismatch plus five final-verify ones, every address one of THESE
+    // tests had written.  test_reset_walk's golden/backing resync comment
+    // is the established rule.  None of these needs a fresh cache.
+    const bool old_always = g_perf_always_ready; const bool old_force = g_mem_force_ready;
+    const int old_lat = g_ddr_latency_base, old_jit = g_ddr_latency_jitter, old_gap = g_ddr_beat_gap_max;
+    g_perf_always_ready = true; g_mem_force_ready = true;
+    g_ddr_latency_base = 40; g_ddr_latency_jitter = 0; g_ddr_beat_gap_max = 0;
+
+    const uint64_t b = 0x0010'0000ull;
+    const int LINES = 64;
+    // Warm through the COLD door so neither arm gets a cold-miss advantage.
+    for (int i = 0; i < LINES; i++)
+        if (!do_read_check(b + static_cast<uint64_t>(i) * LINE_BYTES, "parity warm")) {
+            CHECK("parity warm-up", false); break;
+        }
+    dh_quiesce();
+
+    // Arm A: one 64 B (4x16 B) read at a time through the HOT door.
+    uint64_t t0 = sim_time;
+    for (int i = 0; i < LINES; i++) {
+        auto x = dh_issue(b + static_cast<uint64_t>(i) * LINE_BYTES, 4);
+        if (!dh_wait(x, 20000)) { CHECK("hot parity burst completes", false); break; }
+        for (int k = 0; k < 4; k++)
+            CHECK("hot parity data exact",
+                  std::memcmp(x->got[k].data(),
+                              &golden[b + static_cast<uint64_t>(i) * LINE_BYTES + 16 * k], 16) == 0);
+        dh_free(x);
+    }
+    const double hot_cyc = static_cast<double>(sim_time - t0) / LINES;
+
+    // Arm B: the identical traffic through the COLD door.
+    t0 = sim_time;
+    for (int i = 0; i < LINES; i++) {
+        const uint64_t a = b + static_cast<uint64_t>(i) * LINE_BYTES;
+        uint32_t id = issue_read(a, 4);
+        if (!wait_read_done(id, 20000)) { CHECK("cold parity burst completes", false); break; }
+        for (int k = 0; k < 4; k++)
+            CHECK("cold parity data exact",
+                  std::memcmp(r_done[id]->got[k].data(), &golden[a + 16 * k], 16) == 0);
+        free_read(id);
+    }
+    const double cold_cyc = static_cast<double>(sim_time - t0) / LINES;
+
+    printf("  P6 door parity, single-outstanding 64 B read hits: hot %.3f cyc/line, "
+           "cold %.3f cyc/line (delta %+.3f)\n", hot_cyc, cold_cyc, hot_cyc - cold_cyc);
+    printf("    NOTE: the design doc's P6 falsifier (`memcpy-64k` bit-identical at "
+           "N_MSHR=1) is about the CROSSBAR hop, which tb_l2c does not instantiate "
+           "in either arm.  This is the door-local half of the claim.\n");
+    // The hot door has one more response register stage than the fetch
+    // door's pair-reassembly shortcut and one fewer than s_axi's B channel,
+    // so exact equality is not the claim; "not materially slower" is.
+    CHECK("the hot door is not slower than the cold door on identical traffic",
+          hot_cyc <= cold_cyc + 2.0);
+    CHECK("the parity measurement is not degenerate", hot_cyc > 0.0 && cold_cyc > 0.0);
+
+    g_perf_always_ready = old_always; g_mem_force_ready = old_force;
+    g_ddr_latency_base = old_lat; g_ddr_latency_jitter = old_jit; g_ddr_beat_gap_max = old_gap;
+    dh_drain();
+    return ok;
+}
+
+
 // ─── Randomized scoreboard: >=20000 mixed ops vs. golden model ───────────
 static bool test_randomized_scoreboard(int n_ops) {
     bool ok = true;
@@ -5178,6 +6187,25 @@ int main(int argc, char** argv) {
         test_reset_mid_fill_stale_burst_not_installed);
     run("reset_mid_fill_stale_burst_does_not_wedge_r_channel",
         test_reset_mid_fill_stale_burst_does_not_wedge_r_channel);
+    // ── P6: the D-side hot door ──────────────────────────────────────
+    // Registered AFTER every pre-existing directed scenario, and they all
+    // return immediately in the DH_EN=0 build, so `make tb-l2c` is
+    // cycle-identical to the RTL before P6 -- which is the campaign's
+    // OFF-is-unchanged requirement and how it was verified.
+    run("dh_read_miss_then_hit",          test_dh_read_miss_then_hit);
+    run("dh_incr_and_wrap_bursts",        test_dh_incr_and_wrap_bursts);
+    run("dh_window_guard_refuses_non_memory",
+        test_dh_window_guard_refuses_non_memory);
+    run("dh_hot_beats_cold_at_the_front_door",
+        test_dh_hot_beats_cold_at_the_front_door);
+    run("dh_and_fetch_share_the_hot_class",
+        test_dh_and_fetch_share_the_hot_class);
+    run("dh_reads_dirty_line_held_in_victim_buffer",
+        test_dh_reads_dirty_line_held_in_victim_buffer);
+    run("dh_same_set_vs_cold_writes",     test_dh_same_set_vs_cold_writes);
+    run("dh_id_namespace_independent_of_lsu",
+        test_dh_id_namespace_independent_of_lsu);
+    run("dh_single_outstanding_parity",   test_dh_single_outstanding_parity);
     }
 
     int n_ops = 20000;
@@ -5200,6 +6228,32 @@ int main(int argc, char** argv) {
     }
 #endif
 
+    // P6: the same whole-run invariant on the hot door's R channel.  A
+    // response with no outstanding burst is a misroute, and a misroute
+    // between the three doors is the single most likely way the source tag
+    // could be wrong -- so it is checked over EVERY cycle of EVERY
+    // scenario, not per test.
+#ifndef BYPASS_ALL_BUILD
+    if (dut->dbg_dh_en) {
+        if (g_dh_unmatched_resp) {
+            printf("[FAIL] dh_unmatched_response_protocol_check (see UNEXPECTED dh R lines above)\n");
+            n_fail++;
+        } else {
+            printf("[PASS] dh_unmatched_response_protocol_check (%llu hot AR accepts, "
+                   "%llu R beats, %llu bursts, %llu guard faults)\n",
+                   (unsigned long long)g_dh_ar_hs, (unsigned long long)g_dh_r_beats,
+                   (unsigned long long)g_dh_rlast_hs,
+                   (unsigned long long)dut->dh_guard_fault_count);
+            n_pass++;
+        }
+        printf("  P6 coverage: hot accepts %llu, fetch accepts %llu, cold read accepts %llu, "
+               "cold write accepts %llu, cold-starved %llu cyc, victim interlock %llu cyc\n",
+               (unsigned long long)g_dhfd.acc_dh, (unsigned long long)g_dhfd.acc_fetch,
+               (unsigned long long)g_dhfd.acc_lsu, (unsigned long long)g_dhfd.acc_write,
+               (unsigned long long)g_dhfd.cold_starved,
+               (unsigned long long)g_dhfd.victim_query_hit);
+    }
+#endif
     if (g_unmatched_resp_seen) {
         printf("[FAIL] unmatched_response_protocol_check (see UNEXPECTED B/R lines above)\n");
         n_fail++;

@@ -130,6 +130,9 @@
     // BUG_calibration_word_misplaced_0d00.md Part 56's closing
     // recommendation) -- see l2c.v's dbg_fetch_id_snap port comment.
     wire [15:0]  dbg_l2c_fetch_id_snap;
+    // P6: the hot D door's tap (l2c.v dbg_dh_snap).  Reads 0 unless
+    // L2C_DH_PORT is defined.
+    wire [15:0]  dbg_l2c_dh_snap;
     // 2026-07-25 hit/miss/occupancy counters -- see l2c_ctrl.v's own
     // dbg_hit_count/dbg_miss_count/dbg_mshr_occupancy port comments.
     wire [31:0]  dbg_l2c_hit_count;
@@ -227,6 +230,74 @@
         .fault_count(ifg_fault_count)
     );
 
+    // ══════════════ P6: THE D-SIDE HOT DOOR (axi_dh) ═══════════════════
+    //
+    // NOT ENABLED YET, AND THE REASON IS IN THE CPU REPO.  The hot door needs
+    // a fifth AXI master on the CPU socket (`cpu_socket.vh` version bump:
+    // read-only, 128 b, 4 IDs = AxiIds.dRefill(0..3)), and the core-side
+    // prerequisite the design doc calls D4 -- an inhibited access launched
+    // only at ROB head under `dQuiesce`, with no younger LS op launching
+    // until it completes.  Until the socket carries `dha_*`, defining
+    // `L2C_DH_PORT` here would reference wires that do not exist.
+    //
+    // So: everything below is written, reviewed and unit-tested (tb_l2c.cpp's
+    // dh_* scenarios, `make tb-l2c-dh`), and compiled out.  With the define
+    // absent the port is tied off and l2c's own DH_PORT_EN stays 0, so this
+    // block contributes nothing to the netlist.
+    //
+    // WHAT THE GUARD IS FOR (design doc 2.2, correction #1).  The hot door
+    // has NO ADDRESS DECODE and the DDR side serves (addr mod DRAM size).
+    // The DTLB reports WRITETHROUGH for EVERY address with TC.E=0 and no TTR
+    // match, so "the MMU said cacheable, therefore it is memory" is FALSE at
+    // boot -- and that is precisely how the I side once executed NuBus-slot
+    // filler from physical 0xFB0493AA.  The D side gets the same
+    // ifetch_window_guard the I side has, at 128 b / 4 IDs, and its
+    // fault_count is the `OFF_DH_GUARD_HITS` counter the doc asks for so a
+    // guard hit during boot is visible on the first bitstream.
+`ifdef L2C_DH_PORT
+    // The same ROM-mirror fold the fetch path applies (see
+    // ifa_araddr_folded above): a master that never sees the crossbar's
+    // ddr_flatten() never sees that fold either.
+    wire dha_araddr_is_rom_mirror =
+        ((dha_araddr & ~(`AXI_ROM_MIRROR_SIZE - 1)) == `AXI_ROM_MIRROR_BASE);
+    wire [31:0] dha_araddr_folded = dha_araddr_is_rom_mirror ?
+        (((dha_araddr - `AXI_ROM_MIRROR_BASE) & (`AXI_ROM_IMAGE_SIZE - 1)) +
+         `AXI_DDR_ROM_OFFSET) :
+        dha_araddr;
+    wire [CPU_AXI_DH_IW-1:0] dhg_arid;
+    wire [31:0]              dhg_araddr;
+    wire [7:0]               dhg_arlen;
+    wire [2:0]               dhg_arsize;
+    wire [1:0]               dhg_arburst;
+    wire                     dhg_arvalid, dhg_arready;
+    wire [CPU_AXI_DH_IW-1:0] dhg_rid;
+    wire [127:0]             dhg_rdata;
+    wire [1:0]               dhg_rresp;
+    wire                     dhg_rlast, dhg_rvalid, dhg_rready;
+    wire                     dh_guard_fault_sticky;
+    wire [31:0]              dh_guard_fault_addr;
+    wire [15:0]              dh_guard_fault_count;
+    ifetch_window_guard #(
+        .ID_WIDTH(CPU_AXI_DH_IW), .DATA_WIDTH(128)
+    ) u_dh_guard (
+        .clk(core_clk), .rst(core_rst_bank[4]),
+        .ram_window_lg2(cpu_ram_window_lg2),
+        .s_ar_is_rom(dha_araddr_is_rom_mirror),
+        .s_arid(dha_arid), .s_araddr(dha_araddr_folded), .s_arlen(dha_arlen),
+        .s_arsize(dha_arsize), .s_arburst(dha_arburst),
+        .s_arvalid(dha_arvalid), .s_arready(dha_arready),
+        .s_rid(dha_rid), .s_rdata(dha_rdata), .s_rresp(dha_rresp),
+        .s_rlast(dha_rlast), .s_rvalid(dha_rvalid), .s_rready(dha_rready_gated),
+        .m_arid(dhg_arid), .m_araddr(dhg_araddr), .m_arlen(dhg_arlen),
+        .m_arsize(dhg_arsize), .m_arburst(dhg_arburst),
+        .m_arvalid(dhg_arvalid), .m_arready(dhg_arready),
+        .m_rid(dhg_rid), .m_rdata(dhg_rdata), .m_rresp(dhg_rresp),
+        .m_rlast(dhg_rlast), .m_rvalid(dhg_rvalid), .m_rready(dhg_rready),
+        .fault_sticky(dh_guard_fault_sticky), .fault_addr(dh_guard_fault_addr),
+        .fault_count(dh_guard_fault_count)
+    );
+`endif
+
     l2c #(
         // Bypass windows: left at l2c.v's own defaults
         // (NUM_BYPASS_WINDOWS=1, BYP_WIN_BASE/MASK=0, BYP_WIN_EN=0).
@@ -251,7 +322,16 @@
         // directly below with no truncation/extension at THIS boundary
         // (l2c.v internally zero-extends up to its own ID_WIDTH=6 for
         // l2c_ctrl.v's mirrored-s_ar*-shape fetch sub-port).
-        .F_ID_WIDTH(CPU_AXI_IW)
+        .F_ID_WIDTH(CPU_AXI_IW),
+`ifdef L2C_DH_PORT
+        .DH_PORT_EN(1), .DH_ID_WIDTH(CPU_AXI_DH_IW)
+`else
+        // P6 compiled out: the port is inert and the third door, the 2-bit
+        // source tag, WRAP on the hot doors and hot > cold priority are all
+        // absent from the netlist.  Verified by `make tb-l2c`, whose whole
+        // output is byte-identical to the pre-P6 tree.
+        .DH_PORT_EN(0)
+`endif
     ) u_l2c (
         .clk(core_clk), .rst(core_rst_bank[4]),
         // AXI4 slave -- from xbar S0 (unchanged shape: 128b data, 6b ID,
@@ -292,6 +372,24 @@
         .f_axi_rid(ifg_rid), .f_axi_rdata(ifg_rdata),
         .f_axi_rresp(ifg_rresp), .f_axi_rlast(ifg_rlast),
         .f_axi_rvalid(ifg_rvalid), .f_axi_rready(ifg_rready),
+        // P6: the hot D door, behind its own window guard (above).
+`ifdef L2C_DH_PORT
+        .dh_axi_arid(dhg_arid), .dh_axi_araddr(dhg_araddr),
+        .dh_axi_arlen(dhg_arlen), .dh_axi_arsize(dhg_arsize),
+        .dh_axi_arburst(dhg_arburst), .dh_axi_arvalid(dhg_arvalid),
+        .dh_axi_arready(dhg_arready),
+        .dh_axi_rid(dhg_rid), .dh_axi_rdata(dhg_rdata),
+        .dh_axi_rresp(dhg_rresp), .dh_axi_rlast(dhg_rlast),
+        .dh_axi_rvalid(dhg_rvalid), .dh_axi_rready(dhg_rready),
+`else
+        .dh_axi_arid(2'b00), .dh_axi_araddr(32'd0),
+        .dh_axi_arlen(8'd0), .dh_axi_arsize(3'd4),
+        .dh_axi_arburst(2'b01), .dh_axi_arvalid(1'b0),
+        .dh_axi_arready(),
+        .dh_axi_rid(), .dh_axi_rdata(),
+        .dh_axi_rresp(), .dh_axi_rlast(),
+        .dh_axi_rvalid(), .dh_axi_rready(1'b1),
+`endif
         // AXI4 master -- toward u_ddr below (still core_clk; u_ddr owns
         // the core_clk -> mig_ui_clk CDC internally via axi_async_bridge
         // on the real-hw path, or SIM_MIG_BRIDGE's own chain in sim).
@@ -317,7 +415,8 @@
         .dbg_miss_count(dbg_l2c_miss_count),
         .dbg_mshr_occupancy(dbg_l2c_mshr_occupancy),
         .dbg_fetch_snap(dbg_l2c_fetch_snap),
-        .dbg_fetch_id_snap(dbg_l2c_fetch_id_snap)
+        .dbg_fetch_id_snap(dbg_l2c_fetch_id_snap),
+        .dbg_dh_snap(dbg_l2c_dh_snap)
     );
 `endif
 

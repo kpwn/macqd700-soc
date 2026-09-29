@@ -24,7 +24,18 @@ module tb_l2c #(
     // overridden with a -GBYPASS_SLOTS=n build flag.  BYPASS_SLOTS=1
     // reproduces the pre-2026-08-20 serialized engine, which is the
     // sweep's reference point -- see tb-l2c-bypdepth-* in the Makefile.
-    parameter BYPASS_SLOTS = 8
+    parameter BYPASS_SLOTS = 8,
+    // ── P6: the D-side hot door ────────────────────────────────────────
+    // DH_EN forwards to l2c's DH_PORT_EN.  Default 0, so `make tb-l2c` is
+    // the OFF configuration and its output is the regression baseline for
+    // "the OFF netlist/behaviour is unchanged".  `make tb-l2c-dh` builds
+    // -GDH_EN=1 and is the only thing that runs the dh scenarios.
+    parameter DH_EN = 0,
+    // Native ID width of the hot door: 2 = 4 IDs = AxiIds.dRefill(0..3).
+    parameter DH_ID_WIDTH = 2,
+    // Cold-path fairness bound; 0 = pure fixed priority.  The arbitration
+    // tests sweep this.
+    parameter DH_COLD_FAIR_N = 64
 ) (
     input  wire clk, rst,
     input  wire [5:0]  s_axi_awid, input wire [31:0] s_axi_awaddr,
@@ -49,6 +60,30 @@ module tb_l2c #(
     output wire [3:0] f_axi_rid, output wire [255:0] f_axi_rdata,
     output wire [1:0] f_axi_rresp, output wire f_axi_rlast,
     output wire f_axi_rvalid, input wire f_axi_rready,
+    // ── P6: the hot D door, AS THE SoC WIRES IT ────────────────────────
+    // These are the guard's UPSTREAM pins, not l2c's.  ifetch_window_guard
+    // sits between them and l2c.dh_axi_*, exactly as fpga_top_ddr.vh puts
+    // it between the CPU's axi_i and l2c.f_axi_* -- so the tb exercises the
+    // composition that ships, and a test can prove a non-memory address is
+    // refused at the fabric rather than served from (addr mod DRAM size).
+    input  wire [DH_ID_WIDTH-1:0] dh_axi_arid, input wire [31:0] dh_axi_araddr,
+    input  wire [7:0] dh_axi_arlen, input wire [2:0] dh_axi_arsize,
+    input  wire [1:0] dh_axi_arburst, input wire dh_axi_arvalid,
+    output wire dh_axi_arready,
+    output wire [DH_ID_WIDTH-1:0] dh_axi_rid, output wire [127:0] dh_axi_rdata,
+    output wire [1:0] dh_axi_rresp, output wire dh_axi_rlast,
+    output wire dh_axi_rvalid, input wire dh_axi_rready,
+    // Guard configuration + observability.  dh_guard_fault_count is the
+    // tb-visible `OFF_DH_GUARD_HITS` the design doc asks for.
+    input  wire [5:0] dh_ram_window_lg2,
+    input  wire       dh_ar_is_rom,
+    output wire       dh_guard_fault_sticky,
+    output wire [31:0] dh_guard_fault_addr,
+    output wire [15:0] dh_guard_fault_count,
+    // Compile-time configuration, readable from C++ so a scenario can skip
+    // itself in the OFF build instead of silently passing.
+    output wire       dbg_dh_en,
+    output wire [15:0] dbg_dh_cold_fair_n,
     output wire [5:0] m_axi_awid, output wire [31:0] m_axi_awaddr,
     output wire [7:0] m_axi_awlen, output wire [2:0] m_axi_awsize, output wire [1:0] m_axi_awburst,
     output wire m_axi_awvalid, input wire m_axi_awready,
@@ -163,12 +198,69 @@ module tb_l2c #(
     // dbg_s2_reread  -- a skew-hazard re-read was armed this cycle.
     output wire dbg_fd_sethaz,
     output wire dbg_s2_stall,
-    output wire dbg_s2_reread
+    output wire dbg_s2_reread,
+    // ── P6 front-door arbitration taps ────────────────────────────────
+    // PER-SOURCE accepts, so an arbitration test counts what the door
+    // actually did instead of inferring it from a cycle total.  These are
+    // the only way to distinguish "hot > cold held" from "cold happened not
+    // to be offering anything".
+    output wire dbg_acc_dh,
+    output wire dbg_acc_fetch,
+    output wire dbg_acc_lsu,
+    output wire dbg_acc_write,
+    // Cold-path availability + the registered starvation flag, so the
+    // fairness bound is measured rather than assumed.
+    output wire dbg_cold_avail,
+    output wire dbg_cold_starved,
+    output wire dbg_dh_ar_have,
+    // victim_query_hit at the resolve stage: the interlock that makes a
+    // read of a line whose dirty copy is still in the writeback buffer
+    // WAIT instead of reading DRAM behind it.  A coherence test asserts it
+    // actually fired, so the test cannot pass vacuously.
+    output wire dbg_victim_query_hit,
+    output wire [15:0] dbg_dh_snap
 );
+    assign dbg_dh_en = (DH_EN != 0);
+    assign dbg_dh_cold_fair_n = DH_COLD_FAIR_N;
+
+    // ── The window guard, in front of the hot door ─────────────────────
+    // ID_WIDTH/DATA_WIDTH are the D side's (4 IDs, 128 b); the module is
+    // otherwise the byte-for-byte one the I side ships.
+    wire [DH_ID_WIDTH-1:0] dhg_arid;
+    wire [31:0]            dhg_araddr;
+    wire [7:0]             dhg_arlen;
+    wire [2:0]             dhg_arsize;
+    wire [1:0]             dhg_arburst;
+    wire                   dhg_arvalid, dhg_arready;
+    wire [DH_ID_WIDTH-1:0] dhg_rid;
+    wire [127:0]           dhg_rdata;
+    wire [1:0]             dhg_rresp;
+    wire                   dhg_rlast, dhg_rvalid, dhg_rready;
+    ifetch_window_guard #(
+        .ID_WIDTH(DH_ID_WIDTH), .DATA_WIDTH(128)
+    ) u_dh_guard (
+        .clk(clk), .rst(rst),
+        .ram_window_lg2(dh_ram_window_lg2),
+        .s_ar_is_rom(dh_ar_is_rom),
+        .s_arid(dh_axi_arid), .s_araddr(dh_axi_araddr), .s_arlen(dh_axi_arlen),
+        .s_arsize(dh_axi_arsize), .s_arburst(dh_axi_arburst),
+        .s_arvalid(dh_axi_arvalid), .s_arready(dh_axi_arready),
+        .s_rid(dh_axi_rid), .s_rdata(dh_axi_rdata), .s_rresp(dh_axi_rresp),
+        .s_rlast(dh_axi_rlast), .s_rvalid(dh_axi_rvalid), .s_rready(dh_axi_rready),
+        .m_arid(dhg_arid), .m_araddr(dhg_araddr), .m_arlen(dhg_arlen),
+        .m_arsize(dhg_arsize), .m_arburst(dhg_arburst),
+        .m_arvalid(dhg_arvalid), .m_arready(dhg_arready),
+        .m_rid(dhg_rid), .m_rdata(dhg_rdata), .m_rresp(dhg_rresp),
+        .m_rlast(dhg_rlast), .m_rvalid(dhg_rvalid), .m_rready(dhg_rready),
+        .fault_sticky(dh_guard_fault_sticky), .fault_addr(dh_guard_fault_addr),
+        .fault_count(dh_guard_fault_count)
+    );
 
     l2c #(
         .ADDR_WIDTH(32), .DATA_WIDTH(128), .ID_WIDTH(6),
         .L2_BYPASS_ALL(L2_BYPASS_ALL),
+        .DH_PORT_EN(DH_EN), .DH_ID_WIDTH(DH_ID_WIDTH),
+        .DH_COLD_FAIR_N(DH_COLD_FAIR_N),
         .VICTIM_SLOTS(VICTIM_SLOTS),
         .BYPASS_SLOTS(BYPASS_SLOTS),
         .NUM_BYPASS_WINDOWS(1),
@@ -192,6 +284,12 @@ module tb_l2c #(
         .f_axi_arvalid(f_axi_arvalid), .f_axi_arready(f_axi_arready),
         .f_axi_rid(f_axi_rid), .f_axi_rdata(f_axi_rdata), .f_axi_rresp(f_axi_rresp),
         .f_axi_rlast(f_axi_rlast), .f_axi_rvalid(f_axi_rvalid), .f_axi_rready(f_axi_rready),
+        .dh_axi_arid(dhg_arid), .dh_axi_araddr(dhg_araddr), .dh_axi_arlen(dhg_arlen),
+        .dh_axi_arsize(dhg_arsize), .dh_axi_arburst(dhg_arburst),
+        .dh_axi_arvalid(dhg_arvalid), .dh_axi_arready(dhg_arready),
+        .dh_axi_rid(dhg_rid), .dh_axi_rdata(dhg_rdata), .dh_axi_rresp(dhg_rresp),
+        .dh_axi_rlast(dhg_rlast), .dh_axi_rvalid(dhg_rvalid), .dh_axi_rready(dhg_rready),
+        .dbg_dh_snap(dbg_dh_snap),
         .m_axi_awid(m_axi_awid), .m_axi_awaddr(m_axi_awaddr), .m_axi_awlen(m_axi_awlen),
         .m_axi_awsize(m_axi_awsize), .m_axi_awburst(m_axi_awburst), .m_axi_awvalid(m_axi_awvalid),
         .m_axi_awready(m_axi_awready),
@@ -291,7 +389,25 @@ module tb_l2c #(
                                 !dut.g_active.u_ctrl.id_busy_c &&
                                 dut.g_active.u_ctrl.is_bypass_c &&
                                 !dut.g_active.u_ctrl.byp_req_ready;
+        // ── P6 taps ────────────────────────────────────────────────────
+        assign dbg_acc_dh    = dut.g_active.u_ctrl.door_take_c && dut.g_active.u_ctrl.dh_read_sel;
+        assign dbg_acc_fetch = dut.g_active.u_ctrl.door_take_c && dut.g_active.u_ctrl.fetch_read_sel;
+        assign dbg_acc_lsu   = dut.g_active.u_ctrl.door_take_c && dut.g_active.u_ctrl.lsu_read_sel;
+        assign dbg_acc_write = dut.g_active.u_ctrl.door_take_c && dut.g_active.u_ctrl.write_sel;
+        assign dbg_cold_avail   = dut.g_active.u_ctrl.cold_avail_c;
+        assign dbg_cold_starved = dut.g_active.u_ctrl.cold_starved_q;
+        assign dbg_dh_ar_have   = dut.g_active.u_ctrl.dh_ar_have;
+        assign dbg_victim_query_hit = dut.g_active.u_ctrl.req_v &&
+                                      dut.g_active.u_ctrl.victim_query_hit;
     end else begin : g_no_taps
+        assign dbg_acc_dh    = 1'b0;
+        assign dbg_acc_fetch = 1'b0;
+        assign dbg_acc_lsu   = 1'b0;
+        assign dbg_acc_write = 1'b0;
+        assign dbg_cold_avail   = 1'b0;
+        assign dbg_cold_starved = 1'b0;
+        assign dbg_dh_ar_have   = 1'b0;
+        assign dbg_victim_query_hit = 1'b0;
         assign dbg_vb_occ        = 5'd0;
         assign dbg_vb_out        = 5'd0;
         assign dbg_vb_sink       = 5'd0;

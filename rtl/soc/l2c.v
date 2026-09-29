@@ -111,7 +111,32 @@ module l2c #(
     // internal source-qualified compare (see that module).  Sized as the
     // in-flight-quadrant-pair reassembly table's depth (2**F_ID_WIDTH
     // entries) -- see the fetch reassembly block below.
-    parameter F_ID_WIDTH = 4
+    parameter F_ID_WIDTH = 4,
+    // ================== P6: THE D-SIDE HOT DOOR (axi_dh) =================
+    // DH_PORT_EN (default 0) is THE knob for all of P6 on the SoC side: the
+    // dh_axi_* read-only front door, the 2-bit front-door source tag, WRAP
+    // bursts on the two hot doors, and hot > cold priority at S0.  At 0
+    // every added expression in l2c_ctrl.v collapses to the byte-for-byte
+    // pre-existing one, the dh response path is not elaborated at all, and
+    // the port is inert -- the OFF netlist is the netlist that shipped.
+    //
+    // WHY A THIRD DOOR AND NOT A SECOND PIPELINE: l2c's hit path moves
+    // 16 B/cycle against a core that asks for well under 1 B/cycle, so the
+    // L2 is <10% occupied at any plausible demand.  The split's value is
+    // that it deletes the crossbar's one-outstanding cap from the D refill
+    // path, not that it adds L2 bandwidth.  Banking was considered and
+    // dropped for exactly that reason.
+    parameter DH_PORT_EN = 0,
+    // Native AXI ID width of the hot D door.  2 = 4 IDs, which is
+    // AxiIds.dRefill(0..3) -- the four the CPU reserves for cacheable
+    // refills.  Zero-extended to ID_WIDTH for l2c_ctrl, exactly as
+    // F_ID_WIDTH is; the two never have to compare against each other
+    // because the SOURCE TAG, not the numeric ID, is what separates them.
+    parameter DH_ID_WIDTH = 2,
+    // Bounded cold-path fairness under hot > cold priority; see
+    // l2c_ctrl.v's own DH_COLD_FAIR_N comment for why a bound and not an
+    // argument.  0 = pure fixed priority.
+    parameter DH_COLD_FAIR_N = 64
 ) (
     input  wire clk, rst,
     // AXI4 slave (from xbar S0).
@@ -142,6 +167,24 @@ module l2c #(
     input  wire f_axi_arvalid, output wire f_axi_arready,
     output wire [F_ID_WIDTH-1:0] f_axi_rid, output wire [255:0] f_axi_rdata,
     output wire [1:0] f_axi_rresp, output wire f_axi_rlast, output wire f_axi_rvalid, input wire f_axi_rready,
+    // P6: the D-side HOT door (axi_dh).  AR/R only, read-only -- the D
+    // side's WRITES (copyback writebacks, precise/inhibited stores) stay on
+    // the cold path through the crossbar, which is in-order and
+    // one-outstanding and is CORRECT for them.  128 b native, so unlike
+    // f_axi there is no 256->2x128 quadrant reassembly here: one accepted
+    // beat is one response beat.  INCR and WRAP; WRAP is what makes
+    // "demanded sector first, then the rest of the line, one burst" possible.
+    //
+    // NO ADDRESS DECODE HAPPENS HERE, and that is deliberate: the caller
+    // must place ifetch_window_guard.v in front of this port exactly as it
+    // does in front of f_axi.  An access the MMU calls cacheable that is not
+    // memory would otherwise be served from DDR at (addr mod 64 MB) -- the
+    // mechanism by which the I side once executed NuBus-slot filler.
+    input  wire [DH_ID_WIDTH-1:0] dh_axi_arid, input wire [ADDR_WIDTH-1:0] dh_axi_araddr,
+    input  wire [7:0] dh_axi_arlen, input wire [2:0] dh_axi_arsize, input wire [1:0] dh_axi_arburst,
+    input  wire dh_axi_arvalid, output wire dh_axi_arready,
+    output wire [DH_ID_WIDTH-1:0] dh_axi_rid, output wire [DATA_WIDTH-1:0] dh_axi_rdata,
+    output wire [1:0] dh_axi_rresp, output wire dh_axi_rlast, output wire dh_axi_rvalid, input wire dh_axi_rready,
     // AXI4 master (toward DDR path).
     output wire [ID_WIDTH-1:0] m_axi_awid, output wire [ADDR_WIDTH-1:0] m_axi_awaddr,
     output wire [7:0] m_axi_awlen, output wire [2:0] m_axi_awsize, output wire [1:0] m_axi_awburst,
@@ -190,8 +233,22 @@ module l2c #(
     // L2C's front door has gone completely quiet on that ID (consistent
     // with cpu040 having moved on to a new generation without draining
     // the old one -- an L2C-external, cpu040-side trigger).
-    output wire [15:0] dbg_fetch_id_snap
+    output wire [15:0] dbg_fetch_id_snap,
+    // P6: the same shape of tap for the hot D door -- whether a request is
+    // presented and accepted, which response source claims it, whether the
+    // output skid has it and whether the CPU side is taking it.  See the
+    // assign site for the bit layout.  Reads 0 when DH_PORT_EN == 0.
+    output wire [15:0] dbg_dh_snap
 );
+    // P6: width of l2c_ctrl's front-door SOURCE tag.  ONE definition,
+    // passed down -- see l2c_ctrl.v's SRC_BITS comment for why an
+    // inconsistent pair is an elaboration error there rather than a silent
+    // aliasing of DH onto LSU.
+    localparam CTRL_SRC_BITS = (DH_PORT_EN != 0) ? 2 : 1;
+    localparam [1:0] SRC_ENC_LSU = 2'b00, SRC_ENC_FETCH = 2'b01, SRC_ENC_DH = 2'b10;
+    localparam [CTRL_SRC_BITS-1:0] SRCV_LSU   = SRC_ENC_LSU  [CTRL_SRC_BITS-1:0];
+    localparam [CTRL_SRC_BITS-1:0] SRCV_FETCH = SRC_ENC_FETCH[CTRL_SRC_BITS-1:0];
+    localparam [CTRL_SRC_BITS-1:0] SRCV_DH    = SRC_ENC_DH   [CTRL_SRC_BITS-1:0];
 generate
 if (L2_BYPASS_ALL != 0) begin : g_bypass_all
     // Cache machinery isn't instantiated in this branch at all, so clk/rst
@@ -221,6 +278,15 @@ if (L2_BYPASS_ALL != 0) begin : g_bypass_all
     assign f_axi_rdata   = 256'd0;
     assign f_axi_rresp   = 2'b00;
     assign f_axi_rlast   = 1'b0;
+    // Same for the P6 hot D door -- L2_BYPASS_ALL is a bringup escape
+    // hatch, not a shipping configuration either door needs to serve.
+    assign dh_axi_arready = 1'b0;
+    assign dh_axi_rvalid  = 1'b0;
+    assign dh_axi_rid     = {DH_ID_WIDTH{1'b0}};
+    assign dh_axi_rdata   = {DATA_WIDTH{1'b0}};
+    assign dh_axi_rresp   = 2'b00;
+    assign dh_axi_rlast   = 1'b0;
+    assign dbg_dh_snap    = 16'd0;
     assign dbg_ctrl_write_snap = 11'd0;
     assign dbg_master_snap     = 11'd0;
     assign dbg_hit_count       = 32'd0;
@@ -230,10 +296,26 @@ if (L2_BYPASS_ALL != 0) begin : g_bypass_all
     assign dbg_fetch_id_snap   = 16'd0;
 end else begin : g_active
     // -- l2c_ctrl (cache proper) --------------------------------------------
-    wire hit_rsp_valid, hit_rsp_is_write, hit_rsp_is_fetch, hit_rsp_last, hit_rsp_ready; wire [1:0] hit_rsp_resp;
+    wire hit_rsp_valid, hit_rsp_is_write, hit_rsp_last, hit_rsp_ready; wire [1:0] hit_rsp_resp;
+    wire [CTRL_SRC_BITS-1:0] hit_rsp_src;
     wire [ID_WIDTH-1:0] hit_rsp_id; wire [127:0] hit_rsp_rdata;
-    wire mshr_rsp_valid, mshr_rsp_is_write, mshr_rsp_is_fetch, mshr_rsp_last, mshr_rsp_ready; wire [1:0] mshr_rsp_resp;
+    wire mshr_rsp_valid, mshr_rsp_is_write, mshr_rsp_last, mshr_rsp_ready; wire [1:0] mshr_rsp_resp;
+    wire [CTRL_SRC_BITS-1:0] mshr_rsp_src;
     wire [ID_WIDTH-1:0] mshr_rsp_id; wire [127:0] mshr_rsp_rdata;
+    // P6: the hot D door's descriptor into l2c_ctrl.  128 b native, so this
+    // is a straight pass-through -- no arlen doubling, no arsize override,
+    // nothing to reinterpret.  Only the ID is zero-extended to l2c_ctrl's
+    // mirrored-s_ar* ID_WIDTH shape; the extra high bits are always 0, and
+    // the actual source disambiguation is the SOURCE TAG (cur_src) inside
+    // l2c_ctrl, not this padding.
+    wire [ID_WIDTH-1:0]   dctrl_arid   = {{(ID_WIDTH-DH_ID_WIDTH){1'b0}}, dh_axi_arid};
+    wire [ADDR_WIDTH-1:0] dctrl_araddr = dh_axi_araddr;
+    wire [7:0]            dctrl_arlen  = dh_axi_arlen;
+    wire [2:0]            dctrl_arsize = dh_axi_arsize;
+    wire [1:0]            dctrl_arburst = dh_axi_arburst;
+    wire                  dctrl_arvalid = dh_axi_arvalid;
+    wire                  dctrl_arready;
+    assign dh_axi_arready = dctrl_arready;
     // Level A (task #269): l2c_ctrl.v's fetch-side AR sub-port.  Decompose
     // logic below translates f_axi_ar* (256b, this module's external
     // port) into this 128b-quadrant-granular descriptor: arlen doubles
@@ -286,7 +368,9 @@ end else begin : g_active
     wire mf_rlast, mf_rvalid, mf_rready;
     l2c_ctrl #(.SET_BITS(12), .TAG_BITS(14), .WAY_BITS(3), .ADDR_WIDTH(ADDR_WIDTH),
                .ID_WIDTH(ID_WIDTH), .LINE_BITS(512),
-               .MSHR_REPLAY_N(MSHR_REPLAY_N), .MSHR_REPLAY_K(MSHR_REPLAY_K)) u_ctrl (
+               .MSHR_REPLAY_N(MSHR_REPLAY_N), .MSHR_REPLAY_K(MSHR_REPLAY_K),
+               .D_PORT_EN(DH_PORT_EN), .SRC_BITS(CTRL_SRC_BITS),
+               .DH_ID_WIDTH(DH_ID_WIDTH), .DH_COLD_FAIR_N(DH_COLD_FAIR_N)) u_ctrl (
         .clk(clk), .rst(rst),
         .s_awid(s_axi_awid), .s_awaddr(s_axi_awaddr), .s_awlen(s_axi_awlen), .s_awsize(s_axi_awsize),
         .s_awburst(s_axi_awburst), .s_awvalid(s_axi_awvalid), .s_awready(s_axi_awready),
@@ -295,10 +379,12 @@ end else begin : g_active
         .s_arburst(s_axi_arburst), .s_arvalid(s_axi_arvalid), .s_arready(s_axi_arready),
         .f_arid(fctrl_arid), .f_araddr(fctrl_araddr), .f_arlen(fctrl_arlen), .f_arsize(fctrl_arsize),
         .f_arburst(fctrl_arburst), .f_arvalid(fctrl_arvalid), .f_arready(fctrl_arready),
-        .hit_rsp_valid(hit_rsp_valid), .hit_rsp_is_write(hit_rsp_is_write), .hit_rsp_is_fetch(hit_rsp_is_fetch), .hit_rsp_id(hit_rsp_id),
+        .d_arid(dctrl_arid), .d_araddr(dctrl_araddr), .d_arlen(dctrl_arlen), .d_arsize(dctrl_arsize),
+        .d_arburst(dctrl_arburst), .d_arvalid(dctrl_arvalid), .d_arready(dctrl_arready),
+        .hit_rsp_valid(hit_rsp_valid), .hit_rsp_is_write(hit_rsp_is_write), .hit_rsp_src(hit_rsp_src), .hit_rsp_id(hit_rsp_id),
         .hit_rsp_rdata(hit_rsp_rdata), .hit_rsp_last(hit_rsp_last), .hit_rsp_resp(hit_rsp_resp),
         .hit_rsp_ready(hit_rsp_ready),
-        .mshr_rsp_valid(mshr_rsp_valid), .mshr_rsp_is_write(mshr_rsp_is_write), .mshr_rsp_is_fetch(mshr_rsp_is_fetch), .mshr_rsp_id(mshr_rsp_id),
+        .mshr_rsp_valid(mshr_rsp_valid), .mshr_rsp_is_write(mshr_rsp_is_write), .mshr_rsp_src(mshr_rsp_src), .mshr_rsp_id(mshr_rsp_id),
         .mshr_rsp_rdata(mshr_rsp_rdata), .mshr_rsp_last(mshr_rsp_last), .mshr_rsp_resp(mshr_rsp_resp),
         .mshr_rsp_ready(mshr_rsp_ready), .byp_active_valid(byp_active_valid), .byp_active_id(byp_active_id),
         .victim_push_valid(victim_push_valid), .victim_push_addr(victim_push_addr),
@@ -660,10 +746,20 @@ end else begin : g_active
     // *_is_fetch here (and routing those instead through the new fetch
     // response path below) is what keeps a fetch-tagged completion from
     // being presented on s_axi_r*, the LSU-facing bus.
+    // P6: "belongs on s_axi" is now "the source tag says LSU", which is
+    // the SAME predicate as `!*_is_fetch` when CTRL_SRC_BITS == 1.  Spelling
+    // it as an equality rather than a negated flag is what makes adding the
+    // third source a change of encoding and not a change of policy.
+    wire mshr_rsp_is_lsu_c   = (mshr_rsp_src == SRCV_LSU);
+    wire hit_rsp_is_lsu_c    = (hit_rsp_src  == SRCV_LSU);
+    wire mshr_rsp_is_fetch_c = (mshr_rsp_src == SRCV_FETCH);
+    wire hit_rsp_is_fetch_c  = (hit_rsp_src  == SRCV_FETCH);
+    wire mshr_rsp_is_dh_c    = (DH_PORT_EN != 0) && (mshr_rsp_src == SRCV_DH);
+    wire hit_rsp_is_dh_c     = (DH_PORT_EN != 0) && (hit_rsp_src  == SRCV_DH);
     wire [1:0] r_pick_c = (r_lock != RSP_NONE) ? r_lock :
                           (byp_rsp_valid && !byp_rsp_is_write)  ? RSP_BYP  :
-                          (mshr_rsp_valid && !mshr_rsp_is_write && !mshr_rsp_is_fetch) ? RSP_MSHR :
-                          (hit_rsp_valid && !hit_rsp_is_write && !hit_rsp_is_fetch)   ? RSP_HIT  : RSP_NONE;
+                          (mshr_rsp_valid && !mshr_rsp_is_write && mshr_rsp_is_lsu_c) ? RSP_MSHR :
+                          (hit_rsp_valid && !hit_rsp_is_write && hit_rsp_is_lsu_c)   ? RSP_HIT  : RSP_NONE;
     wire [1:0] b_pick_c = (b_lock != RSP_NONE) ? b_lock :
                           (byp_rsp_valid && byp_rsp_is_write)  ? RSP_BYP  :
                           (mshr_rsp_valid && mshr_rsp_is_write) ? RSP_MSHR :
@@ -780,12 +876,17 @@ end else begin : g_active
     // reassembly block below -- default_nettype none needs the explicit
     // wire before use.)
     wire mshr_rsp_ready_fetch_c, hit_rsp_ready_fetch_c;
-    assign mshr_rsp_ready = mshr_rsp_is_fetch
-                           ? mshr_rsp_ready_fetch_c
-                           : ((r_grant_mshr && ir_ready) || (b_grant_mshr && ib_ready));
-    assign hit_rsp_ready  = hit_rsp_is_fetch
-                           ? hit_rsp_ready_fetch_c
-                           : ((r_grant_hit  && ir_ready) || (b_grant_hit  && ib_ready));
+    // P6: same argument, third destination.  A DH-tagged completion never
+    // sets r_grant_mshr/r_grant_hit either (r_pick_c requires SRCV_LSU), so
+    // it must drain through the dh response path below or it wedges the
+    // WHOLE front door, LSU and fetch traffic included.
+    wire mshr_rsp_ready_dh_c, hit_rsp_ready_dh_c;
+    assign mshr_rsp_ready = mshr_rsp_is_dh_c    ? mshr_rsp_ready_dh_c
+                          : (mshr_rsp_is_fetch_c ? mshr_rsp_ready_fetch_c
+                          : ((r_grant_mshr && ir_ready) || (b_grant_mshr && ib_ready)));
+    assign hit_rsp_ready  = hit_rsp_is_dh_c     ? hit_rsp_ready_dh_c
+                          : (hit_rsp_is_fetch_c  ? hit_rsp_ready_fetch_c
+                          : ((r_grant_hit  && ir_ready) || (b_grant_hit  && ib_ready)));
     assign byp_rsp_ready  = (r_grant_byp  && ir_ready) || (b_grant_byp  && ib_ready);
 
     // -- Fetch response path: pick HIT vs MSHR (task #269) ------------------
@@ -805,8 +906,8 @@ end else begin : g_active
     // (the slower path should not be starved by faster path); the two
     // are mutually exclusive in steady state given the single serialized
     // front door, this is defensive ordering for a same-cycle coincidence.
-    wire fetch_pick_mshr = mshr_rsp_valid && mshr_rsp_is_fetch;
-    wire fetch_pick_hit  = !fetch_pick_mshr && hit_rsp_valid && hit_rsp_is_fetch;
+    wire fetch_pick_mshr = mshr_rsp_valid && mshr_rsp_is_fetch_c;
+    wire fetch_pick_hit  = !fetch_pick_mshr && hit_rsp_valid && hit_rsp_is_fetch_c;
     wire fetch_q_avail   = fetch_pick_mshr || fetch_pick_hit;
     wire [127:0]         fetch_q_rdata = fetch_pick_mshr ? mshr_rsp_rdata : hit_rsp_rdata;
     wire [1:0]           fetch_q_resp  = fetch_pick_mshr ? mshr_rsp_resp  : hit_rsp_resp;
@@ -917,6 +1018,79 @@ end else begin : g_active
     assign f_axi_rresp  = f_rresp_q;
     assign f_axi_rlast  = f_rlast_q;
 
+    // ── P6: the hot D door's response path ──────────────────────────────
+    //
+    // Simpler than the fetch one in one way and stricter in another.
+    //
+    // SIMPLER: the port is 128 b native, so there is NO quadrant-pair
+    // reassembly table.  One resolved beat is one R beat, and the ID needs
+    // no per-ID straddle bookkeeping.
+    //
+    // STRICTER: that is exactly why it cannot copy the fetch door's
+    // `fetch_out_free_c = !f_rvalid_q` one-deep skid.  That deletion of the
+    // `|| f_axi_rready` term is free ON THE FETCH DOOR only because a 256 b
+    // beat takes two quadrant lookups, so a burst cannot complete faster
+    // than one beat per two cycles and the output register is always clear
+    // in time.  A 128 b door completes one beat per cycle, which is the
+    // same shape as s_axi's read-hit rate -- so `!rvalid` alone would HALVE
+    // it, and the right answer is the one s_axi got: a 2-deep registered-
+    // output register slice (l2c_rsp_skid), whose `s_ready` is the register
+    // `!v1`.
+    //
+    // That matters beyond throughput.  `idh_ready` is a REGISTER, so
+    // dh_axi_rready never enters l2c_ctrl's resolve cone (hit_rsp_ready ->
+    // hit_rsp_free_c -> ... -> do_accept_c -> the array address pins) --
+    // the closure property the 2026-09-15 FMax work established for both
+    // existing doors is preserved for this one by construction rather than
+    // by luck.
+    //
+    // Priority MSHR > HIT mirrors the fetch path's, for the same reason.
+    // (No `generate` keyword: this whole block is already inside the
+    // g_active generate region, and Verilog-2005 does not allow a nested
+    // generate region -- a conditional generate ITEM here is legal and is
+    // what this is.)
+    if (DH_PORT_EN != 0) begin : g_dh_rsp
+        wire dh_pick_mshr = mshr_rsp_valid && mshr_rsp_is_dh_c;
+        wire dh_pick_hit  = !dh_pick_mshr && hit_rsp_valid && hit_rsp_is_dh_c;
+        wire dh_q_avail   = dh_pick_mshr || dh_pick_hit;
+        wire [127:0]        dh_q_rdata = dh_pick_mshr ? mshr_rsp_rdata : hit_rsp_rdata;
+        wire [1:0]          dh_q_resp  = dh_pick_mshr ? mshr_rsp_resp  : hit_rsp_resp;
+        wire [ID_WIDTH-1:0] dh_q_id    = dh_pick_mshr ? mshr_rsp_id    : hit_rsp_id;
+        wire                dh_q_last  = dh_pick_mshr ? mshr_rsp_last  : hit_rsp_last;
+        wire idh_ready;
+        l2c_rsp_skid #(.W(DH_ID_WIDTH + DATA_WIDTH + 2 + 1)) u_dh_r_skid (
+            .clk(clk), .rst(rst),
+            .s_valid(dh_q_avail), .s_ready(idh_ready),
+            .s_data({dh_q_id[DH_ID_WIDTH-1:0], dh_q_rdata, dh_q_resp, dh_q_last}),
+            .m_valid(dh_axi_rvalid), .m_ready(dh_axi_rready),
+            .m_data({dh_axi_rid, dh_axi_rdata, dh_axi_rresp, dh_axi_rlast})
+        );
+        assign mshr_rsp_ready_dh_c = dh_pick_mshr && idh_ready;
+        assign hit_rsp_ready_dh_c  = dh_pick_hit  && idh_ready;
+        assign dbg_dh_snap = {
+            6'd0,                // [15:10] reserved
+            dh_axi_rready,       // [9]  CPU-side ready for the beat
+            dh_axi_rvalid,       // [8]  a beat is presented
+            dh_q_avail && idh_ready, // [7] a dh completion is consumed this cycle
+            dh_q_avail,          // [6]  a dh-tagged hit/MSHR completion is available
+            mshr_rsp_is_dh_c,    // [5]  the live MSHR response is dh-sourced
+            mshr_rsp_valid,      // [4]  MSHR response channel valid
+            hit_rsp_is_dh_c,     // [3]  the live hit response is dh-sourced
+            hit_rsp_valid,       // [2]  hit response channel valid
+            dh_axi_arready,      // [1]  front door accepted the dh AR
+            dh_axi_arvalid       // [0]  dh AR presented at the front door
+        };
+    end else begin : g_no_dh_rsp
+        assign dh_axi_rvalid = 1'b0;
+        assign dh_axi_rid    = {DH_ID_WIDTH{1'b0}};
+        assign dh_axi_rdata  = {DATA_WIDTH{1'b0}};
+        assign dh_axi_rresp  = 2'b00;
+        assign dh_axi_rlast  = 1'b0;
+        assign mshr_rsp_ready_dh_c = 1'b0;
+        assign hit_rsp_ready_dh_c  = 1'b0;
+        assign dbg_dh_snap   = 16'd0;
+    end
+
     // 2026-08-30 boot investigation round 8 -- see the port declaration's
     // comment above for why this exists. Directly shows, for the fetch
     // (axi_i) path specifically: whether a request is even presented at
@@ -935,9 +1109,9 @@ end else begin : g_active
         f_rvalid_q,          // [8]  reassembled beat is presented, awaiting drain
         fetch_consume_c,     // [7]  a fetch completion is being consumed this cycle
         fetch_q_avail,       // [6]  a fetch-tagged hit/MSHR completion is available
-        mshr_rsp_is_fetch,   // [5]  the live MSHR response is fetch-sourced
+        mshr_rsp_is_fetch_c, // [5]  the live MSHR response is fetch-sourced
         mshr_rsp_valid,      // [4]  MSHR response channel valid
-        hit_rsp_is_fetch,    // [3]  the live hit response is fetch-sourced
+        hit_rsp_is_fetch_c,  // [3]  the live hit response is fetch-sourced
         hit_rsp_valid,       // [2]  hit response channel valid
         f_axi_arready,       // [1]  front door accepted the fetch AR
         f_axi_arvalid        // [0]  fetch AR presented at the front door

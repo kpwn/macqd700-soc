@@ -7481,6 +7481,7 @@ $(PB_LANE_SHIM_BUILD)/Vtb_pb_lane_shim: $(PB_LANE_SHIM_RTL) $(TB_DIR)/tb_pb_lane
 #                        BYPASS_ALL_BUILD in tb_l2c.cpp).
 # ──────────────────────────────────────────────────────────────────────────────
 L2C_RTL := \
+	$(RTL_DIR)/soc/ifetch_window_guard.v \
 	$(RTL_DIR)/soc/l2c_pri8.v \
 	$(RTL_DIR)/soc/l2c_reset.v \
 	$(RTL_DIR)/soc/l2c_tags.v \
@@ -7593,6 +7594,92 @@ tb-l2c-collision:
 		done; \
 	done
 	@echo "PASS: no collided array read is consumed under either hostile model"
+
+# ── P6: the D-side hot door build (tb_l2c.v -GDH_EN=1) ────────────────────
+# A SECOND Verilated build of the same harness, because DH_PORT_EN must stay
+# 0 in the default one: `make tb-l2c` is the OFF baseline whose output has to
+# stay byte-identical to the RTL before P6, and that is how the OFF netlist
+# claim is checked.  Every dh_* scenario reports SKIP there and runs here.
+#
+#   make tb-l2c-dh                     # door ON, cold-fairness bound at 64
+#   make tb-l2c-dh-nofair              # door ON, DH_COLD_FAIR_N=0 -- a
+#                                      # NEGATIVE CONTROL that is EXPECTED
+#                                      # TO FAIL, see its own target below
+#   make tb-l2c-dh-stress              # the randomized scoreboard, door ON
+L2C_DH_BUILD := $(BUILD_DIR)/l2c_dh
+.PHONY: tb-l2c-dh
+tb-l2c-dh: $(L2C_DH_BUILD)/Vtb_l2c
+	@echo "Running l2c unit tb with the D-side hot door ENABLED..."
+	$(L2C_DH_BUILD)/Vtb_l2c
+
+$(L2C_DH_BUILD)/Vtb_l2c: $(L2C_RTL) $(TB_DIR)/tb_l2c.cpp
+	@mkdir -p $(L2C_DH_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY -Wno-PINMISSING \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Wno-WIDTHEXPAND -Wno-SELRANGE \
+		-Irtl/soc \
+		-Mdir $(L2C_DH_BUILD) \
+		--top-module tb_l2c -GDH_EN=1 \
+		$(L2C_RTL) \
+		$(TB_DIR)/tb_l2c.cpp \
+		-CFLAGS "-std=c++17"
+
+# ── NEGATIVE CONTROL: strict hot > cold priority, no fairness bound ───────
+#
+# THIS TARGET IS EXPECTED TO FAIL, AND THE FAILURES ARE THE RESULT.
+#
+# The design doc specifies "fixed priority hot > cold at S0" and argues that
+# "DMA/debug never starve because the hot ports are idle far more often than
+# not".  That is a statement about the measured workload, not a property of
+# the fabric, and DH_COLD_FAIR_N=0 is what it looks like when the workload
+# does not cooperate.  Measured here:
+#
+#   dh arbitration: 3000 cyc, accepts hot(dh)=2999 cold(lsu)=0 cold(w)=0;
+#                   cold offered 2999 cyc
+#
+# i.e. the cold path gets ZERO of 3000 cycles while a hot stream is saturated
+# -- and TWO PRE-EXISTING scenarios fail with it, both of which exist to
+# assert the opposite requirement:
+#
+#   [FAIL] fetch_id0_does_not_starve_lsu_bypass_id0
+#   [FAIL] dual_source_response_association_stress
+#   [FAIL] dh_hot_beats_cold_at_the_front_door   (its own no-starvation check)
+#
+# The first of those is the Q700 ROM's inhibited/open-bus probe shape while
+# instruction fetch is active.  So the bound is not a nicety; it is what makes
+# the shipped configuration (DH_COLD_FAIR_N=64) pass the tests this repo
+# already had.  Keep this target as the evidence, and do not let `make` treat
+# its failure as a build error.
+L2C_DH_NOFAIR_BUILD := $(BUILD_DIR)/l2c_dh_nofair
+.PHONY: tb-l2c-dh-nofair
+tb-l2c-dh-nofair: $(L2C_DH_NOFAIR_BUILD)/Vtb_l2c
+	@echo "=== NEGATIVE CONTROL: hot > cold with NO fairness bound. ==="
+	@echo "=== Failures below are the EXPECTED result; see the Makefile comment. ==="
+	-$(L2C_DH_NOFAIR_BUILD)/Vtb_l2c
+
+$(L2C_DH_NOFAIR_BUILD)/Vtb_l2c: $(L2C_RTL) $(TB_DIR)/tb_l2c.cpp
+	@mkdir -p $(L2C_DH_NOFAIR_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY -Wno-PINMISSING \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Wno-WIDTHEXPAND -Wno-SELRANGE \
+		-Irtl/soc \
+		-Mdir $(L2C_DH_NOFAIR_BUILD) \
+		--top-module tb_l2c -GDH_EN=1 -GDH_COLD_FAIR_N=0 \
+		$(L2C_RTL) \
+		$(TB_DIR)/tb_l2c.cpp \
+		-CFLAGS "-std=c++17"
+
+.PHONY: tb-l2c-dh-stress
+tb-l2c-dh-stress: $(L2C_DH_BUILD)/Vtb_l2c
+	@set -e; for seed in $(L2C_STRESS_SEEDS); do \
+		echo "Running l2c randomized stress (hot door ON) seed=$$seed ops=$(L2C_STRESS_OPS)..."; \
+		L2C_SKIP_DIRECTED=1 L2C_SEED=$$seed L2C_RAND_OPS=$(L2C_STRESS_OPS) \
+			$(L2C_DH_BUILD)/Vtb_l2c; \
+	done
 
 .PHONY: tb-l2c-stress
 tb-l2c-stress: $(L2C_BUILD)/Vtb_l2c
