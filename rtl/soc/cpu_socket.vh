@@ -110,6 +110,47 @@
 //   CPU_SOCKET_DBG_AW : dbg_axi(-Lite) address width.  20 bits = the
 //                       existing 0x5090_0000 debug window (1 MiB).
 //   CPU_SOCKET_DBG_DW : dbg_axi(-Lite) data width = 32.
+//
+// ── PLANNED, NOT YET PART OF THIS HEADER: axi_dh (P6, the D-side hot
+//    door).  Recorded here because this file is the canonical socket
+//    reference and the SoC half is already built and unit-tested; adding
+//    the port group here is a COORDINATED TWO-REPO CHANGE and must not be
+//    done from one side alone.
+//
+//    Shape, as l2c.v's dh_axi_* port already expects it:
+//      CPU_SOCKET_AXI_DH_DW = 128   (native, no decompose in l2c.v)
+//      CPU_SOCKET_AXI_DH_IW = 2     (4 IDs = AxiIds.dRefill(0..3))
+//      AR/R only -- read-only.  The D side's writes (copyback writebacks,
+//      precise and cache-inhibited stores) stay on axi_d and the crossbar.
+//      INCR and WRAP; WRAP is what lets a 64 B line fill be issued
+//      demanded-sector-first as one burst.
+//
+//    Fabric side, when the port group lands (rtl/soc/fpga_top_ddr.vh,
+//    behind `L2C_DH_PORT`): the guard+door wiring is written and waits on
+//    exactly four names -- `dha_ar*`/`dha_r*`, a `CPU_AXI_DH_IW` localparam
+//    beside `CPU_AXI_IW` in fpga_top_cpu.vh, and a `dha_rready_gated`
+//    twin of `ifa_rready_gated` (the same JTAG-CPU-reset drain policy).
+//
+//    Core side, and these are HARD prerequisites, not niceties:
+//      * a cache-inhibited access is a full barrier BOTH WAYS, launched
+//        only at ROB head under dQuiesce (no MSHR valid, no outstanding
+//        cold write, SQ drained of older stores), with no younger LS op
+//        launching until it completes.  The fabric contributes no
+//        cross-path ordering between the doors and does not need to;
+//      * a per-line writeback-address gate: an AR for line X is held while
+//        X sits in the L1D writeback buffer awaiting its B.  This is the
+//        L1D analogue of l2c_victim's query_hit and it is the ONE
+//        cross-path hazard the split creates.  What the fabric DOES
+//        guarantee is that a line whose dirty copy is still in L2's victim
+//        buffer is never answered from DRAM, and that once a cold write has
+//        been accepted at the front door a subsequently accepted hot read
+//        of the same set observes it.
+//      * the routing key is the MMU cache mode on the D-cache command
+//        (missCmode in {COPYBACK, WRITETHROUGH} -> hot), NEVER an address
+//        decode.  The fabric's window guard is what makes a wrong
+//        cacheable answer fail loudly instead of reading aliased DRAM.
+//
+//    See docs/l2c_spec.md "The hot/cold memory split (P6, DH_PORT_EN)".
 `ifndef CPU_SOCKET_PARAMS
 `define CPU_SOCKET_PARAMS
   `ifndef CPU_SOCKET_AXI_I_DW
