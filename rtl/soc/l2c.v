@@ -1067,6 +1067,22 @@ end else begin : g_active
         );
         assign mshr_rsp_ready_dh_c = dh_pick_mshr && idh_ready;
         assign hit_rsp_ready_dh_c  = dh_pick_hit  && idh_ready;
+        // synthesis translate_off
+        // The hot door's native ID is DH_ID_WIDTH bits, zero-extended to
+        // l2c_ctrl's ID_WIDTH on the way in (dctrl_arid) and sliced back
+        // here.  The padding is carried verbatim through the pipeline and the
+        // MSHR, so the slice is lossless -- asserted rather than trusted,
+        // because a lost high bit would silently deliver a beat to the wrong
+        // one of the four refill IDs and the data would still look plausible.
+        always @(posedge clk) begin
+            if (!rst && dh_q_avail &&
+                (dh_q_id[ID_WIDTH-1:DH_ID_WIDTH] != {(ID_WIDTH-DH_ID_WIDTH){1'b0}})) begin
+                $display("L2C ASSERT: hot-door response id 0x%0x has bits above DH_ID_WIDTH=%0d set -- the slice to dh_axi_rid would lose them",
+                         dh_q_id, DH_ID_WIDTH);
+                $fatal(1);
+            end
+        end
+        // synthesis translate_on
         assign dbg_dh_snap = {
             6'd0,                // [15:10] reserved
             dh_axi_rready,       // [9]  CPU-side ready for the beat
