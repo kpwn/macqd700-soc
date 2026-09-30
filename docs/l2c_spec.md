@@ -223,11 +223,24 @@ before that. What would make it **reachable**:
 - the same holds for `f_axi`: an instruction fetch below 4 MiB with the
   overlay armed.
 
-If any of these becomes possible, make it loud rather than wrong: feed
-`xbar_overlay_effective` into both hot guards and treat `[0, AXI_ROM_SIZE)`
-as out of window (DECERR) while it is set. That is one AND term per guard.
-Folding the address as the crossbar does would also work, but it silently
-duplicates the crossbar's policy.
+**Fixed (2026-09-30), loud instead of wrong.** `ifetch_window_guard` has an
+`OVERLAY_GUARD` parameter and an `overlay_active` input (=
+`xbar_overlay_effective`). With it set, a read of `[0, OVERLAY_SIZE)` =
+`[0, 4 MiB)` while the overlay is armed is out of window, so it gets DECERR.
+- **Hot read port (`u_dh_guard`):** `OVERLAY_GUARD=1` always. The port is new
+  and off by default.
+- **Fetch port (`u_ifetch_guard`):** has the same mismatch, but that guard is
+  in the shipping build, so the term there is opt-in (`IFETCH_OVERLAY_GUARD`).
+  Turning it on changes what a shipping bitstream answers. The Q700 boot
+  path never fetches below 4 MiB with the overlay armed, because the reset PC
+  is in the ROM mirror.
+- **Write port:** no term. The crossbar's overlay applies to reads only (CPU
+  writes to low memory always reach real RAM), so the write door already
+  matches the cold path. A DECERR there would be a new mismatch, not a fix.
+
+`dh_read_below_4mib_with_overlay_armed_is_decerr` (`tb-l2c-dw`) fails with
+the term removed: the read returns DDR RAM with OKAY. That removed-term
+mutant is `dh_guard_ignores_overlay` in `make tb-l2c-dw-mutants`.
 
 ### Next ceiling, priced (not built): a gather on the hot write port
 

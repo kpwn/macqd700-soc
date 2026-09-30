@@ -210,12 +210,23 @@
     wire                   ifg_fault_sticky;
     wire [31:0]            ifg_fault_addr;
     wire [15:0]            ifg_fault_count;
+    // Reset-ROM-overlay term: the fetch port has the SAME mismatch as the
+    // hot D read port (it bypasses the crossbar's apply_cpu_overlay), but
+    // this guard is in the SHIPPING build, so the term is opt-in here
+    // (`IFETCH_OVERLAY_GUARD`) rather than silently changing what a
+    // shipping bitstream answers.  See docs/l2c_spec.md.
     ifetch_window_guard #(
-        .ID_WIDTH(CPU_AXI_IW), .DATA_WIDTH(256)
+        .ID_WIDTH(CPU_AXI_IW), .DATA_WIDTH(256),
+`ifdef IFETCH_OVERLAY_GUARD
+        .OVERLAY_GUARD(1)
+`else
+        .OVERLAY_GUARD(0)
+`endif
     ) u_ifetch_guard (
         .clk(core_clk), .rst(core_rst_bank[4]),
         .ram_window_lg2(cpu_ram_window_lg2),
         .s_ar_is_rom(ifa_araddr_is_rom_mirror),
+        .overlay_active(xbar_overlay_effective),
         .s_arid(ifa_arid), .s_araddr(ifa_araddr_folded), .s_arlen(ifa_arlen),
         .s_arsize(ifa_arsize), .s_arburst(ifa_arburst),
         .s_arvalid(ifa_arvalid), .s_arready(ifa_arready),
@@ -277,12 +288,16 @@
     wire                     dh_guard_fault_sticky;
     wire [31:0]              dh_guard_fault_addr;
     wire [15:0]              dh_guard_fault_count;
+    // OVERLAY_GUARD: a hot read of the low 4 MiB while the crossbar's reset
+    // ROM overlay is armed is DECERR, not DDR RAM (the cold path would have
+    // returned ROM).  Always on for this port: it is new, and off by default.
     ifetch_window_guard #(
-        .ID_WIDTH(CPU_AXI_DH_IW), .DATA_WIDTH(128)
+        .ID_WIDTH(CPU_AXI_DH_IW), .DATA_WIDTH(128), .OVERLAY_GUARD(1)
     ) u_dh_guard (
         .clk(core_clk), .rst(core_rst_bank[4]),
         .ram_window_lg2(cpu_ram_window_lg2),
         .s_ar_is_rom(dha_araddr_is_rom_mirror),
+        .overlay_active(xbar_overlay_effective),
         .s_arid(dha_arid), .s_araddr(dha_araddr_folded), .s_arlen(dha_arlen),
         .s_arsize(dha_arsize), .s_arburst(dha_arburst),
         .s_arvalid(dha_arvalid), .s_arready(dha_arready),

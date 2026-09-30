@@ -619,6 +619,8 @@ static int      g_dh_stream_burst = 1;
 // "cacheable-but-not-memory" address for the guard scenario.
 static int      g_dh_win_lg2 = 24;
 static bool     g_dh_is_rom  = false;
+// Stand-in for the crossbar's effective reset ROM overlay (xbar_overlay_effective).
+static bool     g_dh_overlay = false;
 // Per-source front-door accept counters, sampled from tb_l2c.v's taps.
 struct DhFdStats {
     uint64_t cycles = 0;
@@ -669,6 +671,7 @@ static bool dh_ready_gate() {
 static void dh_drive_comb() {
     dut->dh_ram_window_lg2 = g_dh_win_lg2;
     dut->dh_ar_is_rom      = g_dh_is_rom ? 1 : 0;
+    dut->dh_overlay_active = g_dh_overlay ? 1 : 0;
     if (dh_issuing) {
         dut->dh_axi_arvalid = 1;
         dut->dh_axi_arid    = dh_issuing->id;
@@ -1279,7 +1282,7 @@ static void reset_dut() {
     // P6: the hot door starts quiet, with the guard's window set to the
     // tb's 16 MB cacheable span.
     dut->dh_axi_arvalid = 0; dut->dh_axi_rready = 1;
-    dut->dh_ram_window_lg2 = g_dh_win_lg2; dut->dh_ar_is_rom = 0;
+    dut->dh_ram_window_lg2 = g_dh_win_lg2; dut->dh_ar_is_rom = 0; dut->dh_overlay_active = 0;
     // P6W: the hot write door starts quiet too; B is always accepted.
     dut->dw_axi_awvalid = 0; dut->dw_axi_wvalid = 0; dut->dw_axi_bready = 1; dut->dw_aw_is_rom = 0;
     dut->dw_abandon = 0;
@@ -5611,6 +5614,52 @@ static bool test_dw_cpu_reset_mid_burst() {
     return ok;
 }
 
+// ── Reset ROM overlay on the hot READ port ───────────────────────────────
+// While the crossbar's reset overlay is armed, a CPU read of [0, 4 MiB) is
+// ROM on the cold path.  The hot port bypasses the crossbar, so without the
+// guard's overlay term the same read returns DDR RAM with OKAY -- silently
+// wrong.  With it: DECERR.  Registered only in the DW_EN=1 build so the
+// P6-only build's output file stays byte-identical.
+static bool test_dh_read_below_4mib_with_overlay_armed_is_decerr() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    const uint64_t low = 0x0000'2040ull;          // below 4 MiB: overlaid
+    const uint64_t high = 0x0040'1040ull;         // just above 4 MiB: never overlaid
+    CHECK("prime low RAM", do_write_apply(low, 0x7C, "ovl_prime_low"));
+    CHECK("prime high RAM", do_write_apply(high, 0x7D, "ovl_prime_high"));
+    // ANTI-VACUITY: with the overlay DISARMED the low read is ordinary RAM.
+    {
+        auto b = dh_issue(low, 1, 1, 0);
+        CHECK("disarmed: low hot read completes", dh_wait(b));
+        CHECK("disarmed: low hot read is OKAY RAM data", b->last_resp == 0 && dh_read_matches(b));
+        dh_free(b);
+    }
+    const uint16_t fc0 = dut->dh_guard_fault_count;
+    g_dh_overlay = true;
+    {
+        auto b = dh_issue(low, 1, 1, 1);
+        CHECK("armed: low hot read completes", dh_wait(b));
+        if (b->done && b->last_resp == 0)
+            printf("  dh_overlay: WRONG -- a hot read of 0x%llx with the ROM overlay armed returned "
+                   "DDR RAM (OKAY %02x%02x..) where the cold path returns ROM\n",
+                   (unsigned long long)low, b->got.empty() ? 0 : b->got[0][0], b->got.empty() ? 0 : b->got[0][1]);
+        CHECK("armed: a hot read below 4 MiB is DECERR, not DDR RAM", b->done && b->last_resp == 3);
+        dh_free(b);
+        auto h = dh_issue(high, 1, 1, 2);
+        CHECK("armed: a hot read above 4 MiB is unaffected", dh_wait(h) && h->last_resp == 0 && dh_read_matches(h));
+        dh_free(h);
+    }
+    CHECK("the guard counted exactly the overlaid read", dut->dh_guard_fault_count == static_cast<uint16_t>(fc0 + 1));
+    g_dh_overlay = false;
+    {
+        auto b = dh_issue(low, 1, 1, 3);
+        CHECK("disarmed again: low hot read is RAM data", dh_wait(b) && b->last_resp == 0 && dh_read_matches(b));
+        dh_free(b);
+    }
+    dh_drain();
+    return ok;
+}
+
 // ── W5. Same-ID B order through the MSHR ────────────────────────────────
 // A partial-strobe miss (B from the MSHR after a 200-cycle fill) followed
 // by a hit with the SAME write id must answer in that order: the hit may
@@ -7424,6 +7473,8 @@ int main(int argc, char** argv) {
     run("dw_vs_cold_full_line_gather",    test_dw_vs_cold_full_line_gather);
     run("dw_starvation_and_fairness",     test_dw_starvation_and_fairness);
     run("dw_throughput",                  test_dw_throughput);
+    run("dh_read_below_4mib_with_overlay_armed_is_decerr",
+        test_dh_read_below_4mib_with_overlay_armed_is_decerr);
     }
     }
 

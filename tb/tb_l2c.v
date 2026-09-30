@@ -80,6 +80,7 @@ module tb_l2c #(
     // tb-visible `OFF_DH_GUARD_HITS` the design doc asks for.
     input  wire [5:0] dh_ram_window_lg2,
     input  wire       dh_ar_is_rom,
+    input  wire       dh_overlay_active,   // stand-in for the crossbar's reset ROM overlay
     output wire       dh_guard_fault_sticky,
     output wire [31:0] dh_guard_fault_addr,
     output wire [15:0] dh_guard_fault_count,
@@ -296,11 +297,12 @@ module tb_l2c #(
     wire [1:0]             dhg_rresp;
     wire                   dhg_rlast, dhg_rvalid, dhg_rready;
     ifetch_window_guard #(
-        .ID_WIDTH(DH_ID_WIDTH), .DATA_WIDTH(128)
+        .ID_WIDTH(DH_ID_WIDTH), .DATA_WIDTH(128), .OVERLAY_GUARD(1)
     ) u_dh_guard (
         .clk(clk), .rst(rst),
         .ram_window_lg2(dh_ram_window_lg2),
         .s_ar_is_rom(dh_ar_is_rom),
+        .overlay_active(dh_overlay_active),
         .s_arid(dh_axi_arid), .s_araddr(dh_axi_araddr), .s_arlen(dh_axi_arlen),
         .s_arsize(dh_axi_arsize), .s_arburst(dh_axi_arburst),
         .s_arvalid(dh_axi_arvalid), .s_arready(dh_axi_arready),

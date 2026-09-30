@@ -63,12 +63,25 @@
 // zero-latency model is why the hole was invisible).
 module ifetch_window_guard #(
     parameter ID_WIDTH   = 4,
-    parameter DATA_WIDTH = 256
+    parameter DATA_WIDTH = 256,
+    // RESET ROM OVERLAY (2026-09-30).  After a cold/warm SoC reset the
+    // crossbar aliases CPU READS of [0, OVERLAY_SIZE) onto the ROM
+    // (axi_xbar.v apply_cpu_overlay) until the first CPU data read of the
+    // ROM mirror.  A port that reaches l2c directly (this guard's) never sees
+    // that alias, so while it is armed a read there would return DDR RAM
+    // where the cold path returns ROM -- silently wrong data.  With
+    // OVERLAY_GUARD=1 such a read is answered DECERR while `overlay_active`
+    // is high: loud instead of wrong.  0 (default) = the input is ignored
+    // and the guard is exactly what it was.  See docs/l2c_spec.md "Latent:
+    // the hot read port ignores the reset ROM overlay".
+    parameter OVERLAY_GUARD = 0,
+    parameter [31:0] OVERLAY_SIZE = 32'h0040_0000
 ) (
     input  wire                  clk,
     input  wire                  rst,
     input  wire [5:0]            ram_window_lg2,   // visible RAM size, log2 bytes
     input  wire                  s_ar_is_rom,      // upstream decode: ROM mirror window
+    input  wire                  overlay_active,   // crossbar's effective reset ROM overlay
 
     // upstream: the CPU fetch master
     input  wire [ID_WIDTH-1:0]   s_arid,
@@ -108,7 +121,11 @@ module ifetch_window_guard #(
     // Clamp exactly like axi_xbar.v (22 = 4 MiB .. 30 = 1 GiB).
     wire [5:0] lg2 = (ram_window_lg2 < 6'd22) ? 6'd22 :
                      (ram_window_lg2 > 6'd30) ? 6'd30 : ram_window_lg2;
-    wire in_ram    = ((s_araddr >> lg2) == 32'd0);
+    wire in_ram_raw = ((s_araddr >> lg2) == 32'd0);
+    // While the reset overlay is armed the low OVERLAY_SIZE is ROM to the
+    // CPU, not RAM -- not a window this port can serve.
+    wire in_overlay = (OVERLAY_GUARD != 0) && overlay_active && (s_araddr < OVERLAY_SIZE);
+    wire in_ram    = in_ram_raw && !in_overlay;
     wire in_window = in_ram || s_ar_is_rom;
 
     localparam [1:0] G_IDLE = 2'd0, G_PEND = 2'd1, G_EMIT = 2'd2;

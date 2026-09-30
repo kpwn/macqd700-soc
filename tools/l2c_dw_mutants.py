@@ -74,6 +74,10 @@ MUTANTS = [
     ("guard_ignores_cpu_reset", "dh_write_window_guard.v",
      "wire quiesce     = abandon || pad_q;", "wire quiesce     = 1'b0;",
      "no abandoned-burst padding / B swallowing on a CPU reset"),
+    ("dh_guard_ignores_overlay", "ifetch_window_guard.v",
+     "wire in_overlay = (OVERLAY_GUARD != 0) && overlay_active && (s_araddr < OVERLAY_SIZE);",
+     "wire in_overlay = 1'b0;",
+     "the hot read guard ignores the reset ROM overlay (reads DDR RAM where the cold path reads ROM)"),
     ("posted_b_at_aw", "dh_write_window_guard.v",
      "    assign s_bvalid  = !quiesce && (l_resp ? 1'b1 : m_bvalid);\n    assign s_bid     = l_resp ? l_id : m_bid;\n    assign s_bresp   = l_resp ? (l_rom ? 2'b00 : 2'b11) : m_bresp;\n    assign m_bready  = quiesce ? !l_resp : (l_resp ? 1'b0 : s_bready);",
      "    reg mut_pb_v; reg [ID_WIDTH-1:0] mut_pb_id;\n"
