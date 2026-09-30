@@ -182,6 +182,118 @@ lookup pipeline (`set_haz_c`); a gather on this port (as the cold path has)
 would lift 64 B bursts to ~16 B/cycle and is the lever for 64 B sectors —
 not built.
 
+### Latent: the hot read port ignores the reset ROM overlay
+
+After a cold or warm SoC reset the crossbar aliases CPU **reads** of
+`[0, AXI_ROM_SIZE)` = `[0, 4 MiB)` onto the ROM (`apply_cpu_overlay`,
+`axi_xbar.v`), so the 68040 reset vectors come from ROM. The alias stays
+armed until the first CPU data read of the ROM mirror (`cpu_rom_read_seen`,
+committed once no CPU read is in flight) and is re-armed by
+`cpu_overlay_reset` = `soc_full_rst | warm_peripheral_reset`. Writes are never
+aliased. With `L2C_ENABLE` only master M0 (`axi_d`) can disarm it, because
+instruction fetch reaches l2c directly and M2 is tied off.
+
+`dh_axi` (and `f_axi`) also reach l2c directly and apply **no** overlay. Both
+guards pass `[0, 4 MiB)` as RAM. So a hot read of a low address while the
+overlay is armed returns **DDR RAM**, where the cold path would return
+**ROM**: wrong data, not a fault. The write half is consistent (the overlay
+never applies to writes).
+
+It is unreachable today because it needs **all** of the following at once:
+1. `effective_cpu_overlay_active` = 1, i.e. no CPU data read of the ROM mirror
+   has completed since the last cold/warm reset;
+2. `CACR.DE` = 1, with the line's cache mode not inhibited. With `TC.E`=0
+   every address defaults to WRITETHROUGH, which is cacheable, so the
+   routing key sends the miss hot;
+3. a data read of `[0, 4 MiB)` that misses the L1D (a refill or MSHR
+   allocation, i.e. the hot door).
+
+`CACR` resets to 0, so (2) is false from every core reset until the ROM turns
+the cache on, and the ROM reads its own tables through the mirror long
+before that. What would make it **reachable**:
+- a reset path that re-arms the overlay **without** resetting the core's
+  `CACR` (a `warm_peripheral_reset` that leaves the CPU running, or a
+  debug flow that pulses `cpu_overlay_reset` alone);
+- a core change that sends the reset-vector reads, or any read before the
+  first ROM data read, down the cacheable/MSHR path. For example, a
+  `ResetVectorFsm` load given `ooOk`/a cache mode instead of the inhibited
+  legacy FSM;
+- boot code on a non-Q700 machine where the VIA1 overlay input is live and
+  software re-asserts the overlay with the data cache on;
+- the same holds for `f_axi`: an instruction fetch below 4 MiB with the
+  overlay armed.
+
+If any of these becomes possible, make it loud rather than wrong: feed
+`xbar_overlay_effective` into both hot guards and treat `[0, AXI_ROM_SIZE)`
+as out of window (DECERR) while it is set. That is one AND term per guard.
+Folding the address as the crossbar does would also work, but it silently
+duplicates the crossbar's policy.
+
+### Next ceiling, priced (not built): a gather on the hot write port
+
+**The wall.** Consecutive writes to one 64 B line cannot overlap in the
+lookup pipeline. The resolve stage read-modify-writes the tag entry's
+valid/dirty sector bits (`tw_vsec`/`tw_dsec`) from its own array snapshot, so
+a follower resolving on a stale snapshot would drop its leader's bits. So
+`set_haz_c` blocks write/write in a set, and a sequential 16 B write stream
+or a 4-beat 64 B burst on the hot port runs at 2.51 cycles per 16 B
+(**6.37 B/cycle**). Letting same-line writes overlap would mean forwarding
+the leader's sector bits into the resolve cone, which is this design's
+tightest path, so that option is rejected. The cold path already has the
+fix: `flw_*` gathers a 64 B-aligned, whole-line INCR burst into one 512 b
+register and dispatches it as a single `req_full` install, taking 4 W beats
+at one per cycle. Its measured row is `stream_write_64B` at 5.06 cycles per
+64 B line (**12.6 B/cycle**), with the one-cycle G_FULL-to-next-gather
+turnaround accounting for the gap to 16.
+
+**This only pays with 64 B writes.** Today's 16 B L1D writebacks are
+separate single-beat bursts, which a gather cannot combine. The lever
+arrives with 64 B sectors (`awlen`=3 writebacks) or 64 B-coalesced stores,
+and until then 6.37 B/cycle is about 3x what the core can generate.
+
+**Option A (recommended): share the existing gather between the two
+write sources, owner-locked.**
+- A 1-bit gather owner and source tag (`flw_src`) are set at arm.
+- A 128 b 2:1 mux selects `s_wdata`/`dw_wdata`, plus a 16 b one for strobes,
+  in front of `flw_data`/`flw_strb`. It sits on a register D-input, off the
+  accept cone.
+- There is an arm condition per source; `dw_aw_*` gains the `aw_flw`-style
+  shape bit.
+- The raw-beat term of `write_avail`, and the hot one, change from "gst ==
+  G_IDLE" to "gst == G_IDLE or the gather belongs to the other source". A
+  line gathering for one source then never blocks the other source's raw
+  beats. That is the only arbitration change.
+- The dispatch reuses `cur_*`/`a_line`/`req_full` unchanged, except that
+  `cur_src`/`cur_id` take `flw_src`/`flw_id` on a gathered dispatch.
+- The contention cost: while one source holds the gather, the other
+  source's full lines fall back to raw beats (correct, 2.5 cycles per 16 B)
+  for at most one line.
+- **Estimate: ~150-250 LUT** (the 128 b mux packs about 2 bits per LUT6_2,
+  ~64-128 LUT, plus ~40 LUT of arm/owner/select and ~30 LUT of dispatch-tag
+  muxing) **and ~15 FF**.
+- Expected hot 64 B bursts: 5.06 cycles per line, 12.6 B/cycle (2.0x).
+- A side benefit: `dw_wready` for a gathered beat stops depending on
+  `do_accept_c`, since the gather intake bypasses the accept cone. That
+  removes the timing concern noted for the write port on its most important
+  traffic.
+
+**Option B: a second, private gather for the hot port.** 512 b data + 64 b
+strobes + ~40 b control = **~620 FF**. It needs a 512 b 2:1 mux into
+`a_line` (~256-512 LUT) and a replay-quadrant arm into `cur_wdata`/`cur_wstrb`
+(~150 LUT). **~450-700 LUT** in total, and a second `gst` term in the accept
+cone. It buys the same 12.6 B/cycle with no cross-source contention. That
+is not worth ~620 FF while cold full-line writes are rare (the DMA and
+boot loader).
+
+**Tests it would need.**
+- Hot 64 B bursts interleaved with cold 64 B bursts, both sources gathering.
+- A partial-strobe hot line forcing G_RPLY.
+- A CPU reset mid-gather: the guard pads, and the gather must complete a
+  padded line as G_RPLY with zero strobes, not as G_FULL.
+- A dw throughput row reaching at least 10 B/cycle on 64 B bursts.
+- Mutants: the other source's beat written into an owned gather; `flw_src`
+  not applied to the dispatch, so the B is misrouted.
+
 ## Addressing and coherency
 
 The crossbar flattens RAM, ROM and legacy framebuffer addresses before S0.
