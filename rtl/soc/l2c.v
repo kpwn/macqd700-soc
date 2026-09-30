@@ -136,7 +136,28 @@ module l2c #(
     // Bounded cold-path fairness under hot > cold priority; see
     // l2c_ctrl.v's own DH_COLD_FAIR_N comment for why a bound and not an
     // argument.  0 = pure fixed priority.
-    parameter DH_COLD_FAIR_N = 64
+    parameter DH_COLD_FAIR_N = 64,
+    // ============= P6W: THE D-SIDE HOT *WRITE* DOOR (dw_axi) ============
+    // DW_PORT_EN (default 0, requires DH_PORT_EN) gives the hot D door its
+    // write half: dw_axi_aw*/w*/b*, 128 b, DW_ID_WIDTH-bit IDs, INCR only.
+    // For CACHEABLE writes only -- L1D dirty-line writebacks and coalesced
+    // full-line stores.  Cache-inhibited and device writes stay on s_axi
+    // through the crossbar (in order, one outstanding, and they never reach
+    // this module anyway: they decode to S1).  Like dh_axi_*, NO ADDRESS
+    // DECODE HAPPENS HERE; the caller places dh_write_window_guard.v in
+    // front of it (RAM window passes, ROM-mirror writes are dropped with
+    // OKAY exactly as the crossbar drops a CPU ROM write, anything else is
+    // DECERR).
+    //
+    // WHAT B MEANS on this port -- the ordering contract the core builds on:
+    // B is returned only after the write has been ACCEPTED at l2c_ctrl's S0
+    // (it is produced at the resolve stage or by the MSHR after install),
+    // and every read accepted at S0 after that -- on ANY door -- observes
+    // it.  AW/W/B carry no ordering against dh_axi AR/R (AXI read and write
+    // channels are independent), so a read of line X must be held by the
+    // core until every write of X, on either door, has its B.
+    parameter DW_PORT_EN = 0,
+    parameter DW_ID_WIDTH = 2
 ) (
     input  wire clk, rst,
     // AXI4 slave (from xbar S0).
@@ -185,6 +206,17 @@ module l2c #(
     input  wire dh_axi_arvalid, output wire dh_axi_arready,
     output wire [DH_ID_WIDTH-1:0] dh_axi_rid, output wire [DATA_WIDTH-1:0] dh_axi_rdata,
     output wire [1:0] dh_axi_rresp, output wire dh_axi_rlast, output wire dh_axi_rvalid, input wire dh_axi_rready,
+    // P6W: the hot door's WRITE half (see DW_PORT_EN).  bready must be held
+    // high by the master: a refused B backs up through a 2-deep slice into
+    // the shared hit-response register, which stalls the WHOLE front door
+    // (the same property every other response channel here has).
+    input  wire [DW_ID_WIDTH-1:0] dw_axi_awid, input wire [ADDR_WIDTH-1:0] dw_axi_awaddr,
+    input  wire [7:0] dw_axi_awlen, input wire [2:0] dw_axi_awsize, input wire [1:0] dw_axi_awburst,
+    input  wire dw_axi_awvalid, output wire dw_axi_awready,
+    input  wire [DATA_WIDTH-1:0] dw_axi_wdata, input wire [DATA_WIDTH/8-1:0] dw_axi_wstrb,
+    input  wire dw_axi_wlast, input wire dw_axi_wvalid, output wire dw_axi_wready,
+    output wire [DW_ID_WIDTH-1:0] dw_axi_bid, output wire [1:0] dw_axi_bresp,
+    output wire dw_axi_bvalid, input wire dw_axi_bready,
     // AXI4 master (toward DDR path).
     output wire [ID_WIDTH-1:0] m_axi_awid, output wire [ADDR_WIDTH-1:0] m_axi_awaddr,
     output wire [7:0] m_axi_awlen, output wire [2:0] m_axi_awsize, output wire [1:0] m_axi_awburst,
@@ -287,6 +319,11 @@ if (L2_BYPASS_ALL != 0) begin : g_bypass_all
     assign dh_axi_rresp   = 2'b00;
     assign dh_axi_rlast   = 1'b0;
     assign dbg_dh_snap    = 16'd0;
+    assign dw_axi_awready = 1'b0;
+    assign dw_axi_wready  = 1'b0;
+    assign dw_axi_bvalid  = 1'b0;
+    assign dw_axi_bid     = {DW_ID_WIDTH{1'b0}};
+    assign dw_axi_bresp   = 2'b00;
     assign dbg_ctrl_write_snap = 11'd0;
     assign dbg_master_snap     = 11'd0;
     assign dbg_hit_count       = 32'd0;
@@ -315,6 +352,22 @@ end else begin : g_active
     wire [1:0]            dctrl_arburst = dh_axi_arburst;
     wire                  dctrl_arvalid = dh_axi_arvalid;
     wire                  dctrl_arready;
+    // P6W: the hot WRITE door's descriptor.  The ID is placed in the DH
+    // source's WRITE id space: bit ID_WIDTH-1 set, native ID in the low
+    // bits.  DH reads are zero-extended (bit ID_WIDTH-1 clear), so a hot
+    // read id k and a hot write id k are DIFFERENT {src,id} tags in the
+    // MSHR's ordering CAM -- AXI read and write IDs are independent, and
+    // aliasing them would make a writeback's B wait on an unrelated refill.
+    // The marker is sliced off again on the B path (g_dw_rsp), asserted.
+    localparam [ID_WIDTH-1:0] DW_ID_MARK = {1'b1, {(ID_WIDTH-1){1'b0}}};
+    wire [ID_WIDTH-1:0]   dctrl_awid   = DW_ID_MARK | {{(ID_WIDTH-DW_ID_WIDTH){1'b0}}, dw_axi_awid};
+    wire                  dctrl_awready, dctrl_wready;
+    assign dw_axi_awready = dctrl_awready;
+    assign dw_axi_wready  = dctrl_wready;
+    if ((DW_PORT_EN != 0) && ((DH_PORT_EN == 0) || (DW_ID_WIDTH > ID_WIDTH - 1) ||
+                              (DH_ID_WIDTH > ID_WIDTH - 1))) begin : g_dw_misconfigured
+        l2c_DW_PORT_EN_needs_DH_PORT_EN_and_ID_WIDTH_room_for_the_write_marker u_elaboration_error ();
+    end
     assign dh_axi_arready = dctrl_arready;
     // Level A (task #269): l2c_ctrl.v's fetch-side AR sub-port.  Decompose
     // logic below translates f_axi_ar* (256b, this module's external
@@ -370,7 +423,8 @@ end else begin : g_active
                .ID_WIDTH(ID_WIDTH), .LINE_BITS(512),
                .MSHR_REPLAY_N(MSHR_REPLAY_N), .MSHR_REPLAY_K(MSHR_REPLAY_K),
                .D_PORT_EN(DH_PORT_EN), .SRC_BITS(CTRL_SRC_BITS),
-               .DH_ID_WIDTH(DH_ID_WIDTH), .DH_COLD_FAIR_N(DH_COLD_FAIR_N)) u_ctrl (
+               .DH_ID_WIDTH(DH_ID_WIDTH), .DH_COLD_FAIR_N(DH_COLD_FAIR_N),
+               .DW_PORT_EN(DW_PORT_EN)) u_ctrl (
         .clk(clk), .rst(rst),
         .s_awid(s_axi_awid), .s_awaddr(s_axi_awaddr), .s_awlen(s_axi_awlen), .s_awsize(s_axi_awsize),
         .s_awburst(s_axi_awburst), .s_awvalid(s_axi_awvalid), .s_awready(s_axi_awready),
@@ -381,6 +435,10 @@ end else begin : g_active
         .f_arburst(fctrl_arburst), .f_arvalid(fctrl_arvalid), .f_arready(fctrl_arready),
         .d_arid(dctrl_arid), .d_araddr(dctrl_araddr), .d_arlen(dctrl_arlen), .d_arsize(dctrl_arsize),
         .d_arburst(dctrl_arburst), .d_arvalid(dctrl_arvalid), .d_arready(dctrl_arready),
+        .dw_awid(dctrl_awid), .dw_awaddr(dw_axi_awaddr), .dw_awlen(dw_axi_awlen), .dw_awsize(dw_axi_awsize),
+        .dw_awburst(dw_axi_awburst), .dw_awvalid(dw_axi_awvalid), .dw_awready(dctrl_awready),
+        .dw_wdata(dw_axi_wdata), .dw_wstrb(dw_axi_wstrb), .dw_wlast(dw_axi_wlast),
+        .dw_wvalid(dw_axi_wvalid), .dw_wready(dctrl_wready),
         .hit_rsp_valid(hit_rsp_valid), .hit_rsp_is_write(hit_rsp_is_write), .hit_rsp_src(hit_rsp_src), .hit_rsp_id(hit_rsp_id),
         .hit_rsp_rdata(hit_rsp_rdata), .hit_rsp_last(hit_rsp_last), .hit_rsp_resp(hit_rsp_resp),
         .hit_rsp_ready(hit_rsp_ready),
@@ -760,10 +818,16 @@ end else begin : g_active
                           (byp_rsp_valid && !byp_rsp_is_write)  ? RSP_BYP  :
                           (mshr_rsp_valid && !mshr_rsp_is_write && mshr_rsp_is_lsu_c) ? RSP_MSHR :
                           (hit_rsp_valid && !hit_rsp_is_write && hit_rsp_is_lsu_c)   ? RSP_HIT  : RSP_NONE;
+    // P6W: with the hot write door a WRITE completion may be DH-sourced,
+    // and those leave on dw_axi_b (g_dw_rsp), never on s_axi_b.  With
+    // DW_PORT_EN == 0 every write is LSU-sourced and the qualifier is the
+    // constant 1, i.e. this is the shipped expression.
+    wire mshr_b_is_cold_c = (DW_PORT_EN == 0) || mshr_rsp_is_lsu_c;
+    wire hit_b_is_cold_c  = (DW_PORT_EN == 0) || hit_rsp_is_lsu_c;
     wire [1:0] b_pick_c = (b_lock != RSP_NONE) ? b_lock :
                           (byp_rsp_valid && byp_rsp_is_write)  ? RSP_BYP  :
-                          (mshr_rsp_valid && mshr_rsp_is_write) ? RSP_MSHR :
-                          (hit_rsp_valid && hit_rsp_is_write)   ? RSP_HIT  : RSP_NONE;
+                          (mshr_rsp_valid && mshr_rsp_is_write && mshr_b_is_cold_c) ? RSP_MSHR :
+                          (hit_rsp_valid && hit_rsp_is_write && hit_b_is_cold_c)    ? RSP_HIT  : RSP_NONE;
     // The accept-clears-the-lock check MUST have priority over (not
     // "else" alongside) the lock-in check, on the SAME cycle a fresh
     // pick is made: s_axi_rready is often held high, so a freshly-picked
@@ -1050,8 +1114,11 @@ end else begin : g_active
     // generate region -- a conditional generate ITEM here is legal and is
     // what this is.)
     if (DH_PORT_EN != 0) begin : g_dh_rsp
-        wire dh_pick_mshr = mshr_rsp_valid && mshr_rsp_is_dh_c;
-        wire dh_pick_hit  = !dh_pick_mshr && hit_rsp_valid && hit_rsp_is_dh_c;
+        // P6W: a DH-tagged WRITE completion is a B, not an R beat.  With
+        // DW_PORT_EN == 0 no DH completion is ever a write, so the extra term
+        // is the constant 1 and these are P6's expressions.
+        wire dh_pick_mshr = mshr_rsp_valid && mshr_rsp_is_dh_c && ((DW_PORT_EN == 0) || !mshr_rsp_is_write);
+        wire dh_pick_hit  = !dh_pick_mshr && hit_rsp_valid && hit_rsp_is_dh_c && ((DW_PORT_EN == 0) || !hit_rsp_is_write);
         wire dh_q_avail   = dh_pick_mshr || dh_pick_hit;
         wire [127:0]        dh_q_rdata = dh_pick_mshr ? mshr_rsp_rdata : hit_rsp_rdata;
         wire [1:0]          dh_q_resp  = dh_pick_mshr ? mshr_rsp_resp  : hit_rsp_resp;
@@ -1065,8 +1132,56 @@ end else begin : g_active
             .m_valid(dh_axi_rvalid), .m_ready(dh_axi_rready),
             .m_data({dh_axi_rid, dh_axi_rdata, dh_axi_rresp, dh_axi_rlast})
         );
-        assign mshr_rsp_ready_dh_c = dh_pick_mshr && idh_ready;
-        assign hit_rsp_ready_dh_c  = dh_pick_hit  && idh_ready;
+        wire mshr_b_ready_dw_c, hit_b_ready_dw_c;
+        assign mshr_rsp_ready_dh_c = (dh_pick_mshr && idh_ready) || mshr_b_ready_dw_c;
+        assign hit_rsp_ready_dh_c  = (dh_pick_hit  && idh_ready) || hit_b_ready_dw_c;
+        // ---- P6W: the hot WRITE door's B path ------------------------------
+        // Same shape as the R path above: MSHR > HIT pick, a 2-deep
+        // registered-output slice so dw_axi_bready never enters the resolve
+        // cone.  Same-ID B order needs nothing extra here: l2c_ctrl's
+        // ord_now_block_c keeps two completions with one {src,id} from ever
+        // being live at once, and the slice is a FIFO.
+        if (DW_PORT_EN != 0) begin : g_dw_rsp
+            wire dw_pick_mshr = mshr_rsp_valid && mshr_rsp_is_dh_c && mshr_rsp_is_write;
+            wire dw_pick_hit  = !dw_pick_mshr && hit_rsp_valid && hit_rsp_is_dh_c && hit_rsp_is_write;
+            wire dw_q_avail   = dw_pick_mshr || dw_pick_hit;
+            wire [1:0]          dw_q_resp = dw_pick_mshr ? mshr_rsp_resp : hit_rsp_resp;
+            wire [ID_WIDTH-1:0] dw_q_id   = dw_pick_mshr ? mshr_rsp_id   : hit_rsp_id;
+            wire idw_ready;
+            l2c_rsp_skid #(.W(DW_ID_WIDTH + 2)) u_dw_b_skid (
+                .clk(clk), .rst(rst),
+                .s_valid(dw_q_avail), .s_ready(idw_ready),
+                .s_data({dw_q_id[DW_ID_WIDTH-1:0], dw_q_resp}),
+                .m_valid(dw_axi_bvalid), .m_ready(dw_axi_bready),
+                .m_data({dw_axi_bid, dw_axi_bresp})
+            );
+            assign mshr_b_ready_dw_c = dw_pick_mshr && idw_ready;
+            assign hit_b_ready_dw_c  = dw_pick_hit  && idw_ready;
+            // synthesis translate_off
+            // The write marker must survive the pipeline and the MSHR, and
+            // nothing else above the native width may be set -- otherwise
+            // the slice to dw_axi_bid would retire the wrong writeback.
+            always @(posedge clk) begin
+                if (!rst && dw_q_avail &&
+                    (dw_q_id[ID_WIDTH-1:DW_ID_WIDTH] !=
+                     {1'b1, {(ID_WIDTH-DW_ID_WIDTH-1){1'b0}}})) begin
+                    $display("L2C ASSERT: hot-door B id 0x%0x is not in the DH write id space (marker bit %0d, native width %0d)",
+                             dw_q_id, ID_WIDTH-1, DW_ID_WIDTH);
+                    $fatal(1);
+                end
+                if (!rst && dh_q_avail && (dh_pick_mshr ? mshr_rsp_is_write : hit_rsp_is_write)) begin
+                    $display("L2C ASSERT: a DH write completion was picked for the dh R channel");
+                    $fatal(1);
+                end
+            end
+            // synthesis translate_on
+        end else begin : g_no_dw_rsp
+            assign dw_axi_bvalid = 1'b0;
+            assign dw_axi_bid    = {DW_ID_WIDTH{1'b0}};
+            assign dw_axi_bresp  = 2'b00;
+            assign mshr_b_ready_dw_c = 1'b0;
+            assign hit_b_ready_dw_c  = 1'b0;
+        end
         // synthesis translate_off
         // The hot door's native ID is DH_ID_WIDTH bits, zero-extended to
         // l2c_ctrl's ID_WIDTH on the way in (dctrl_arid) and sliced back
@@ -1097,6 +1212,9 @@ end else begin : g_active
             dh_axi_arvalid       // [0]  dh AR presented at the front door
         };
     end else begin : g_no_dh_rsp
+        assign dw_axi_bvalid = 1'b0;
+        assign dw_axi_bid    = {DW_ID_WIDTH{1'b0}};
+        assign dw_axi_bresp  = 2'b00;
         assign dh_axi_rvalid = 1'b0;
         assign dh_axi_rid    = {DH_ID_WIDTH{1'b0}};
         assign dh_axi_rdata  = {DATA_WIDTH{1'b0}};

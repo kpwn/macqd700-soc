@@ -32,6 +32,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <functional>
 #include <memory>
 #include <random>
 #include <set>
@@ -764,6 +765,175 @@ static void dh_sample_taps() {
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────
+// P6W: the hot door's WRITE half -- master model (dw_axi AW/W/B)
+// ─────────────────────────────────────────────────────────────────────────
+//
+// A third independently-numbered master, write-only, 128 b, DW_ID_WIDTH
+// IDs, driving tb_l2c.v's dw_axi_* pins -- the WRITE GUARD's upstream
+// pins, so guard + door are exercised together, as fpga_top_ddr.vh
+// composes them.  It is the shape the L1D writeback buffer presents:
+// AW runs ahead of W (a header is offered as soon as a burst is queued),
+// W beats drain strictly in AW order, and B is matched per ID in order.
+//
+// Its own generator (dw_rng), for the same reason dh_rng has one: the
+// OFF builds must see exactly the draw stream they saw before this model
+// existed.  Nothing here runs a scenario, or draws, unless the build has
+// DW_EN=1 -- every dw_* scenario returns before printing a line in the
+// OFF builds, so `make tb-l2c` and `make tb-l2c-dh` are byte-identical.
+static std::mt19937 dw_rng(DEFAULT_SEED ^ 0x0D0DBEEFu);
+static void tick();
+
+struct DwBurst {
+    uint32_t id = 0;
+    uint64_t addr = 0;
+    int      beats = 1;
+    std::vector<std::array<uint8_t,16>> data;
+    std::vector<uint16_t> strb;
+    int      wbeat = 0;
+    int      w_lag = 0;          // cycles the W stream waits after this AW is accepted
+    uint64_t w_ok_at = 0;
+    bool     aw_done = false, done = false;
+    uint8_t  bresp = 0;
+    uint64_t t_issue = 0, t_aw = 0, t_wl = 0, t_b = 0;
+    int      tag = 0;            // caller's label (scenario bookkeeping)
+};
+static std::deque<std::shared_ptr<DwBurst>> dw_pending;   // queued, AW not yet presented
+static std::shared_ptr<DwBurst>             dw_aw_cur;    // AW being presented
+static std::deque<std::shared_ptr<DwBurst>> dw_w_q;       // AW order; W drains from the front
+static std::map<uint32_t, std::deque<std::shared_ptr<DwBurst>>> dw_awaiting_b;
+static bool     g_dw_unmatched = false;
+static uint64_t g_dw_aw_hs = 0, g_dw_w_hs = 0, g_dw_b_hs = 0;
+static int      g_dw_bready_pct = 100;  // the contract: bready held high
+static bool     g_dw_w_early = false;   // offer W while its own AW is still being offered
+static bool     g_dw_is_rom  = false;   // the tb's stand-in for fpga_top's ROM-mirror decode
+// Callback run on the settled pre-edge snapshot of a B handshake -- i.e.
+// "the core saw B this cycle".  The ordering scenarios use it to launch
+// the gated read on the very next cycle, the tightest a core can manage.
+static std::function<void(const std::shared_ptr<DwBurst>&)> g_dw_on_b;
+struct DwFdStats { uint64_t acc_dw = 0, hot_avail = 0, over_gfull = 0; };
+static DwFdStats g_dwfd;
+
+static bool dw_enabled() { return dut->dbg_dw_en != 0; }
+
+static void dw_drive_comb() {
+    dut->dw_aw_is_rom = g_dw_is_rom ? 1 : 0;
+    if (dw_aw_cur) {
+        dut->dw_axi_awvalid = 1;
+        dut->dw_axi_awid    = dw_aw_cur->id;
+        dut->dw_axi_awaddr  = static_cast<uint32_t>(dw_aw_cur->addr);
+        dut->dw_axi_awlen   = dw_aw_cur->beats - 1;
+        dut->dw_axi_awsize  = 4;
+        dut->dw_axi_awburst = 1;
+    } else {
+        dut->dw_axi_awvalid = 0;
+    }
+    bool wv = false;
+    if (!dw_w_q.empty()) {
+        auto& f = dw_w_q.front();
+        if ((f->aw_done && sim_time >= f->w_ok_at) || (g_dw_w_early && !f->aw_done)) {
+            wv = true;
+            set_wide_bytes(dut->dw_axi_wdata, f->data[f->wbeat].data(), 16);
+            dut->dw_axi_wstrb = f->strb[f->wbeat];
+            dut->dw_axi_wlast = (f->wbeat == f->beats - 1) ? 1 : 0;
+        }
+    }
+    dut->dw_axi_wvalid = wv ? 1 : 0;
+    dut->dw_axi_bready = (static_cast<int>(dw_rng() % 100) < g_dw_bready_pct) ? 1 : 0;
+}
+
+static void dw_pump_issue() {
+    if (!dw_aw_cur && !dw_pending.empty()) {
+        dw_aw_cur = dw_pending.front(); dw_pending.pop_front();
+        dw_w_q.push_back(dw_aw_cur);
+    }
+}
+
+static void dw_latch_edge() {
+    if (dut->dw_axi_awvalid && dut->dw_axi_awready && dw_aw_cur) {
+        g_dw_aw_hs++;
+        dw_aw_cur->aw_done = true; dw_aw_cur->t_aw = sim_time;
+        dw_aw_cur->w_ok_at = sim_time + 1 + static_cast<uint64_t>(dw_aw_cur->w_lag);
+        dw_awaiting_b[dw_aw_cur->id].push_back(dw_aw_cur);
+        dw_aw_cur = nullptr;
+    }
+    if (dut->dw_axi_wvalid && dut->dw_axi_wready && !dw_w_q.empty()) {
+        g_dw_w_hs++;
+        auto f = dw_w_q.front();
+        f->wbeat++;
+        if (f->wbeat == f->beats) { f->t_wl = sim_time; dw_w_q.pop_front(); }
+    }
+    if (dut->dw_axi_bvalid && dut->dw_axi_bready) {
+        g_dw_b_hs++;
+        const uint32_t id = dut->dw_axi_bid;
+        auto it = dw_awaiting_b.find(id);
+        if (it == dw_awaiting_b.end() || it->second.empty()) {
+            if (!g_suppress_unmatched_check) {
+                printf("  UNEXPECTED dw B for id=%u t=%llu -- a hot-door B with no outstanding "
+                       "write (duplicate/phantom/misrouted)\n", id, (unsigned long long)sim_time);
+                g_dw_unmatched = true;
+            }
+        } else {
+            auto f = it->second.front(); it->second.pop_front();
+            if (it->second.empty()) dw_awaiting_b.erase(it);
+            f->bresp = dut->dw_axi_bresp; f->t_b = sim_time; f->done = true;
+            // A B for a burst whose W has not fully drained is a protocol
+            // violation in its own right (and the posted-write shape).
+            if (f->wbeat != f->beats && !g_suppress_unmatched_check) {
+                printf("  dw B for id=%u arrived with only %d of %d W beats sent t=%llu\n",
+                       id, f->wbeat, f->beats, (unsigned long long)sim_time);
+                g_dw_unmatched = true;
+            }
+            if (g_dw_on_b) g_dw_on_b(f);
+        }
+    }
+}
+
+static void dw_sample_taps() {
+    if (dut->dbg_acc_dw)    g_dwfd.acc_dw++;
+    if (dut->dbg_hot_avail) g_dwfd.hot_avail++;
+    if (dut->dbg_dw_over_gfull) g_dwfd.over_gfull++;
+}
+
+static std::shared_ptr<DwBurst> dw_issue(uint64_t addr,
+                                         const std::vector<std::array<uint8_t,16>>& data,
+                                         const std::vector<uint16_t>& strb, int id = -1,
+                                         int w_lag = 0) {
+    static int rr = 0;
+    auto b = std::make_shared<DwBurst>();
+    b->id = (id >= 0) ? static_cast<uint32_t>(id) : static_cast<uint32_t>((rr++) & 3);
+    b->addr = addr; b->beats = static_cast<int>(data.size());
+    b->data = data; b->strb = strb; b->w_lag = w_lag; b->t_issue = sim_time;
+    dw_pending.push_back(b);
+    return b;
+}
+static std::array<uint8_t,16> dw_mkdata(uint8_t seed) {
+    std::array<uint8_t,16> d{};
+    for (int i = 0; i < 16; i++) d[i] = static_cast<uint8_t>((seed * 7 + i * 13 + 1) & 0xFF);
+    return d;
+}
+static std::shared_ptr<DwBurst> dw_issue_full(uint64_t addr, uint8_t seed, int id = -1, int w_lag = 0) {
+    return dw_issue(addr, {dw_mkdata(seed)}, {0xFFFF}, id, w_lag);
+}
+// Fold a completed OKAY write into the golden model, respecting strobes.
+static void dw_golden_apply(const DwBurst& b) {
+    for (int k = 0; k < b.beats; k++) {
+        const uint64_t a = b.addr + static_cast<uint64_t>(k) * 16;
+        for (int i = 0; i < 16; i++) if ((b.strb[k] >> i) & 1) golden[a + i] = b.data[k][i];
+        touched[a] = true;
+    }
+}
+static bool dw_wait(const std::shared_ptr<DwBurst>& b, int max_cycles = 40000) {
+    for (int i = 0; i < max_cycles && !b->done; i++) tick();
+    return b->done;
+}
+static bool dw_idle() {
+    return dw_pending.empty() && !dw_aw_cur && dw_w_q.empty() && dw_awaiting_b.empty();
+}
+static void dw_drain(int max_cycles = 60000) {
+    for (int i = 0; i < max_cycles && !dw_idle(); i++) tick();
+}
+
 static void req_drive_comb() {
     const std::shared_ptr<WBurst>& aw_cur = g_aw_runahead ? aw_issuing : w_issuing;
     if (aw_cur && !aw_cur->aw_done) {
@@ -1010,8 +1180,8 @@ static bool g_ev_tap_violation = false;
 
 static void tick() {
     dut->clk = 0; eval();
-    req_pump_issue(); dh_pump_issue();
-    mem_drive_comb(); mem_drive_rdata(); req_drive_comb(); dh_drive_comb();
+    req_pump_issue(); dh_pump_issue(); dw_pump_issue();
+    mem_drive_comb(); mem_drive_rdata(); req_drive_comb(); dh_drive_comb(); dw_drive_comb();
     eval();
     g_ev.cycles++;
     {
@@ -1053,6 +1223,7 @@ static void tick() {
     if (dut->dbg_vb_seq_busy)   g_ev.seq_busy++;
     by_sample_taps();
     dh_sample_taps();
+    dw_sample_taps();
     if (dut->rst) by_reset_epoch();
     {
         // Front-door sampling.  Same phase as the eviction taps above:
@@ -1093,7 +1264,7 @@ static void tick() {
         prev_hdr_refused = dut->dbg_fd_ar_stall || dut->dbg_fd_aw_stall;
     }
     if (dut->m_axi_rvalid && !dut->m_axi_rready) g_r_stall_cycles++;
-    mem_latch_edge(); by_latch_edge(); req_latch_edge(); dh_latch_edge();
+    mem_latch_edge(); by_latch_edge(); req_latch_edge(); dh_latch_edge(); dw_latch_edge();
     mem_check_stability(); req_check_stability();
     dut->clk = 1; eval();
     sim_time++;
@@ -1109,6 +1280,9 @@ static void reset_dut() {
     // tb's 16 MB cacheable span.
     dut->dh_axi_arvalid = 0; dut->dh_axi_rready = 1;
     dut->dh_ram_window_lg2 = g_dh_win_lg2; dut->dh_ar_is_rom = 0;
+    // P6W: the hot write door starts quiet too; B is always accepted.
+    dut->dw_axi_awvalid = 0; dut->dw_axi_wvalid = 0; dut->dw_axi_bready = 1; dut->dw_aw_is_rom = 0;
+    dut->dw_abandon = 0;
     dut->m_axi_awready = 0; dut->m_axi_wready = 0; dut->m_axi_arready = 0;
     dut->m_axi_bvalid = 0; dut->m_axi_rvalid = 0;
     eval();
@@ -4807,6 +4981,976 @@ static bool test_dh_single_outstanding_parity() {
 }
 
 
+// ═════════════════════════════════════════════════════════════════════════
+// P6W: THE HOT WRITE DOOR (l2c DW_PORT_EN, `make tb-l2c-dw`)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Every scenario below returns WITHOUT PRINTING when the build has no write
+// door, so `make tb-l2c` and `make tb-l2c-dh` stay byte-identical to the
+// tree before P6W -- that is the OFF-is-unchanged check, and it is a diff
+// of the whole output file, not a PASS count.
+//
+// None of them resets the DUT (see the note in the first dh scenario).
+#define DW_SKIP_IF_OFF() do { if (!dw_enabled()) return true; } while (0)
+
+// Deterministic, always-ready memory for a measured window; restored by
+// the matching PerfEnv destructor so a scenario cannot leak its settings.
+struct PerfEnv {
+    bool a, f; int lat, jit, gap;
+    PerfEnv(int latency = 40) : a(g_perf_always_ready), f(g_mem_force_ready),
+        lat(g_ddr_latency_base), jit(g_ddr_latency_jitter), gap(g_ddr_beat_gap_max) {
+        g_perf_always_ready = true; g_mem_force_ready = true;
+        g_ddr_latency_base = latency; g_ddr_latency_jitter = 0; g_ddr_beat_gap_max = 0;
+    }
+    ~PerfEnv() {
+        g_perf_always_ready = a; g_mem_force_ready = f;
+        g_ddr_latency_base = lat; g_ddr_latency_jitter = jit; g_ddr_beat_gap_max = gap;
+    }
+};
+
+static bool dh_read_matches(const std::shared_ptr<DhBurst>& b) {
+    if (!b->done || static_cast<int>(b->got.size()) != b->beats) return false;
+    for (int k = 0; k < b->beats; k++)
+        if (std::memcmp(b->got[k].data(), &golden[dh_beat_addr(*b, k)], 16) != 0) return false;
+    return true;
+}
+
+// ── W1. The door works: every write shape reaches L2 and reads back ─────
+static bool test_dw_write_then_read_both_doors() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    const uint64_t base = 0x0011'0000ull;
+    // (a) full-strobe 16 B into a FRESH line: a no-fetch install, so the
+    //     bytes live only in L2 afterwards -- DRAM must still differ.
+    {
+        const uint64_t a = base;
+        auto w = dw_issue_full(a, 0x21, 0);
+        CHECK("dw full-strobe write completes", dw_wait(w));
+        CHECK("dw full-strobe write is OKAY", w->bresp == 0);
+        dw_golden_apply(*w);
+        CHECK("ANTI-VACUITY: the write was installed in L2, not written through to DRAM",
+              std::memcmp(&golden[a], &backing[a], 16) != 0);
+        auto r = dh_issue(a, 1, 1, 0);
+        CHECK("hot read of the hot write completes", dh_wait(r));
+        CHECK("hot read returns the hot write", dh_read_matches(r));
+        dh_free(r);
+        CHECK("cold read returns the hot write", do_read_check(a, "dw_w1a_cold"));
+    }
+    // (b) partial strobe into a fresh line: a MISS that must fill from DRAM
+    //     and merge -- B comes from the MSHR after install, not the hit path.
+    {
+        const uint64_t a = base + 0x1000 + 16;
+        const uint64_t t0 = sim_time;
+        auto w = dw_issue(a, {dw_mkdata(0x33)}, {0x0FF0}, 1);
+        CHECK("dw partial write completes", dw_wait(w));
+        CHECK("dw partial write is OKAY", w->bresp == 0);
+        CHECK("ANTI-VACUITY: the partial write took the fill path (B after a DRAM round trip)",
+              w->t_b - t0 > static_cast<uint64_t>(g_ddr_latency_base) / 2);
+        dw_golden_apply(*w);
+        auto r = dh_issue(a, 1, 1, 1);
+        CHECK("hot read of the partial write completes", dh_wait(r));
+        CHECK("hot read merges the partial write over DRAM's bytes", dh_read_matches(r));
+        dh_free(r);
+        CHECK("cold read agrees", do_read_check(a, "dw_w1b_cold"));
+    }
+    // (c) a 64 B four-beat burst (the 64 B-sector writeback shape) and a
+    //     128 B eight-beat one spanning two lines.
+    for (int beats : {4, 8}) {
+        const uint64_t a = base + 0x2000 + static_cast<uint64_t>(beats) * 0x100;
+        std::vector<std::array<uint8_t,16>> d; std::vector<uint16_t> s;
+        for (int k = 0; k < beats; k++) { d.push_back(dw_mkdata(static_cast<uint8_t>(0x40 + k + beats))); s.push_back(0xFFFF); }
+        auto w = dw_issue(a, d, s, 2);
+        CHECK("dw burst write completes", dw_wait(w));
+        CHECK("dw burst write is OKAY", w->bresp == 0);
+        dw_golden_apply(*w);
+        auto r = dh_issue(a, beats, 1, 2);
+        CHECK("hot read of the burst completes", dh_wait(r));
+        CHECK("hot read returns every beat of the burst", dh_read_matches(r));
+        dh_free(r);
+        for (int k = 0; k < beats; k++)
+            CHECK("cold read agrees beat by beat",
+                  do_read_check(a + static_cast<uint64_t>(k) * 16, "dw_w1c_cold"));
+    }
+    dw_drain(); dh_drain();
+    return ok;
+}
+
+// ── W2. The write guard ─────────────────────────────────────────────────
+// Out of window -> DECERR with DRAM untouched; ROM mirror -> dropped with
+// OKAY (the crossbar's CPU-ROM-write policy); and B order per ID holds
+// across a locally-answered burst.
+static bool test_dw_window_guard() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    // The SILICON-shaped failure, caught by DATA rather than by an l2c
+    // assertion: shrink the RAM window to 4 MiB so an ordinary cacheable
+    // address (5 MiB) is out of it.  A guard that forwarded it -- as DECERR
+    // or as a "dropped" ROM write -- would put the bytes in L2/DRAM, and a
+    // cold read of that address would return them.
+    {
+        const int old_win = g_dh_win_lg2;
+        g_dh_win_lg2 = 22;
+        const uint64_t hole = 0x0050'0040ull;
+        auto w = dw_issue_full(hole, 0x6A, 0);
+        CHECK("small-window out-of-window write completes", dw_wait(w));
+        CHECK("small-window out-of-window write is DECERR", w->bresp == 3);
+        g_dw_is_rom = true;
+        auto r = dw_issue_full(hole + 16, 0x6B, 0);
+        CHECK("small-window ROM write completes", dw_wait(r));
+        CHECK("small-window ROM write is dropped with OKAY", r->bresp == 0);
+        g_dw_is_rom = false;
+        g_dh_win_lg2 = old_win;
+        CHECK("a DECERR'd hot write left memory untouched", do_read_check(hole, "dw_guard_hole"));
+        CHECK("a dropped ROM hot write left memory untouched", do_read_check(hole + 16, "dw_guard_hole_rom"));
+    }
+    // BYPASS_BASE (0x0100_0000) is outside the guard's 16 MB window and is a
+    // BYPASS window of l2c's: if the guard forwarded it, l2c_ctrl's
+    // "non-LSU source routed to the bypass engine" assertion would kill the
+    // run, and on hardware it would be written to DRAM at addr mod size.
+    const uint64_t oow = BYPASS_BASE + 0x40;
+    std::array<uint8_t,16> before{}, alias_before{};
+    std::memcpy(before.data(), &backing[oow], 16);
+    std::memcpy(alias_before.data(), &backing[oow - BYPASS_BASE], 16);
+    const uint16_t fc0 = dut->dw_guard_fault_count, dc0 = dut->dw_guard_drop_count;
+    {
+        auto w = dw_issue_full(oow, 0x5A, 1);
+        CHECK("out-of-window hot write completes", dw_wait(w));
+        CHECK("out-of-window hot write is DECERR", w->bresp == 3);
+    }
+    CHECK("the guard counted the fault", dut->dw_guard_fault_count == static_cast<uint16_t>(fc0 + 1));
+    // ROM: the tb's stand-in for fpga_top's ROM-mirror decode, on the same
+    // out-of-window address, so a guard that FORWARDED ROM writes would hit
+    // the same bypass-window assertion.
+    g_dw_is_rom = true;
+    {
+        auto w = dw_issue_full(oow + 0x40, 0x5B, 1);
+        CHECK("ROM-mirror hot write completes", dw_wait(w));
+        CHECK("ROM-mirror hot write is dropped with OKAY", w->bresp == 0);
+    }
+    g_dw_is_rom = false;
+    CHECK("the guard counted the drop", dut->dw_guard_drop_count == static_cast<uint16_t>(dc0 + 1));
+    for (int i = 0; i < 200; i++) tick();
+    CHECK("DRAM at the out-of-window address is untouched",
+          std::memcmp(before.data(), &backing[oow], 16) == 0);
+    CHECK("DRAM at its in-window alias is untouched",
+          std::memcmp(alias_before.data(), &backing[oow - BYPASS_BASE], 16) == 0);
+    // Same-ID B order across a local answer: a forwarded write that must
+    // FILL (partial strobe, fresh line, DDR latency 200) followed by an
+    // out-of-window write with the same ID.  The local DECERR must not
+    // overtake the forwarded OKAY.
+    {
+        const int old_lat = g_ddr_latency_base;
+        g_ddr_latency_base = 200;
+        const uint64_t slow = 0x0011'8000ull + 32;
+        auto w0 = dw_issue(slow, {dw_mkdata(0x61)}, {0x00F0}, 3);
+        auto w1 = dw_issue_full(oow + 0x80, 0x62, 3);
+        CHECK("forwarded slow write completes", dw_wait(w0, 60000));
+        CHECK("local DECERR write completes", dw_wait(w1, 60000));
+        CHECK("same-ID B order: the forwarded write's B is OKAY (it was not answered by the local DECERR)",
+              w0->bresp == 0);
+        CHECK("same-ID B order: the local write's B is DECERR", w1->bresp == 3);
+        CHECK("same-ID B order: the local B came second", w1->t_b > w0->t_b);
+        if (w0->bresp == 0) dw_golden_apply(*w0);
+        g_ddr_latency_base = old_lat;
+        CHECK("the slow forwarded write landed", do_read_check(slow, "dw_guard_slow"));
+    }
+    dw_drain();
+    return ok;
+}
+
+// ── W3. Four ID namespaces, one numeric ID ──────────────────────────────
+// LSU id0 (read and write), hot READ id0 and hot WRITE id0 are four
+// different transactions.  l2c keeps them apart with {src, id} plus the
+// write marker; a collision would either stall one behind another or send
+// a response to the wrong port.  Every channel's unmatched-response check
+// is live for the whole run.
+static bool test_dw_id_namespaces() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    const uint64_t hot_r = 0x0012'0000ull, hot_w = 0x0012'8000ull;
+    static constexpr uint64_t lsu_addrs[] = { 0x0000'91a0ull, 0x0000'02c0ull };
+    for (int iter = 0; iter < 200 && ok; iter++) {
+        const uint64_t la = lsu_addrs[iter & 1];
+        const uint64_t ra = hot_r + static_cast<uint64_t>(iter % 64) * LINE_BYTES;
+        const uint64_t wa = hot_w + static_cast<uint64_t>(iter % 64) * LINE_BYTES + 16 * (iter & 3);
+        issue_read_explicit_id(la, 0);
+        auto hr = dh_issue(ra, 1, 1, 0);
+        auto hw = dw_issue_full(wa, static_cast<uint8_t>(iter), 0);
+        const uint64_t start = sim_time;
+        while ((!r_done.count(0) || !hr->done || !hw->done) && sim_time - start < 20000) tick();
+        CHECK("LSU id0 read completes", r_done.count(0) != 0);
+        CHECK("hot id0 read completes", hr->done);
+        CHECK("hot id0 write completes", hw->done);
+        if (!r_done.count(0) || !hr->done || !hw->done) { ok = false; break; }
+        CHECK("hot id0 write is OKAY", hw->bresp == 0);
+        dw_golden_apply(*hw);
+        CHECK("LSU id0 kept its own line", std::memcmp(r_done[0]->got[0].data(), &golden[la], 16) == 0);
+        CHECK("hot id0 read kept its own line", dh_read_matches(hr));
+        r_done.erase(0);
+        dh_free(hr);
+    }
+    for (int i = 0; i < 64; i++)
+        CHECK("every hot id0 write landed",
+              do_read_check(hot_w + static_cast<uint64_t>(i) * LINE_BYTES + 16 * (i & 3), "dw_ns"));
+    dh_drain(); dw_drain();
+    return ok;
+}
+
+// ── W4. THE ORDERING TEST: B means visible, and ONLY B does ─────────────
+//
+// The contract the core builds its writeback gate on: a hot read of line X
+// launched the cycle after the B of a write to X -- on either door -- MUST
+// return the written bytes.  Written the `mmu-config-latch-vs-live` way:
+// the question is what would FAIL, so it is run in two phases.
+//
+//  GATED  (the contract): read launched on the B handshake.  Must never be
+//         stale.  The write shapes cover every path B can come from: a hit,
+//         a no-fetch install that evicts a dirty victim, a partial-strobe
+//         miss answered by the MSHR after a DRAM fill, and a line whose
+//         dirty copy is held in the victim buffer.  W is made to LAG its AW
+//         by a random 0..24 cycles (legal AXI; a writeback buffer can do it)
+//         so that anything that answers B before the W beat is accepted --
+//         a posted write -- is caught, and a background hot-read stream
+//         plus a cold stream keep the front door contended.
+//
+//  UNGATED (the control): the same writes, with the read launched in the
+//         same cycle as the write instead of after its B.  The fabric gives
+//         no read/write channel ordering (AXI does not), so some of these
+//         MUST come back stale.  If none did, this test could not see
+//         staleness at all and the GATED phase would be vacuous -- and the
+//         core's gate would be decoration.  So stale > 0 is REQUIRED.
+static bool test_dw_read_after_b_observes_write() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    const int old_lat = g_ddr_latency_base, old_jit = g_ddr_latency_jitter;
+    g_ddr_latency_base = 120; g_ddr_latency_jitter = 16;
+    const uint64_t base = 0x0013'0000ull;
+    const uint64_t set_stride = 4096ull * LINE_BYTES;
+    std::mt19937 lr(0xB0B0u);
+
+    // Background: a hot read stream over a warmed, disjoint region.
+    const uint64_t bg = 0x0017'0000ull;
+    for (uint64_t a = bg; a < bg + 2048; a += LINE_BYTES) {
+        auto b = dh_issue(a, 4); if (!dh_wait(b)) { CHECK("bg warm", false); break; } dh_free(b);
+    }
+    // Background hot reads are TRACKED bursts, never g_dh_stream: the dh
+    // model attributes an R beat to the front of its ID's queue, so an
+    // untracked stream burst sharing an ID with a probe would be credited to
+    // the probe -- a tb artefact that looks exactly like a stale read.
+    std::vector<std::shared_ptr<DhBurst>> bgr;
+    struct ColdW { uint32_t id; uint64_t a; uint8_t seed; };
+
+    struct Probe { std::shared_ptr<DwBurst> w; std::shared_ptr<DhBurst> r; uint32_t cold_id = 0;
+                   bool cold = false, cold_issued = false, cold_done = false; int shape = 0; uint64_t addr = 0;
+                   std::array<uint8_t,16> old_bytes{}, cold_got{}; };
+    std::vector<std::shared_ptr<Probe>> probes;
+    std::map<DwBurst*, std::shared_ptr<Probe>> by_w;
+    std::vector<std::shared_ptr<DwBurst>> fillers;
+    std::set<uint64_t> used;   // each probe address at most once per phase
+    std::vector<ColdW> cold_w;
+    bool gated = true;
+    // THE GATE, modelled: on B, launch the read of the same 16 B.
+    g_dw_on_b = [&](const std::shared_ptr<DwBurst>& w) {
+        if (!gated) return;
+        auto it = by_w.find(w.get());
+        if (it == by_w.end()) return;
+        auto& p = it->second;
+        if (w->bresp == 0) dw_golden_apply(*w);   // B == visible: golden moves NOW
+        if (p->cold) { p->cold_id = issue_read(p->addr); p->cold_issued = true; }
+        else         { p->r = dh_issue(p->addr, 1, 1, static_cast<int>(w->id)); }
+    };
+    // Cold-door completions are harvested as they land, so the s_axi id pool
+    // (59 ids) is never held by finished probes.
+    std::vector<ColdW> *cold_w_p = nullptr;
+    auto harvest = [&]() {
+        for (auto& p : probes) {
+            if (p->cold && p->cold_issued && !p->cold_done && r_done.count(p->cold_id)) {
+                std::memcpy(p->cold_got.data(), r_done[p->cold_id]->got[0].data(), 16);
+                p->cold_done = true;
+                free_read(p->cold_id);
+            }
+        }
+        if (cold_w_p) for (auto it = cold_w_p->begin(); it != cold_w_p->end(); ) {
+            if (w_done.count(it->id)) {
+                CHECK("background cold write OKAY", w_done[it->id]->resp_ok);
+                for (int b = 0; b < 16; b++) golden[it->a + b] = static_cast<uint8_t>((it->seed + b) & 0xFF);
+                touched[it->a] = true;
+                free_write(it->id);
+                it = cold_w_p->erase(it);
+            } else ++it;
+        }
+    };
+    int shape_n[4] = {0, 0, 0, 0};
+    uint64_t slow_b = 0;
+    const DhFdStats s0 = g_dhfd;
+    auto run_phase = [&](bool gate, int n) {
+        gated = gate;
+        for (int i = 0; i < n; i++) {
+            auto p = std::make_shared<Probe>();
+            p->shape = static_cast<int>(lr() % 4);
+            p->cold  = (lr() % 3) == 0;
+            const uint64_t slot = static_cast<uint64_t>(i + (gate ? 0 : 4096));
+            switch (p->shape) {
+            case 0: {   // resident line: warm it first, then overwrite (hit path)
+                p->addr = base + (slot % 256) * LINE_BYTES + 16 * (lr() % 4);
+                if (!touched[p->addr]) do_write_apply(p->addr, static_cast<uint8_t>(slot), "dw_ord_warm");
+                break; }
+            case 1:     // fresh tag in one of 8 hot sets: no-fetch install, evicts
+                p->addr = base + 0x4000 + (slot % 8) * LINE_BYTES +
+                          (((slot / 8) % 44) + 1) * set_stride + 16 * (lr() % 4);
+                break;
+            case 2:     // fresh line, partial strobe: MSHR fill, B after install
+                p->addr = base + 0x8000 + slot * LINE_BYTES + 16 * (lr() % 4);
+                break;
+            default:    // another fresh tag of the same 8 sets: same-set churn
+                p->addr = base + 0x4000 + (slot % 8) * LINE_BYTES +
+                          ((((slot / 8) + 37) % 44) + 1) * set_stride + 16 * (lr() % 4);
+                break;
+            }
+            {
+                int tries = 0;
+                while (used.count(p->addr) && tries < 4) {
+                    p->addr = (p->addr & ~0x30ull) | ((p->addr + 16) & 0x30ull); tries++;
+                }
+                if (used.count(p->addr)) continue;
+                used.insert(p->addr);
+            }
+            std::memcpy(p->old_bytes.data(), &golden[p->addr], 16);
+            const uint16_t strb = (p->shape == 2) ? static_cast<uint16_t>(0x0F0F << (lr() % 4)) : 0xFFFF;
+            const int lag = static_cast<int>(lr() % 25);
+            // Pre-issue 0..3 filler writes so the probe's W queues behind
+            // others -- a posted B would then run far ahead of its data.
+            const int fill = static_cast<int>(lr() % 4);
+            for (int f = 0; f < fill; f++) {
+                fillers.push_back(dw_issue_full(base + 0xC000 + ((slot * 4 + f) % 128) * 16,
+                                                static_cast<uint8_t>(slot + f), static_cast<int>(lr() % 4), lag));
+            }
+            p->w = dw_issue(p->addr, {dw_mkdata(static_cast<uint8_t>(slot * 3 + 1))}, {strb},
+                            static_cast<int>(lr() % 4), lag);
+            by_w[p->w.get()] = p;
+            if (!gate) {
+                // UNGATED: launch the read NOW, alongside the write.
+                if (p->cold) { p->cold_id = issue_read(p->addr); p->cold_issued = true; }
+                else         p->r = dh_issue(p->addr, 1, 1, static_cast<int>(p->w->id));
+            }
+            shape_n[p->shape]++;
+            probes.push_back(p);
+            // Keep the hot class contended while this probe is in flight:
+            // 0..3 tracked background reads plus a cold write to its own
+            // region (so the cold path, the fairness slot and the hazard
+            // yield all take turns at the door).
+            const int nbg = static_cast<int>(lr() % 4);
+            for (int k = 0; k < nbg; k++)
+                bgr.push_back(dh_issue(bg + ((slot * 4 + k) % 32) * LINE_BYTES + 16 * (k & 3), 1, 1,
+                                       static_cast<int>(lr() % 4)));
+            if ((lr() % 2) == 0) {
+                const uint64_t ca = 0x0018'0000ull + ((slot * 16) % 2048);
+                const uint32_t cid = issue_write_full(ca, static_cast<uint8_t>(slot));
+                cold_w.push_back({cid, ca, static_cast<uint8_t>(slot)});
+            }
+            for (int c = 0; c < 6; c++) { tick(); harvest(); }
+        }
+        for (int i = 0; i < 240000 && !(dw_idle() && dh_pending_issue.empty() && !dh_issuing &&
+                                          dh_awaiting.empty() && r_awaiting.empty() && !r_issuing &&
+                                          r_pending_issue.empty() && w_awaiting_b.empty() && !w_issuing &&
+                                          w_pending_issue.empty()); i++) { tick(); harvest(); }
+        harvest();
+        used.clear();
+        for (auto& b : bgr) {
+            CHECK("background hot read completed and is exact", b->done && dh_read_matches(b));
+        }
+        bgr.clear();
+        CHECK("every background cold write completed", cold_w.empty());
+        cold_w.clear();
+    };
+    // Filler writes' golden: fold on B (they are never probed, and their
+    // addresses are disjoint from every probe's).
+    auto fold_fillers = [&]() {
+        // Filler writes are never probed and their region is disjoint from
+        // every probe's; they are folded into golden in issue order, which
+        // is also their per-address completion order (same region, drained).
+        for (auto& f : fillers) {
+            CHECK("filler write completed OKAY", f->done && f->bresp == 0);
+            if (f->done && f->bresp == 0) dw_golden_apply(*f);
+        }
+        fillers.clear();
+    };
+
+    cold_w_p = &cold_w;
+    // ---- GATED -------------------------------------------------------
+    run_phase(true, 240);
+    fold_fillers();
+    int gated_stale = 0, gated_checked = 0;
+    for (auto& p : probes) {
+        CHECK("gated probe write completed OKAY", p->w->done && p->w->bresp == 0);
+        if (p->shape == 2 && p->w->t_b - p->w->t_issue > 100) slow_b++;
+        const uint8_t* got = nullptr;
+        if (p->cold) {
+            if (!p->cold_done) { CHECK("gated cold read completed", false); continue; }
+            got = p->cold_got.data();
+        } else {
+            if (!p->r || !p->r->done) { CHECK("gated hot read completed", false); continue; }
+            got = p->r->got[0].data();
+        }
+        // Expected: the old bytes with the probe's strobed bytes replaced.
+        std::array<uint8_t,16> exp = p->old_bytes;
+        for (int i = 0; i < 16; i++) if ((p->w->strb[0] >> i) & 1) exp[i] = p->w->data[0][i];
+        gated_checked++;
+        if (std::memcmp(got, exp.data(), 16) != 0) {
+            gated_stale++;
+            if (gated_stale <= 4)
+                printf("  dw_order GATED STALE: shape=%d %s read @0x%llx got=%02x%02x.. exp=%02x%02x.. "
+                       "(w: aw@%llu wlast@%llu b@%llu)\n", p->shape, p->cold ? "cold" : "hot",
+                       (unsigned long long)p->addr, got[0], got[1], exp[0], exp[1],
+                       (unsigned long long)p->w->t_aw, (unsigned long long)p->w->t_wl,
+                       (unsigned long long)p->w->t_b);
+        }
+        if (!p->cold) dh_free(p->r);
+    }
+    probes.clear();
+    const DhFdStats dg = dhfd_diff(g_dhfd, s0);
+    printf("  dw_order GATED: %d probes checked (hit %d, install/evict %d, fill %d, same-set churn %d; "
+           "%llu fill-path B's >100 cyc), %d stale; victim interlock %llu cyc\n",
+           gated_checked, shape_n[0], shape_n[1], shape_n[2], shape_n[3],
+           (unsigned long long)slow_b, gated_stale,
+           (unsigned long long)dg.victim_query_hit);
+    CHECK("GATED: a read launched on B NEVER returns pre-write bytes", gated_stale == 0);
+    CHECK("ANTI-VACUITY: every write shape was exercised",
+          shape_n[0] > 20 && shape_n[1] > 20 && shape_n[2] > 20 && shape_n[3] > 20);
+    CHECK("ANTI-VACUITY: fill-path writes really waited on DRAM before their B", slow_b > 10);
+
+    // ---- UNGATED control ---------------------------------------------
+    int ug_stale = 0, ug_new = 0, ug_garbage = 0;
+    run_phase(false, 160);
+    for (auto& p : probes) {
+        if (p->w->done && p->w->bresp == 0) dw_golden_apply(*p->w);
+        const uint8_t* got = nullptr;
+        if (p->cold) { if (!p->cold_done) continue; got = p->cold_got.data(); }
+        else { if (!p->r || !p->r->done) continue; got = p->r->got[0].data(); }
+        std::array<uint8_t,16> nw = p->old_bytes;
+        for (int i = 0; i < 16; i++) if ((p->w->strb[0] >> i) & 1) nw[i] = p->w->data[0][i];
+        if (std::memcmp(got, nw.data(), 16) == 0) ug_new++;
+        else if (std::memcmp(got, p->old_bytes.data(), 16) == 0) ug_stale++;
+        else ug_garbage++;
+        if (!p->cold) dh_free(p->r);
+    }
+    fold_fillers();
+    probes.clear();
+    printf("  dw_order UNGATED control: %d new, %d stale (read overtook the write), %d neither\n",
+           ug_new, ug_stale, ug_garbage);
+    CHECK("ANTI-VACUITY: WITHOUT the gate a read DOES overtake an un-B'd write -- the fabric "
+          "gives no read/write ordering, so the core's gate is load-bearing and this test can "
+          "see a stale read", ug_stale > 0);
+    CHECK("UNGATED reads return the old bytes or the new ones, never a mixture", ug_garbage == 0);
+
+    g_dw_on_b = nullptr;
+    g_ddr_latency_base = old_lat; g_ddr_latency_jitter = old_jit;
+    dh_drain(); dw_drain();
+    return ok;
+}
+
+// ── W4b. A hot WRITE to a line whose dirty copy is held in the victim buffer
+//
+// The write-side twin of dh_reads_dirty_line_held_in_victim_buffer.  The
+// line exists ONLY in l2c_victim (evicted, writeback pinned behind a shut
+// DDR write channel), so the tag array misses.  A partial-strobe write must
+// merge over the DIRTY bytes, never over DRAM's pre-write bytes; a
+// full-strobe write must not let the older victim writeback land on top of
+// it later.  victim_query_hit is the only thing that orders either, and it
+// is shared front-door machinery -- this proves it covers the write door.
+static bool test_dw_write_to_line_held_in_victim_buffer() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    const int old_lat = g_ddr_latency_base, old_jit = g_ddr_latency_jitter;
+    g_ddr_latency_base = 200; g_ddr_latency_jitter = 0;
+    const uint64_t set_stride = 4096ull * LINE_BYTES;
+    const uint64_t base = 0x001A'0040ull;
+    constexpr int WAYS = 8;
+    // Every way of one set dirty via the HOT write door (no-fetch installs:
+    // DRAM still holds the pre-write bytes).
+    for (int w = 0; w < WAYS; w++) {
+        auto x = dw_issue_full(base + static_cast<uint64_t>(w) * set_stride, static_cast<uint8_t>(0xC1 + w), w & 3);
+        CHECK("prime a dirty way through the hot write door", dw_wait(x) && x->bresp == 0);
+        dw_golden_apply(*x);
+    }
+    bool differs = false;
+    for (int w = 0; w < WAYS && !differs; w++) {
+        const uint64_t a = base + static_cast<uint64_t>(w) * set_stride;
+        differs = std::memcmp(&golden[a], &backing[a], 16) != 0;
+    }
+    CHECK("ANTI-VACUITY: the dirty bytes differ from DRAM's", differs);
+    g_mem_block_awready = true;   // pin: no writeback can start
+    auto trig = dw_issue_full(base + static_cast<uint64_t>(WAYS) * set_stride, 0xD9, 0);
+    CHECK("eviction trigger completes with the DDR write channel pinned", dw_wait(trig, 20000));
+    if (trig->done) dw_golden_apply(*trig);
+    CHECK("the victim buffer holds the evicted dirty line", (dut->dbg_vb_occ & 0x1F) > 0);
+
+    // Now write EVERY way again through the hot door: odd ways partial
+    // strobe (must merge over the dirty bytes), even ways full strobe.
+    const DhFdStats s0 = g_dhfd;
+    std::vector<std::shared_ptr<DwBurst>> ws;
+    for (int w = 0; w < WAYS; w++) {
+        const uint64_t a = base + static_cast<uint64_t>(w) * set_stride;
+        const uint16_t strb = (w & 1) ? 0x00FF : 0xFFFF;
+        ws.push_back(dw_issue(a, {dw_mkdata(static_cast<uint8_t>(0xE0 + w))}, {strb}, (w + 1) & 3));
+    }
+    for (int i = 0; i < 4000; i++) tick();
+    int unfinished = 0;
+    for (auto& w : ws) if (!w->done) unfinished++;
+    const DhFdStats dp = dhfd_diff(g_dhfd, s0);
+    printf("  dw_vb: with the DDR write channel pinned, %d of %d hot writes are held; "
+           "victim interlock asserted for %llu cycles\n", unfinished, WAYS,
+           (unsigned long long)dp.victim_query_hit);
+    CHECK("ANTI-VACUITY: the victim-buffer interlock engaged for a hot-door WRITE", dp.victim_query_hit > 0);
+    CHECK("a hot write to a line held only in the victim buffer is HELD until it drains", unfinished > 0);
+    g_mem_block_awready = false;
+    for (auto& w : ws) {
+        CHECK("held hot write completes after the pin is released", dw_wait(w, 60000));
+        CHECK("held hot write is OKAY", w->bresp == 0);
+        dw_golden_apply(*w);
+    }
+    // Gated reads through both doors, then again after the whole set has
+    // been churned out to DRAM (so a late, older writeback would show).
+    for (int w = 0; w < WAYS; w++) {
+        const uint64_t a = base + static_cast<uint64_t>(w) * set_stride;
+        auto r = dh_issue(a, 1, 1, w & 3);
+        CHECK("hot read after the held writes completes", dh_wait(r, 60000));
+        if (!dh_read_matches(r))
+            printf("  dw_vb: STALE @0x%llx got=%02x%02x exp=%02x%02x (DRAM %02x%02x)\n",
+                   (unsigned long long)a, r->got.empty() ? 0 : r->got[0][0], r->got.empty() ? 0 : r->got[0][1],
+                   golden[a], golden[a + 1], backing[a], backing[a + 1]);
+        CHECK("hot read returns the newest bytes (partial writes merged over the DIRTY copy)", dh_read_matches(r));
+        dh_free(r);
+    }
+    for (int k = 1; k <= 12; k++) {
+        auto x = dw_issue_full(base + static_cast<uint64_t>(WAYS + k) * set_stride, static_cast<uint8_t>(k), k & 3);
+        dw_wait(x, 60000); if (x->done && x->bresp == 0) dw_golden_apply(*x);
+    }
+    dw_drain();
+    for (int i = 0; i < 4000; i++) tick();
+    for (int w = 0; w < WAYS; w++)
+        CHECK("after the set is churned to DRAM the newest bytes survive (no older writeback on top)",
+              do_read_check(base + static_cast<uint64_t>(w) * set_stride, "dw_vb_after"));
+    g_ddr_latency_base = old_lat; g_ddr_latency_jitter = old_jit;
+    return ok;
+}
+
+// ── W9. CPU reset with hot writes in flight ─────────────────────────────
+// The core's reset wipes its writeback buffer; the fabric keeps what it
+// accepted.  (a) An AW whose W burst stopped after one beat must be padded
+// to completion with no-op beats -- otherwise the NEXT core's first W beats
+// would be taken as the dead burst's data.  (b) A B still owed after the
+// reset must be swallowed, never handed to the new core's writeback buffer.
+static bool g_dw_abandon = false;
+static void dw_model_reset() {
+    // What the core's reset does to its side: forget everything.
+    dw_pending.clear(); dw_aw_cur = nullptr; dw_w_q.clear(); dw_awaiting_b.clear();
+}
+static bool test_dw_cpu_reset_mid_burst() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    const int old_lat = g_ddr_latency_base, old_jit = g_ddr_latency_jitter;
+    g_ddr_latency_base = 200; g_ddr_latency_jitter = 0;
+    const uint64_t a0 = 0x001B'0000ull, a1 = 0x001B'1000ull, a2 = 0x001B'2000ull + 16;
+    const uint64_t acc0 = g_dwfd.acc_dw, whs0 = g_dw_w_hs;
+    int expected_pads = 0;
+    for (int round = 0; round < 8; round++) {
+        const uint64_t base0 = a0 + static_cast<uint64_t>(round) * LINE_BYTES;
+        const uint64_t base1 = a1 + static_cast<uint64_t>(round) * LINE_BYTES;
+        const uint64_t slow  = a2 + static_cast<uint64_t>(round) * LINE_BYTES;
+        // (b) a slow write fully accepted before the reset (its B is ~200
+        //     cycles away when the reset hits).
+        auto ws = dw_issue(slow, {dw_mkdata(static_cast<uint8_t>(0x30 + round))}, {0x0FF0}, 1);
+        // (a) a 4-beat burst that will lose its core after `round % 3 + 1` beats.
+        std::vector<std::array<uint8_t,16>> d; std::vector<uint16_t> st;
+        for (int k = 0; k < 4; k++) { d.push_back(dw_mkdata(static_cast<uint8_t>(0x50 + round * 4 + k))); st.push_back(0xFFFF); }
+        auto w0 = dw_issue(base0, d, st, 2);
+        const int keep = (round % 3) + 1;
+        for (int i = 0; i < 4000 && !(w0->aw_done && w0->wbeat >= keep && ws->wbeat == 1); i++) tick();
+        CHECK("setup: the doomed burst sent its first beats and the slow write its data",
+              w0->aw_done && w0->wbeat >= keep && ws->wbeat == 1);
+        const int sent = w0->wbeat;
+        expected_pads += 4 - sent;
+        // RESET: the core forgets; the fabric is told.
+        dw_model_reset();
+        g_dw_abandon = true; dut->dw_abandon = 1;
+        for (int i = 0; i < 16; i++) tick();
+        g_dw_abandon = false; dut->dw_abandon = 0;
+        // The new core writes straight away -- into a guard that may still be
+        // padding the dead burst and waiting out the slow write's B.
+        std::vector<std::array<uint8_t,16>> d1; std::vector<uint16_t> st1;
+        for (int k = 0; k < 4; k++) { d1.push_back(dw_mkdata(static_cast<uint8_t>(0x90 + round * 4 + k))); st1.push_back(0xFFFF); }
+        auto w1 = dw_issue(base1, d1, st1, 2);
+        CHECK("the new core's first write completes", dw_wait(w1, 60000));
+        CHECK("the new core's first write is OKAY", w1->bresp == 0);
+        if (w1->done) dw_golden_apply(*w1);
+        // What the dead core's writes left: the beats it SENT landed, the
+        // padded ones are no-ops, and the slow write (fully accepted) landed.
+        for (int k = 0; k < sent; k++)
+            for (int i = 0; i < 16; i++) golden[base0 + 16 * k + i] = d[k][i];
+        touched[base0] = true;
+        for (int i = 0; i < 16; i++) if ((0x0FF0 >> i) & 1) golden[slow + i] = ws->data[0][i];
+        touched[slow] = true;
+        for (int i = 0; i < 400; i++) tick();
+        for (int k = 0; k < 4; k++) {
+            CHECK("dead burst: sent beats landed, padded beats wrote nothing",
+                  do_read_check(base0 + 16 * k, "dw_rst_dead"));
+            CHECK("new core's burst landed intact (its beats were not eaten as padding)",
+                  do_read_check(base1 + 16 * k, "dw_rst_new"));
+        }
+        CHECK("the slow write accepted before the reset landed", do_read_check(slow, "dw_rst_slow"));
+    }
+    CHECK("no B for a write the new core never issued reached it", !g_dw_unmatched);
+    const uint64_t pads = (g_dwfd.acc_dw - acc0) - (g_dw_w_hs - whs0);
+    printf("  dw_rst: %d beats abandoned mid-burst, %llu no-op pad beats accepted by l2c\n",
+           expected_pads, (unsigned long long)pads);
+    CHECK("ANTI-VACUITY: the guard padded exactly the abandoned beats",
+          pads == static_cast<uint64_t>(expected_pads) && expected_pads > 0);
+    g_ddr_latency_base = old_lat; g_ddr_latency_jitter = old_jit;
+    dw_drain();
+    return ok;
+}
+
+// ── W5. Same-ID B order through the MSHR ────────────────────────────────
+// A partial-strobe miss (B from the MSHR after a 200-cycle fill) followed
+// by a hit with the SAME write id must answer in that order: the hit may
+// not jump the queue even though it is ready ~200 cycles sooner.
+static bool test_dw_same_id_b_order() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    const int old_lat = g_ddr_latency_base, old_jit = g_ddr_latency_jitter;
+    g_ddr_latency_base = 200; g_ddr_latency_jitter = 0;
+    const uint64_t warm = 0x0014'0000ull;
+    CHECK("warm a line", do_write_apply(warm, 0x11, "dw_sid_warm"));
+    for (int r = 0; r < 16; r++) {
+        const uint64_t miss = 0x0014'1000ull + static_cast<uint64_t>(r) * LINE_BYTES + 16;
+        auto w0 = dw_issue(miss, {dw_mkdata(static_cast<uint8_t>(0x70 + r))}, {0x3C3C}, 2);
+        auto w1 = dw_issue_full(warm + 16 * (r & 3), static_cast<uint8_t>(0x90 + r), 2);
+        CHECK("slow same-id write completes", dw_wait(w0, 60000));
+        CHECK("fast same-id write completes", dw_wait(w1, 60000));
+        CHECK("same-id B order holds: the slow write's B came first", w0->t_b < w1->t_b);
+        CHECK("ANTI-VACUITY: the first write really was slow (MSHR fill)", w0->t_b - w0->t_aw > 150);
+        dw_golden_apply(*w0); dw_golden_apply(*w1);
+        CHECK("slow write landed", do_read_check(miss, "dw_sid_miss"));
+    }
+    g_ddr_latency_base = old_lat; g_ddr_latency_jitter = old_jit;
+    dw_drain();
+    return ok;
+}
+
+// ── W6. Hot writes interleaved with COLD gathered full-line writes ──────
+// The cold path's full-line gather (gst/flw_*) and the cold AW tracker are
+// s_axi-only machinery; a hot write winning the door while a gathered line
+// waits must neither be mistaken for that line (G_FULL masks) nor advance
+// the cold tracker.  Hot writes go to FRESH lines so a wrongly-full
+// install would mark three never-written quadrants valid.
+static bool test_dw_vs_cold_full_line_gather() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    const uint64_t cold_base = 0x0015'0000ull, hot_base = 0x0015'8000ull;
+    const uint64_t gather0 = g_fd.gather;
+    const DwFdStats w0 = g_dwfd;
+    for (int r = 0; r < 64; r++) {
+        const uint64_t ca = cold_base + static_cast<uint64_t>(r) * LINE_BYTES;
+        std::vector<std::array<uint8_t,16>> d(4); std::vector<uint16_t> s(4, 0xFFFF);
+        for (int k = 0; k < 4; k++) d[k] = dw_mkdata(static_cast<uint8_t>(0xA0 + r + k));
+        const uint32_t cid = issue_write(ca, d, s);
+        // Hot writes trickle in (W lagging AW by 1..12 cycles) so some are
+        // still arriving when the cold line has finished gathering and is
+        // waiting at G_FULL -- the overlap the masks must handle.
+        std::vector<std::shared_ptr<DwBurst>> hw;
+        for (int k = 0; k < 3; k++)
+            hw.push_back(dw_issue_full(hot_base + static_cast<uint64_t>(r * 3 + k) * LINE_BYTES + 16 * ((r + k) & 3),
+                                       static_cast<uint8_t>(0x10 + r + k), -1, 1 + ((r * 5 + k * 3) % 12)));
+        CHECK("cold full-line write completes", wait_write_done(cid, 20000));
+        if (w_done.count(cid)) {
+            CHECK("cold full-line write OKAY", w_done[cid]->resp_ok);
+            for (int k = 0; k < 4; k++)
+                for (int i = 0; i < 16; i++) golden[ca + 16 * k + i] = d[k][i];
+            touched[ca] = true;
+            free_write(cid);
+        }
+        for (auto& w : hw) {
+            CHECK("hot write completes", dw_wait(w));
+            if (w->done && w->bresp == 0) dw_golden_apply(*w);
+        }
+    }
+    for (int r = 0; r < 64; r++)
+        for (int q = 0; q < 4; q++)
+            CHECK("cold line quadrant exact",
+                  do_read_check(cold_base + static_cast<uint64_t>(r) * LINE_BYTES + 16 * q, "dw_g_cold"));
+    // Every quadrant of every hot line: the written one AND the three that
+    // must still read DRAM's bytes.
+    for (int i = 0; i < 64 * 3; i++)
+        for (int q = 0; q < 4; q++)
+            CHECK("hot line quadrant exact (written or untouched)",
+                  do_read_check(hot_base + static_cast<uint64_t>(i) * LINE_BYTES + 16 * q, "dw_g_hot"));
+    const uint64_t gathers = g_fd.gather - gather0;
+    const uint64_t over = g_dwfd.over_gfull - w0.over_gfull;
+    printf("  dw_vs_gather: %llu cold gather beats, %llu hot-write accepts, %llu of them while a "
+           "cold gathered line waited at G_FULL\n",
+           (unsigned long long)gathers, (unsigned long long)(g_dwfd.acc_dw - w0.acc_dw),
+           (unsigned long long)over);
+    CHECK("ANTI-VACUITY: the cold gather ran during this test", gathers > 0);
+    CHECK("ANTI-VACUITY: a hot write won the door while a gathered line waited at G_FULL", over > 0);
+    dw_drain();
+    return ok;
+}
+
+// ── W7. Starvation and fairness ─────────────────────────────────────────
+struct DwStream {
+    uint64_t base = 0, span = 4096, next = 0;
+    int window = 8, beats = 1;
+    bool fresh = false;          // walk fresh lines (installs) instead of a warm span
+    std::deque<std::shared_ptr<DwBurst>> live;
+    uint64_t done = 0, bytes = 0;
+};
+static void dw_stream_pump(DwStream& s) {
+    while (!s.live.empty() && s.live.front()->done) {
+        s.done++; s.bytes += 16ull * s.live.front()->beats;
+        if (s.live.front()->bresp == 0) dw_golden_apply(*s.live.front());
+        s.live.pop_front();
+    }
+    while (static_cast<int>(s.live.size()) < s.window) {
+        const uint64_t a = s.fresh ? (s.base + s.next * 16ull * s.beats)
+                                   : (s.base + (s.next * 16ull * s.beats) % s.span);
+        std::vector<std::array<uint8_t,16>> d; std::vector<uint16_t> st;
+        for (int k = 0; k < s.beats; k++) { d.push_back(dw_mkdata(static_cast<uint8_t>(s.next + k))); st.push_back(0xFFFF); }
+        s.live.push_back(dw_issue(a, d, st, static_cast<int>(s.next & 3)));
+        s.next++;
+    }
+}
+static void dw_stream_stop(DwStream& s) {
+    for (int i = 0; i < 60000 && !s.live.empty(); i++) {
+        while (!s.live.empty() && s.live.front()->done) {
+            s.done++; s.bytes += 16ull * s.live.front()->beats;
+            if (s.live.front()->bresp == 0) dw_golden_apply(*s.live.front());
+            s.live.pop_front();
+        }
+        if (!s.live.empty()) tick();
+    }
+}
+
+static bool test_dw_starvation_and_fairness() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    PerfEnv pe(40);
+    const uint64_t wbase = 0x0016'0000ull, hot_r = 0x000A'0000ull, cold_r = 0x000B'0000ull;
+    // Warm everything so the windows measure the door, not DRAM.
+    for (uint64_t a = wbase; a < wbase + 4096; a += 16) do_write_apply(a, static_cast<uint8_t>(a >> 4), "dw_fair_warm");
+    for (uint64_t a = hot_r; a < hot_r + 4096; a += LINE_BYTES) { auto b = dh_issue(a, 4); dh_wait(b); dh_free(b); }
+    for (int i = 0; i < 64; i++) do_read_check(cold_r + static_cast<uint64_t>(i) * LINE_BYTES, "dw_fair_cold_warm");
+    dh_quiesce();
+
+    // (a) saturated hot WRITES vs a saturated COLD read stream.
+    {
+        DwStream ws; ws.base = wbase; ws.window = 8;
+        ColdStream cs; cs.base = cold_r; cs.span_lines = 64;
+        const DhFdStats s0 = g_dhfd; const DwFdStats w0 = g_dwfd;
+        for (int i = 0; i < 3000; i++) { dw_stream_pump(ws); cold_stream_pump(cs, 8); tick(); }
+        const DhFdStats d = dhfd_diff(g_dhfd, s0);
+        const uint64_t hw = g_dwfd.acc_dw - w0.acc_dw;
+        const uint64_t cold = d.acc_lsu + d.acc_write;
+        printf("  dw fairness (a) hot writes vs cold reads: %llu cyc, hot-write accepts %llu, "
+               "cold accepts %llu, cold offered %llu cyc, cold-starved flag %llu cyc\n",
+               (unsigned long long)d.cycles, (unsigned long long)hw, (unsigned long long)cold,
+               (unsigned long long)d.cold_avail, (unsigned long long)d.cold_starved);
+        CHECK("ANTI-VACUITY: the cold path was contending", d.cold_avail > d.cycles / 2);
+        // A sequential 16 B write stream is refused by the array RAW
+        // interlock on most cycles (four quadrants of one line may not
+        // overlap), so hot writes run at ~2.5 cyc/op whatever the cold path
+        // does.  The hazard yield hands those refused cycles to the cold
+        // path: it must get FAR more than its 1-in-(N+1) fairness floor, and
+        // the hot stream must not slow down for it.
+        CHECK("hot writes still ran at >= 1 per 3 cycles", 3 * hw >= d.cycles);
+        CHECK("the cold path got far more than its fairness floor (hazard yield works)",
+              cold > 8 * (d.cycles / (static_cast<uint64_t>(dut->dbg_dh_cold_fair_n) + 1)));
+        dw_stream_stop(ws); cold_stream_drain();
+    }
+    // (b) saturated hot WRITES vs a saturated hot READ stream: the two
+    //     halves of the hot class must share, neither starving the other.
+    {
+        DwStream ws; ws.base = wbase; ws.window = 8;
+        g_dh_stream_base = hot_r; g_dh_stream_addr = hot_r; g_dh_stream_span = 4096;
+        g_dh_stream_arlen = 0; g_dh_stream_nid = 4; g_dh_stream_id = 0; g_dh_stream_burst = 1;
+        const DhFdStats s0 = g_dhfd; const DwFdStats w0 = g_dwfd;
+        g_dh_stream = true;
+        for (int i = 0; i < 3000; i++) { dw_stream_pump(ws); tick(); }
+        g_dh_stream = false;
+        const DhFdStats d = dhfd_diff(g_dhfd, s0);
+        const uint64_t hw = g_dwfd.acc_dw - w0.acc_dw;
+        printf("  dw fairness (b) hot writes vs hot reads: %llu cyc, hot-write accepts %llu, "
+               "hot-read accepts %llu\n", (unsigned long long)d.cycles, (unsigned long long)hw,
+               (unsigned long long)d.acc_dh);
+        CHECK("hot reads are not starved by hot writes", 4 * d.acc_dh > (d.acc_dh + hw));
+        CHECK("hot writes are not starved by hot reads", 4 * hw > (d.acc_dh + hw));
+        dw_stream_stop(ws); dh_drain();
+    }
+    // (c) all three hot sources (fetch, dh, dw) at once.
+    {
+        DwStream ws; ws.base = wbase; ws.window = 8;
+        g_dh_stream_base = hot_r; g_dh_stream_addr = hot_r; g_dh_stream_span = 4096;
+        g_fetch_arlen = 1; g_fetch_stride = 64; g_fetch_nid = 4;
+        g_fetch_addr = g_fetch_base; g_fetch_id = 0;
+        const DhFdStats s0 = g_dhfd; const DwFdStats w0 = g_dwfd;
+        g_dh_stream = true; g_fetch_stream = true;
+        for (int i = 0; i < 3000; i++) {
+            dw_stream_pump(ws); tick();
+            if (g_fetch_addr >= g_fetch_base + 4096) g_fetch_addr = g_fetch_base;
+        }
+        g_dh_stream = false; g_fetch_stream = false;
+        const DhFdStats d = dhfd_diff(g_dhfd, s0);
+        const uint64_t hw = g_dwfd.acc_dw - w0.acc_dw;
+        printf("  dw fairness (c) fetch %llu, hot-read %llu, hot-write %llu accepts in %llu cyc\n",
+               (unsigned long long)d.acc_fetch, (unsigned long long)d.acc_dh,
+               (unsigned long long)hw, (unsigned long long)d.cycles);
+        CHECK("all three hot sources were served", d.acc_fetch > 0 && d.acc_dh > 0 && hw > 0);
+        CHECK("hot writes keep a real share with both hot read doors busy", 5 * hw > (d.acc_fetch + d.acc_dh + hw));
+        for (int i = 0; i < 20000 && (dut->f_axi_rvalid || !dh_awaiting.empty()); i++) tick();
+        g_fetch_arlen = 127; g_fetch_stride = 0; g_fetch_nid = 1;
+        g_fetch_addr = g_fetch_base; g_fetch_id = 0;
+        dw_stream_stop(ws); dh_drain();
+    }
+    for (uint64_t a = wbase; a < wbase + 4096; a += 16) {
+        if (!do_read_check(a, "dw_fair_verify")) { CHECK("every streamed hot write landed", false); break; }
+    }
+    return ok;
+}
+
+// ── W8. Throughput (the number this door exists for) ────────────────────
+//
+// All at an L2 HIT or no-fetch INSTALL, deterministic memory, always-ready
+// consumers -- the L2-side ceilings.  The crossbar is NOT in this harness,
+// so the "cold, one outstanding" row is l2c's own share of today's write
+// cost; the crossbar's AW/W/B hops come on top of it (see the report).
+static bool test_dw_throughput() {
+    bool ok = true;
+    DW_SKIP_IF_OFF();
+    PerfEnv pe(40);
+    const uint64_t warm = 0x0019'0000ull;
+    for (uint64_t a = warm; a < warm + 4096; a += 16) do_write_apply(a, static_cast<uint8_t>(a >> 4), "dw_tp_warm");
+    const int N = 512;
+    auto row = [&](const char* what, uint64_t cyc, uint64_t bytes, uint64_t ops) {
+        printf("  dw throughput: %-58s %6.3f cyc/op  %6.3f B/cyc\n", what,
+               static_cast<double>(cyc) / static_cast<double>(ops),
+               static_cast<double>(bytes) / static_cast<double>(cyc));
+    };
+    // (0) today's shape: cold s_axi, ONE write outstanding (the crossbar's
+    //     one-per-master rule), 16 B full strobe, warm lines.
+    double cold1 = 0;
+    {
+        const uint64_t t0 = sim_time;
+        for (int i = 0; i < N; i++) {
+            const uint64_t a = warm + (static_cast<uint64_t>(i) * 16) % 4096;
+            uint32_t id = issue_write_full(a, static_cast<uint8_t>(i));
+            if (!wait_write_done(id)) { CHECK("cold write", false); break; }
+            for (int b = 0; b < 16; b++) golden[a + b] = static_cast<uint8_t>((i + b) & 0xFF);
+            free_write(id);
+        }
+        cold1 = static_cast<double>(sim_time - t0) / N;
+        row("cold s_axi, 1 outstanding, 16 B (l2c share only)", sim_time - t0, 16ull * N, N);
+    }
+    // (1) the hot write door, 16 B writes, window 1/2/4/8, warm lines.
+    double hot[4] = {0, 0, 0, 0};
+    const int wins[4] = {1, 2, 4, 8};
+    for (int wi = 0; wi < 4; wi++) {
+        DwStream ws; ws.base = warm; ws.window = wins[wi];
+        const uint64_t t0 = sim_time;
+        while (ws.done < static_cast<uint64_t>(N) && sim_time - t0 < 400000) { dw_stream_pump(ws); tick(); }
+        const uint64_t cyc = sim_time - t0;
+        hot[wi] = static_cast<double>(cyc) / static_cast<double>(ws.done);
+        char buf[96]; snprintf(buf, sizeof buf, "hot door, window %d, 16 B hits", wins[wi]);
+        row(buf, cyc, ws.bytes, ws.done);
+        dw_stream_stop(ws);
+    }
+    // (1b) 16 B writes striding 64 B -- every write a different line and
+    //      set, so the array RAW interlock never engages: the door's own
+    //      ceiling, as opposed to the same-line-sequential ceiling above.
+    double strided = 0;
+    {
+        DwStream ws; ws.base = 0x0041'0000ull; ws.window = 8; ws.fresh = true;
+        // Pre-warm the 64 lines the stride touches (one install each).
+        for (int i = 0; i < 64; i++) do_write_apply(ws.base + static_cast<uint64_t>(i) * LINE_BYTES, 0x5u, "dw_tp_sw");
+        std::deque<std::shared_ptr<DwBurst>> live; uint64_t n = 0, d = 0;
+        const uint64_t t0 = sim_time;
+        while (d < static_cast<uint64_t>(N) && sim_time - t0 < 400000) {
+            while (!live.empty() && live.front()->done) { dw_golden_apply(*live.front()); live.pop_front(); d++; }
+            while (live.size() < 8) { live.push_back(dw_issue_full(ws.base + (n % 64) * LINE_BYTES, static_cast<uint8_t>(n), static_cast<int>(n & 3))); n++; }
+            tick();
+        }
+        strided = static_cast<double>(sim_time - t0) / static_cast<double>(d);
+        row("hot door, window 8, 16 B hits striding 64 B (no RAW interlock)", sim_time - t0, 16ull * d, d);
+        for (int i = 0; i < 60000 && !live.empty(); i++) { while (!live.empty() && live.front()->done) { dw_golden_apply(*live.front()); live.pop_front(); } if (!live.empty()) tick(); }
+    }
+    // (2) fresh lines: 16 B writes walking fresh lines -- one no-fetch
+    //     install then three hits per 64 B line.
+    {
+        DwStream ws; ws.base = 0x0040'0000ull; ws.window = 4; ws.fresh = true;
+        const uint64_t t0 = sim_time;
+        while (ws.done < static_cast<uint64_t>(N) && sim_time - t0 < 400000) { dw_stream_pump(ws); tick(); }
+        row("hot door, window 4, 16 B no-fetch installs (fresh lines)", sim_time - t0, ws.bytes, ws.done);
+        dw_stream_stop(ws);
+    }
+    // (3) 64 B four-beat bursts (the 64 B-sector writeback), window 2.
+    double burst64 = 0;
+    {
+        DwStream ws; ws.base = warm; ws.window = 2; ws.beats = 4;
+        const uint64_t t0 = sim_time;
+        while (ws.done < static_cast<uint64_t>(N / 4) && sim_time - t0 < 400000) { dw_stream_pump(ws); tick(); }
+        burst64 = static_cast<double>(ws.bytes) / static_cast<double>(sim_time - t0);
+        row("hot door, window 2, 64 B bursts", sim_time - t0, ws.bytes, ws.done);
+        dw_stream_stop(ws);
+    }
+    // (4) WITH THE READ DOOR ACTIVE: window-2 hot writes (the L1D's 2-entry
+    //     writeback buffer) against a saturated hot read stream.
+    {
+        const uint64_t hot_r = 0x000A'0000ull;
+        DwStream ws; ws.base = warm; ws.window = 2;
+        g_dh_stream_base = hot_r; g_dh_stream_addr = hot_r; g_dh_stream_span = 4096;
+        g_dh_stream_arlen = 0; g_dh_stream_nid = 4; g_dh_stream_id = 0; g_dh_stream_burst = 1;
+        const uint64_t r0 = g_dh_r_beats, t0 = sim_time;
+        g_dh_stream = true;
+        while (ws.done < static_cast<uint64_t>(N) && sim_time - t0 < 400000) { dw_stream_pump(ws); tick(); }
+        g_dh_stream = false;
+        const uint64_t cyc = sim_time - t0, rb = g_dh_r_beats - r0;
+        row("hot door, window 2, WITH a saturated hot-read stream", cyc, ws.bytes, ws.done);
+        printf("  dw throughput:   ...the read door meanwhile moved %6.3f B/cyc (%llu beats)\n",
+               16.0 * static_cast<double>(rb) / static_cast<double>(cyc), (unsigned long long)rb);
+        dw_stream_stop(ws); dh_drain();
+    }
+    // (5) memcpy shape at L2: read line i on the hot read door (4 in
+    //     flight = the L1D's 4 MSHRs), write line i to dst on the hot write
+    //     door (2 in flight = its 2-entry WB buffer), 16 B lines.
+    {
+        const uint64_t src = 0x000A'0000ull, dst = warm;
+        std::deque<std::shared_ptr<DhBurst>> rd; std::deque<std::shared_ptr<DwBurst>> wr;
+        uint64_t next_r = 0, copied = 0; std::deque<uint64_t> ready_lines;
+        const uint64_t t0 = sim_time;
+        while (copied < static_cast<uint64_t>(N) && sim_time - t0 < 400000) {
+            while (!rd.empty() && rd.front()->done) { ready_lines.push_back(rd.front()->addr - src); dh_free(rd.front()); rd.pop_front(); }
+            while (!wr.empty() && wr.front()->done) { dw_golden_apply(*wr.front()); wr.pop_front(); copied++; }
+            while (rd.size() < 4) { rd.push_back(dh_issue(src + (next_r * 16) % 4096, 1, 1, static_cast<int>(next_r & 3))); next_r++; }
+            while (wr.size() < 2 && !ready_lines.empty()) {
+                const uint64_t off = ready_lines.front(); ready_lines.pop_front();
+                wr.push_back(dw_issue_full(dst + off, static_cast<uint8_t>(off >> 4), static_cast<int>((off >> 4) & 3)));
+            }
+            tick();
+        }
+        row("memcpy at L2: 4 hot reads + 2 hot writes in flight (copy B/cyc)", sim_time - t0, 16ull * copied, copied);
+        dh_drain(); dw_drain();
+        for (auto& w : wr) if (w->done) dw_golden_apply(*w);
+    }
+    CHECK("every throughput window finished (no wedge)", !g_dw_unmatched && dw_idle());
+    printf("  dw throughput: window-2 hot door is %.2fx the one-outstanding cold path at l2c "
+           "(%.2f vs %.2f cyc per 16 B)\n", cold1 / hot[1], hot[1], cold1);
+    CHECK("the hot door beats the one-outstanding cold shape at window 2", hot[1] < 0.6 * cold1);
+    CHECK("sequential 16 B writes sustain >= 1 per 3 cycles at window 8", hot[3] <= 3.0);
+    CHECK("line-striding 16 B writes sustain >= 0.75 per cycle at window 8", strided <= 1.34);
+    CHECK("64 B bursts move >= 6 B/cycle", burst64 >= 6.0);
+    return ok;
+}
+
+
 // ─── Randomized scoreboard: >=20000 mixed ops vs. golden model ───────────
 static bool test_randomized_scoreboard(int n_ops) {
     bool ok = true;
@@ -4820,6 +5964,16 @@ static bool test_randomized_scoreboard(int n_ops) {
     bool progress_debug = std::getenv("L2C_DEBUG_PROGRESS") != nullptr;
     uint64_t stall_cycles = 0;
     int last_completed = -1;
+    // P6W: with the write door built, a third of the cacheable ops go through
+    // the HOT door instead -- dh for reads, dw for writes -- sharing the same
+    // chunk hazard set, so the golden model stays unambiguous and every
+    // completion is checked exactly like an s_axi one.  Door choice draws
+    // from dw_rng ONLY when the door exists: the OFF builds' rng stream is
+    // untouched.  (The P6 build's stress ran the LSU scoreboard with the
+    // read door built but IDLE; this is the first scoreboard traffic on it.)
+    std::vector<std::shared_ptr<DhBurst>> sb_dh;
+    std::vector<std::shared_ptr<DwBurst>> sb_dw;
+    uint64_t n_hot_r = 0, n_hot_w = 0;
     // Unconditional no-progress guard.  This loop had none (the STALL
     // report below is behind L2C_DEBUG_PROGRESS), so any DUT wedge hung the
     // whole binary forever instead of failing -- which makes a wedge
@@ -4943,6 +6097,7 @@ static bool test_randomized_scoreboard(int n_ops) {
             if (conflict) break; // give the window time to drain
             for (int i = 0; i < beats; i++) inflight.insert(a + static_cast<uint64_t>(i) * 16);
             bool is_write = (rng() % 2) == 0;
+            const bool use_hot = dw_enabled() && (a < CACHEABLE_SIZE) && (dw_rng() % 3) == 0;
             if (is_write) {
                 bool partial = (rng() % 3) == 0; // ~33% of writes use a partial strobe
                 std::vector<std::array<uint8_t,16>> wd(beats);
@@ -4954,11 +6109,21 @@ static bool test_randomized_scoreboard(int n_ops) {
                     if (partial) { s = static_cast<uint16_t>(rng() & 0xFFFF); if (s == 0) s = 1; }
                     ws[i] = s;
                 }
+                if (use_hot) {
+                    auto hw = dw_issue(a, wd, ws, static_cast<int>(dw_rng() % 4));
+                    sb_dw.push_back(hw);
+                    log_op(a, true, 0x100 | hw->id);
+                } else {
                 auto wb = std::make_shared<WBurst>();
                 wb->id = alloc_id(); wb->addr = a; wb->beats = beats;
                 wb->data = wd; wb->strb = ws;
                 w_pending_issue.push_back(wb); // wb->addr/data/strb carry everything needed to drain later
                 log_op(a, true, wb->id);
+                }
+            } else if (use_hot) {
+                auto hr = dh_issue(a, beats, 1, static_cast<int>(dw_rng() % 4));
+                sb_dh.push_back(hr);
+                log_op(a, false, 0x100 | hr->id);
             } else {
                 uint32_t rid = issue_read(a, beats);
                 log_op(a, false, rid);
@@ -5010,6 +6175,40 @@ static bool test_randomized_scoreboard(int n_ops) {
             completed++; n_reads_done++;
             it = r_done.erase(it);
         }
+        for (auto it = sb_dw.begin(); it != sb_dw.end(); ) {
+            if (!(*it)->done) { ++it; continue; }
+            auto& wb = **it;
+            if (wb.bresp != 0) {
+                printf("  scoreboard: hot write @0x%llx answered bresp=%u\n", (unsigned long long)wb.addr, wb.bresp);
+                ok = false;
+            }
+            for (int beat = 0; beat < wb.beats; beat++) {
+                uint64_t a = wb.addr + static_cast<uint64_t>(beat) * 16;
+                for (int b = 0; b < 16; b++) if ((wb.strb[beat] >> b) & 1) golden[a + b] = wb.data[beat][b];
+                touched[a] = true;
+                inflight.erase(a);
+            }
+            completed++; n_writes_done++; n_hot_w++;
+            it = sb_dw.erase(it);
+        }
+        for (auto it = sb_dh.begin(); it != sb_dh.end(); ) {
+            if (!(*it)->done) { ++it; continue; }
+            auto& rb = **it;
+            for (int beat = 0; beat < rb.beats; beat++) {
+                uint64_t a = rb.addr + static_cast<uint64_t>(beat) * 16;
+                bool match = beat < static_cast<int>(rb.got.size()) &&
+                             std::memcmp(rb.got[beat].data(), &golden[a], 16) == 0;
+                if (!match) {
+                    printf("  scoreboard HOT-READ MISMATCH @0x%llx beat=%d id=%u t=%llu\n",
+                           (unsigned long long)a, beat, rb.id, (unsigned long long)sim_time);
+                    ok = false;
+                    if (mismatch_dumps++ < 3) dump_op_log();
+                }
+                inflight.erase(a);
+            }
+            completed++; n_reads_done++; n_hot_r++;
+            it = sb_dh.erase(it);
+        }
     }
     // Final pass: read back every touched line through the DUT and
     // compare -- per the brief, no RTL backdoor, real reads only.
@@ -5036,6 +6235,11 @@ static bool test_randomized_scoreboard(int n_ops) {
            "max outstanding=%d ops/%d chunks, max MSHR occupancy=%d\n",
            n_ops, verified, max_ops_outstanding, max_chunks_outstanding,
            max_mshr_occupancy);
+    if (dw_enabled()) {
+        printf("  randomized scoreboard: %llu ops via the hot READ door, %llu via the hot WRITE door\n",
+               (unsigned long long)n_hot_r, (unsigned long long)n_hot_w);
+        if (n_hot_r == 0 || n_hot_w == 0) { printf("  ANTI-VACUITY FAIL: a hot door carried no scoreboard traffic\n"); ok = false; }
+    }
     return ok;
 }
 
@@ -6206,6 +7410,21 @@ int main(int argc, char** argv) {
     run("dh_id_namespace_independent_of_lsu",
         test_dh_id_namespace_independent_of_lsu);
     run("dh_single_outstanding_parity",   test_dh_single_outstanding_parity);
+    // ── P6W: the hot WRITE door.  Registered only in a DW_EN=1 build, so
+    // the OFF builds' output files are byte-identical (not merely the same
+    // PASS count) to the tree before P6W.
+    if (dw_enabled()) {
+    run("dw_write_then_read_both_doors",  test_dw_write_then_read_both_doors);
+    run("dw_window_guard",                test_dw_window_guard);
+    run("dw_id_namespaces",               test_dw_id_namespaces);
+    run("dw_read_after_b_observes_write", test_dw_read_after_b_observes_write);
+    run("dw_write_to_line_held_in_victim_buffer", test_dw_write_to_line_held_in_victim_buffer);
+    run("dw_same_id_b_order",             test_dw_same_id_b_order);
+    run("dw_cpu_reset_mid_burst",         test_dw_cpu_reset_mid_burst);
+    run("dw_vs_cold_full_line_gather",    test_dw_vs_cold_full_line_gather);
+    run("dw_starvation_and_fairness",     test_dw_starvation_and_fairness);
+    run("dw_throughput",                  test_dw_throughput);
+    }
     }
 
     int n_ops = 20000;
@@ -6252,6 +7471,21 @@ int main(int argc, char** argv) {
                (unsigned long long)g_dhfd.acc_lsu, (unsigned long long)g_dhfd.acc_write,
                (unsigned long long)g_dhfd.cold_starved,
                (unsigned long long)g_dhfd.victim_query_hit);
+    }
+#endif
+#ifndef BYPASS_ALL_BUILD
+    if (dut->dbg_dw_en) {
+        if (g_dw_unmatched) {
+            printf("[FAIL] dw_unmatched_response_protocol_check (see UNEXPECTED dw B lines above)\n");
+            n_fail++;
+        } else {
+            printf("[PASS] dw_unmatched_response_protocol_check (%llu hot AW, %llu W beats, %llu B, "
+                   "%u guard DECERR, %u ROM drops)\n",
+                   (unsigned long long)g_dw_aw_hs, (unsigned long long)g_dw_w_hs,
+                   (unsigned long long)g_dw_b_hs, (unsigned)dut->dw_guard_fault_count,
+                   (unsigned)dut->dw_guard_drop_count);
+            n_pass++;
+        }
     }
 #endif
     if (g_unmatched_resp_seen) {

@@ -298,6 +298,71 @@
     );
 `endif
 
+    // ═══════════ P6W: THE HOT DOOR'S WRITE HALF (axi_dh AW/W/B) ══════════
+    //
+    // NOT ENABLED YET, for the same reason as the read half above: it needs
+    // the CPU socket's axi_dh group to grow AW/W/B (a coordinated two-repo
+    // change, see cpu_socket.vh), and it needs the read half, whose source
+    // tag and hot class it shares -- `L2C_DW_PORT` without `L2C_DH_PORT` is
+    // refused below.  Written and unit-tested (`make tb-l2c-dw`,
+    // `make tb-l2c-dw-mutants`), compiled out.
+    //
+    // CACHEABLE writes only: L1D dirty writebacks and full-line stores.  The
+    // routing key is the MMU cache mode (COPYBACK), never an address decode,
+    // and the guard makes a wrong answer loud: RAM window -> forwarded; ROM
+    // mirror -> dropped with OKAY (the crossbar's own policy for a CPU write
+    // to ROM, so a copyback-dirtied ROM line behaves as on the cold path);
+    // anything else -> DECERR (the core raises it as a writeback bus error).
+    // No ROM-mirror fold is needed on this side: a ROM write never reaches
+    // l2c.  `abandon` = cpu_rst: the guard pads a burst the core abandoned
+    // mid-W with no-op beats and swallows Bs owed to the dead core, the
+    // write-side twin of the crossbar's m0_pad_w on the cold path.
+`ifdef L2C_DW_PORT
+`ifndef L2C_DH_PORT
+    L2C_DW_PORT_requires_L2C_DH_PORT u_config_error ();
+`endif
+    wire dha_awaddr_is_rom_mirror =
+        ((dha_awaddr & ~(`AXI_ROM_MIRROR_SIZE - 1)) == `AXI_ROM_MIRROR_BASE);
+    wire [CPU_AXI_DH_IW-1:0] dwg_awid;
+    wire [31:0]              dwg_awaddr;
+    wire [7:0]               dwg_awlen;
+    wire [2:0]               dwg_awsize;
+    wire [1:0]               dwg_awburst;
+    wire                     dwg_awvalid, dwg_awready;
+    wire [127:0]             dwg_wdata;
+    wire [15:0]              dwg_wstrb;
+    wire                     dwg_wlast, dwg_wvalid, dwg_wready;
+    wire [CPU_AXI_DH_IW-1:0] dwg_bid;
+    wire [1:0]               dwg_bresp;
+    wire                     dwg_bvalid, dwg_bready;
+    wire                     dw_guard_fault_sticky;
+    wire [31:0]              dw_guard_fault_addr;
+    wire [15:0]              dw_guard_fault_count;   // DECERR'd hot writes
+    wire [15:0]              dw_guard_drop_count;    // ROM-mirror hot writes dropped
+    dh_write_window_guard #(
+        .ID_WIDTH(CPU_AXI_DH_IW), .DATA_WIDTH(128)
+    ) u_dw_guard (
+        .clk(core_clk), .rst(core_rst_bank[4]),
+        .ram_window_lg2(cpu_ram_window_lg2),
+        .s_aw_is_rom(dha_awaddr_is_rom_mirror),
+        .abandon(cpu_rst),
+        .s_awid(dha_awid), .s_awaddr(dha_awaddr), .s_awlen(dha_awlen),
+        .s_awsize(dha_awsize), .s_awburst(dha_awburst),
+        .s_awvalid(dha_awvalid), .s_awready(dha_awready),
+        .s_wdata(dha_wdata), .s_wstrb(dha_wstrb), .s_wlast(dha_wlast),
+        .s_wvalid(dha_wvalid), .s_wready(dha_wready),
+        .s_bid(dha_bid), .s_bresp(dha_bresp), .s_bvalid(dha_bvalid), .s_bready(dha_bready_gated),
+        .m_awid(dwg_awid), .m_awaddr(dwg_awaddr), .m_awlen(dwg_awlen),
+        .m_awsize(dwg_awsize), .m_awburst(dwg_awburst),
+        .m_awvalid(dwg_awvalid), .m_awready(dwg_awready),
+        .m_wdata(dwg_wdata), .m_wstrb(dwg_wstrb), .m_wlast(dwg_wlast),
+        .m_wvalid(dwg_wvalid), .m_wready(dwg_wready),
+        .m_bid(dwg_bid), .m_bresp(dwg_bresp), .m_bvalid(dwg_bvalid), .m_bready(dwg_bready),
+        .fault_sticky(dw_guard_fault_sticky), .fault_addr(dw_guard_fault_addr),
+        .fault_count(dw_guard_fault_count), .drop_count(dw_guard_drop_count)
+    );
+`endif
+
     l2c #(
         // Bypass windows: left at l2c.v's own defaults
         // (NUM_BYPASS_WINDOWS=1, BYP_WIN_BASE/MASK=0, BYP_WIN_EN=0).
@@ -325,6 +390,10 @@
         .F_ID_WIDTH(CPU_AXI_IW),
 `ifdef L2C_DH_PORT
         .DH_PORT_EN(1), .DH_ID_WIDTH(CPU_AXI_DH_IW)
+`ifdef L2C_DW_PORT
+        // P6W: the write half, same native ID width as the read half.
+        , .DW_PORT_EN(1), .DW_ID_WIDTH(CPU_AXI_DH_IW)
+`endif
 `else
         // P6 compiled out: the port is inert and the third door, the 2-bit
         // source tag, WRAP on the hot doors and hot > cold priority are all
@@ -389,6 +458,28 @@
         .dh_axi_rid(), .dh_axi_rdata(),
         .dh_axi_rresp(), .dh_axi_rlast(),
         .dh_axi_rvalid(), .dh_axi_rready(1'b1),
+`endif
+        // P6W: the hot door's write half, behind its own guard (above).
+`ifdef L2C_DW_PORT
+        .dw_axi_awid(dwg_awid), .dw_axi_awaddr(dwg_awaddr),
+        .dw_axi_awlen(dwg_awlen), .dw_axi_awsize(dwg_awsize),
+        .dw_axi_awburst(dwg_awburst), .dw_axi_awvalid(dwg_awvalid),
+        .dw_axi_awready(dwg_awready),
+        .dw_axi_wdata(dwg_wdata), .dw_axi_wstrb(dwg_wstrb),
+        .dw_axi_wlast(dwg_wlast), .dw_axi_wvalid(dwg_wvalid),
+        .dw_axi_wready(dwg_wready),
+        .dw_axi_bid(dwg_bid), .dw_axi_bresp(dwg_bresp),
+        .dw_axi_bvalid(dwg_bvalid), .dw_axi_bready(dwg_bready),
+`else
+        .dw_axi_awid(2'b00), .dw_axi_awaddr(32'd0),
+        .dw_axi_awlen(8'd0), .dw_axi_awsize(3'd4),
+        .dw_axi_awburst(2'b01), .dw_axi_awvalid(1'b0),
+        .dw_axi_awready(),
+        .dw_axi_wdata(128'd0), .dw_axi_wstrb(16'd0),
+        .dw_axi_wlast(1'b0), .dw_axi_wvalid(1'b0),
+        .dw_axi_wready(),
+        .dw_axi_bid(), .dw_axi_bresp(),
+        .dw_axi_bvalid(), .dw_axi_bready(1'b1),
 `endif
         // AXI4 master -- toward u_ddr below (still core_clk; u_ddr owns
         // the core_clk -> mig_ui_clk CDC internally via axi_async_bridge

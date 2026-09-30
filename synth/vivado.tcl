@@ -737,6 +737,8 @@ proc read_all_rtl {rtl_dir} {
     read_verilog $rtl_dir/soc/scanout_line_fetch.v
     read_verilog $rtl_dir/soc/l2c.v
     read_verilog $rtl_dir/soc/ifetch_window_guard.v
+    # P6W: the hot door write-half guard (instantiated only under L2C_DW_PORT).
+    read_verilog $rtl_dir/soc/dh_write_window_guard.v
     read_verilog $rtl_dir/soc/l2c_ctrl.v
     read_verilog $rtl_dir/soc/l2c_tags.v
     read_verilog $rtl_dir/soc/l2c_data.v

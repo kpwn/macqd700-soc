@@ -7482,6 +7482,7 @@ $(PB_LANE_SHIM_BUILD)/Vtb_pb_lane_shim: $(PB_LANE_SHIM_RTL) $(TB_DIR)/tb_pb_lane
 # ──────────────────────────────────────────────────────────────────────────────
 L2C_RTL := \
 	$(RTL_DIR)/soc/ifetch_window_guard.v \
+	$(RTL_DIR)/soc/dh_write_window_guard.v \
 	$(RTL_DIR)/soc/l2c_pri8.v \
 	$(RTL_DIR)/soc/l2c_reset.v \
 	$(RTL_DIR)/soc/l2c_tags.v \
@@ -7680,6 +7681,49 @@ tb-l2c-dh-stress: $(L2C_DH_BUILD)/Vtb_l2c
 		L2C_SKIP_DIRECTED=1 L2C_SEED=$$seed L2C_RAND_OPS=$(L2C_STRESS_OPS) \
 			$(L2C_DH_BUILD)/Vtb_l2c; \
 	done
+
+# ── P6W: the hot door's WRITE half (tb_l2c.v -GDH_EN=1 -GDW_EN=1) ────────
+# A THIRD Verilated build of the same harness.  DW_PORT_EN must stay 0 in
+# the other two: `make tb-l2c` and `make tb-l2c-dh` are the OFF baselines,
+# and every dw_* scenario is registered only when the door is built, so
+# their output FILES are byte-identical to the tree before P6W (checked by
+# diff, not by PASS count).
+#
+#   make tb-l2c-dw            # door ON: directed suite + scoreboard with
+#                             # hot-door traffic + the dw throughput rows
+#   make tb-l2c-dw-stress     # randomized scoreboard, door ON, 5 seeds
+#   make tb-l2c-dw-mutants    # every single-mechanism mutant must FAIL
+L2C_DW_BUILD := $(BUILD_DIR)/l2c_dw
+.PHONY: tb-l2c-dw
+tb-l2c-dw: $(L2C_DW_BUILD)/Vtb_l2c
+	@echo "Running l2c unit tb with the D-side hot door's WRITE half ENABLED..."
+	$(L2C_DW_BUILD)/Vtb_l2c
+
+$(L2C_DW_BUILD)/Vtb_l2c: $(L2C_RTL) $(TB_DIR)/tb_l2c.cpp
+	@mkdir -p $(L2C_DW_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY -Wno-PINMISSING \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Wno-WIDTHEXPAND -Wno-SELRANGE \
+		-Irtl/soc \
+		-Mdir $(L2C_DW_BUILD) \
+		--top-module tb_l2c -GDH_EN=1 -GDW_EN=1 \
+		$(L2C_RTL) \
+		$(TB_DIR)/tb_l2c.cpp \
+		-CFLAGS "-std=c++17"
+
+.PHONY: tb-l2c-dw-stress
+tb-l2c-dw-stress: $(L2C_DW_BUILD)/Vtb_l2c
+	@set -e; for seed in $(L2C_STRESS_SEEDS); do \
+		echo "Running l2c randomized stress (hot WRITE door ON) seed=$$seed ops=$(L2C_STRESS_OPS)..."; \
+		L2C_SKIP_DIRECTED=1 L2C_SEED=$$seed L2C_RAND_OPS=$(L2C_STRESS_OPS) \
+			$(L2C_DW_BUILD)/Vtb_l2c; \
+	done
+
+.PHONY: tb-l2c-dw-mutants
+tb-l2c-dw-mutants:
+	python3 $(TOOLS_DIR)/l2c_dw_mutants.py
 
 .PHONY: tb-l2c-stress
 tb-l2c-stress: $(L2C_BUILD)/Vtb_l2c

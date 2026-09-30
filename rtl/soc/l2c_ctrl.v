@@ -301,7 +301,24 @@ module l2c_ctrl #(
     // forward-progress question on the very path the ordering rule depends
     // on.  `cold_starved_q` is a REGISTER, so the door's select cone sees a
     // flop, not a comparator.
-    parameter DH_COLD_FAIR_N = 64
+    parameter DH_COLD_FAIR_N = 64,
+    // ================ P6W: THE D-SIDE HOT *WRITE* DOOR =================
+    // DW_PORT_EN (default 0) adds AW/W to the hot D door: a FIFTH accept
+    // candidate (dw_aw*/dw_w*), tagged SRCV_DH, in the HOT class alongside
+    // d_ar*/f_ar*.  It exists because every cacheable write -- L1D dirty
+    // writebacks, coalesced full-line stores -- otherwise crosses the
+    // crossbar, which allows ONE outstanding write per master (~8-9
+    // cycles per 16 B, i.e. <= ~1.8 B/cycle for any copy).  This port has
+    // its own header tracker and its own W channel, so no W-owner lock is
+    // needed: beats from two sources never share a W channel here, each is
+    // consumed at S0 against its OWN tracker.  It never uses the full-line
+    // gather (flw_*): a full-strobe 16 B beat is already a no-fetch install.
+    //
+    // Requires D_PORT_EN (the SRCV_DH tag and the hot class are P6's);
+    // DW_PORT_EN without it is an ELABORATION ERROR.  At 0 every added
+    // expression reduces to the P6 one (dw_write_sel is constant 0) and
+    // `make tb-l2c` / `make tb-l2c-dh` are the byte-identical regressions.
+    parameter DW_PORT_EN = 0
 ) (
     input  wire clk, rst,
     // s_axi accept side (AW/W/AR -- the R/B response side is arbitrated
@@ -328,6 +345,13 @@ module l2c_ctrl #(
     // register behind it loses its consumers.
     input  wire [ID_WIDTH-1:0]   d_arid,   input wire [ADDR_WIDTH-1:0] d_araddr, input wire [7:0] d_arlen,
     input  wire [2:0] d_arsize,  input wire [1:0] d_arburst, input wire d_arvalid, output wire d_arready,
+    // P6W: the hot door's WRITE half.  dw_awid arrives already remapped by
+    // l2c.v into the DH source's WRITE id space (see dctrl_awid there), so
+    // a hot read id k and a hot write id k are different {src,id} tags in
+    // the MSHR ordering CAM.  INCR only.  Inert when DW_PORT_EN == 0.
+    input  wire [ID_WIDTH-1:0]   dw_awid,  input wire [ADDR_WIDTH-1:0] dw_awaddr, input wire [7:0] dw_awlen,
+    input  wire [2:0] dw_awsize, input wire [1:0] dw_awburst, input wire dw_awvalid, output wire dw_awready,
+    input  wire [127:0] dw_wdata, input wire [15:0] dw_wstrb, input wire dw_wlast, input wire dw_wvalid, output wire dw_wready,
     // Hit-path response (to l2c.v's R/B arbiter).  hit_rsp_src tags
     // which of the two front-door sources (LSU s_axi vs. the fetch f_ar*
     // port above) this particular skid-register occupant came from, so
@@ -410,10 +434,13 @@ module l2c_ctrl #(
     if (DH_COLD_FAIR_N > 254) begin : g_cold_fair_out_of_range
         l2c_ctrl_DH_COLD_FAIR_N_must_be_0_to_254 u_elaboration_error ();
     end
+    if ((DW_PORT_EN != 0) && (D_PORT_EN == 0)) begin : g_dw_needs_dh
+        l2c_ctrl_DW_PORT_EN_requires_D_PORT_EN u_elaboration_error ();
+    end
     endgenerate
     // WLAST isn't relied on -- beat-count tracking (aw_cur_last) drives it.
     /* verilator lint_off UNUSEDSIGNAL */
-    wire unused_wlast = s_wlast;
+    wire unused_wlast = s_wlast ^ dw_wlast;
     /* verilator lint_on UNUSEDSIGNAL */
     // -- Reset walk -------------------------------------------------------
     wire rst_busy, rst_clr_en; wire [SET_BITS-1:0] rst_clr_set;
@@ -518,6 +545,17 @@ module l2c_ctrl #(
     assign s_awready = !aw_pend_v && !rst_busy; assign s_arready = !ar_pend_v && !rst_busy;
     assign f_arready = !fetch_ar_pend_v && !rst_busy;
     assign d_arready = (D_PORT_EN != 0) && !dh_ar_pend_v && !rst_busy;
+    // P6W: the hot WRITE door's header tracker -- active slot + one-entry
+    // pre-latch, the same shape as every other header door here and for
+    // the same reason: dw_awready is a plain register bit, never a term of
+    // do_accept_c.  The beat address is a running register (INCR only),
+    // written with the ar_cur-style clock-enable shape (see "AR BEAT
+    // ADDRESS") so the accept decision only PICKS between two ready values.
+    reg dw_aw_have; reg [ID_WIDTH-1:0] dw_aw_id; reg [7:0] dw_aw_len, dw_aw_beat;
+    reg [1:0] dw_aw_burst; reg [ADDR_WIDTH-1:0] dw_aw_cur, dw_aw_step;
+    reg dw_aw_pend_v; reg [ID_WIDTH-1:0] dw_aw_pend_id; reg [ADDR_WIDTH-1:0] dw_aw_pend_addr;
+    reg [7:0] dw_aw_pend_len; reg [2:0] dw_aw_pend_size; reg [1:0] dw_aw_pend_burst;
+    assign dw_awready = (DW_PORT_EN != 0) && !dw_aw_pend_v && !rst_busy;
     wire [ADDR_WIDTH-1:0] aw_cur_addr = aw_cur;
     wire [ADDR_WIDTH-1:0] ar_cur_addr = ar_cur;
     // ── P6: WRAP BURSTS ON THE HOT DOORS ────────────────────────────────
@@ -572,6 +610,7 @@ module l2c_ctrl #(
     wire ar_cur_last = ar_last_q;
     wire fetch_ar_cur_last = (fetch_ar_beat == fetch_ar_len);
     wire dh_ar_cur_last = (dh_ar_beat == dh_ar_len);
+    wire dw_aw_cur_last = (dw_aw_beat == dw_aw_len);
     // ── AR BEAT ADDRESS: the adder is NOT in the select cone ─────────────
     //
     // 2026-09-17.  `ar_cur <= ar_cur + ar_step` written inside
@@ -644,6 +683,17 @@ module l2c_ctrl #(
     wire dh_ar_take_c = door_take_c && dh_read_sel;
     wire dh_ar_ends_c = dh_ar_take_c && dh_ar_cur_last;
     wire dh_ar_act_free_c = !dh_ar_have || dh_ar_ends_c;
+    // P6W: same three for the hot WRITE door.  dw_take_c is scoped to
+    // do_accept_c, not door_take_c: a dw beat is never a bypass dispatch
+    // (dw_wready requires !is_bypass_c), so the tracker can only advance on
+    // an edge where dw_wready also handshook the beat.
+    wire dw_take_c, dw_write_sel;
+    wire dw_aw_ends_c = dw_take_c && dw_aw_cur_last;
+    wire dw_aw_act_free_c = !dw_aw_have || dw_aw_ends_c;
+    (* keep = "true" *) wire [ADDR_WIDTH-1:0] dw_aw_cur_next = dw_aw_cur + dw_aw_step;
+    wire dw_aw_cur_load_c = dw_aw_act_free_c && (dw_aw_pend_v || (dw_awvalid && dw_awready));
+    wire dw_aw_cur_inc_c  = !dw_aw_act_free_c && dw_take_c;
+    wire [ADDR_WIDTH-1:0] dw_aw_cur_ld = dw_aw_pend_v ? dw_aw_pend_addr : dw_awaddr;
     // -- Full-line-write gather (see the header) ---------------------------
     // aw_flw: THIS burst's shape permits gathering.  Decided once, at AW
     // accept, from the header alone -- INCR, 16 B beats, 64 B-aligned base,
@@ -714,11 +764,25 @@ module l2c_ctrl #(
     // (f_ar* and d_ar*).  Same shape and same purpose as fetch_favor: two
     // sources of one priority class must not starve each other.
     reg hot_favor;
+    // P6W: hot WRITE vs hot READ alternator (see dw_write_sel).
+    reg dw_favor;
     // P6: registered "the cold path has been refused for DH_COLD_FAIR_N
     // consecutive cycles" -- see the parameter's comment for why a bounded
     // guarantee and not an argument about the workload.  A REGISTER, so it
     // enters the select cone as a flop and not as a comparator.
     reg cold_starved_q;
+    // P6W: "the hot class held the door last cycle and the array RAW
+    // interlock refused its beat".  A hot WRITE stream to consecutive
+    // quadrants of one line is refused by set_haz_c on ~3 of every 5
+    // cycles (same-line writes may not overlap), and under pure hot > cold
+    // priority those cycles were simply LOST: measured, the door sat idle
+    // 60% of the window while the cold path got only its 1-in-65 fairness
+    // slot.  Yielding the NEXT arbitration to a waiting cold beat reclaims
+    // them at no cost to the hot stream (its refused beat could not have
+    // been accepted on that cycle anyway, see set_haz_c's two-stage
+    // window).  A REGISTER, like cold_starved_q, so the select cone sees a
+    // flop; gated by DW_PORT_EN so the P6-only build is unchanged.
+    reg hot_haz_q;
     reg [7:0] cold_wait_q;
     wire dh_avail_c = (D_PORT_EN != 0) && dh_ar_have;
     wire hot_read_avail_c = fetch_ar_have || dh_avail_c;
@@ -740,12 +804,27 @@ module l2c_ctrl #(
     // bounded backstop: when it is set and the cold path has work, the hot
     // class stands down for one arbitration.
     wire cold_avail_c = ar_have || write_avail;
-    wire hot_take_c   = hot_read_avail_c && !(cold_starved_q && cold_avail_c);
+    // P6W: a hot WRITE beat is available when its header is active and its
+    // W beat is presented -- the same shape as the cold write_avail's raw
+    // term, minus the gather (this door never gathers).
+    wire dw_wr_avail_c = (DW_PORT_EN != 0) && dw_aw_have && dw_wvalid;
+    wire hot_take_c   = (hot_read_avail_c || dw_wr_avail_c) &&
+                        !((cold_starved_q || hot_haz_q) && cold_avail_c);
+    // P6W: inside the hot class, hot WRITE vs hot READ alternate on
+    // dw_favor (same shape as rw_favor on the cold side) so a writeback
+    // stream cannot starve refills or vice versa.  `write_sel` below stays
+    // the COLD (s_axi) write -- every s_axi-specific consumer of it (the
+    // gather, aw_take_c, s_wready, the bypass dispatch) is unchanged -- and
+    // `cur_is_write_c` is the source-independent "this accept is a write".
+    assign dw_write_sel = (DW_PORT_EN != 0) && hot_take_c && dw_wr_avail_c &&
+                          (!hot_read_avail_c || dw_favor);
     wire read_sel  = (D_PORT_EN != 0)
-                   ? (hot_take_c || (ar_have && (!write_avail || !rw_favor)))
+                   ? ((hot_take_c && !dw_write_sel) ||
+                      (!dw_write_sel && ar_have && (!write_avail || !rw_favor)))
                    : (read_avail && (!write_avail || !rw_favor));
-    wire write_sel = !read_sel && write_avail;
-    wire any_sel    = read_sel || write_sel;
+    wire write_sel = !read_sel && !dw_write_sel && write_avail;
+    wire any_sel    = read_sel || write_sel || dw_write_sel;
+    wire cur_is_write_c = write_sel || dw_write_sel;
     // Sub-pick within read_sel: fetch wins only if it's actually pending
     // AND (LSU isn't pending OR it's fetch's turn); LSU wins the rest of
     // read_sel's cycles.  When only one read source is pending, the other
@@ -754,10 +833,10 @@ module l2c_ctrl #(
     // P6 ON: `hot_take_c` (which implies read_sel) replaces the
     // fetch_favor-vs-LSU tie-break entirely -- a hot read does not share
     // turns with a cold one, it pre-empts it.
-    wire dh_read_sel    = (D_PORT_EN != 0) && hot_take_c && dh_avail_c &&
+    wire dh_read_sel    = (D_PORT_EN != 0) && hot_take_c && !dw_write_sel && dh_avail_c &&
                           (!fetch_ar_have || hot_favor);
     wire fetch_read_sel = (D_PORT_EN != 0)
-                        ? (hot_take_c && fetch_ar_have && !dh_read_sel)
+                        ? (hot_take_c && !dw_write_sel && fetch_ar_have && !dh_read_sel)
                         : (read_sel && fetch_ar_have && (!ar_have || fetch_favor));
     wire lsu_read_sel   = read_sel && !fetch_read_sel && !dh_read_sel;
     // G_FULL dispatches the line base (qoff 0, full strobe); G_RPLY walks
@@ -766,15 +845,18 @@ module l2c_ctrl #(
                                         ? flw_addr
                                         : {flw_addr[ADDR_WIDTH-1:6], flw_rq, 4'b0000};
     wire flw_disp_last_c = flw_last && ((gst == G_FULL) || (flw_rq == 2'd3));
-    wire [ADDR_WIDTH-1:0] cur_addr = dh_read_sel ? dh_ar_cur_addr
+    wire [ADDR_WIDTH-1:0] cur_addr = dw_write_sel ? dw_aw_cur
+                                   : dh_read_sel ? dh_ar_cur_addr
                                    : (fetch_read_sel ? fetch_ar_cur_addr
                                    : (lsu_read_sel ? ar_cur_addr
                                    : (flw_avail_c ? flw_disp_addr : aw_cur_addr)));
-    wire [ID_WIDTH-1:0]   cur_id   = dh_read_sel ? dh_ar_id
+    wire [ID_WIDTH-1:0]   cur_id   = dw_write_sel ? dw_aw_id
+                                   : dh_read_sel ? dh_ar_id
                                    : (fetch_read_sel ? fetch_ar_id
                                    : (lsu_read_sel ? ar_id
                                    : (flw_avail_c ? flw_id : aw_id)));
-    wire                  cur_last = dh_read_sel ? dh_ar_cur_last
+    wire                  cur_last = dw_write_sel ? dw_aw_cur_last
+                                   : dh_read_sel ? dh_ar_cur_last
                                    : (fetch_read_sel ? fetch_ar_cur_last
                                    : (lsu_read_sel ? ar_cur_last
                                    : (flw_avail_c ? flw_disp_last_c : aw_cur_last)));
@@ -782,10 +864,15 @@ module l2c_ctrl #(
     // Level A (task #269) / P6: tags this accept's SOURCE for the
     // downstream MSHR id-source-qualification (Q5) and the hit/mshr
     // response routing tag (hit_rsp_src/mshr_rsp_src).
-    wire [SRC_BITS-1:0]   cur_src = dh_read_sel    ? SRCV_DH
+    wire [SRC_BITS-1:0]   cur_src = (dh_read_sel || dw_write_sel) ? SRCV_DH
                                   : (fetch_read_sel ? SRCV_FETCH : SRCV_LSU);
-    wire [127:0]          cur_wdata = flw_avail_c ? flw_data[flw_rq*128 +: 128] : s_wdata;
-    wire [15:0]           cur_wstrb = flw_avail_c ? flw_strb[flw_rq*16  +: 16]  : s_wstrb;
+    // P6W: the hot write beat outranks a waiting gathered line -- `gst`
+    // can sit at G_FULL/G_RPLY while the hot class wins the door, and the
+    // gathered line is not the beat being accepted then.
+    wire [127:0]          cur_wdata = dw_write_sel ? dw_wdata
+                                    : (flw_avail_c ? flw_data[flw_rq*128 +: 128] : s_wdata);
+    wire [15:0]           cur_wstrb = dw_write_sel ? dw_wstrb
+                                    : (flw_avail_c ? flw_strb[flw_rq*16  +: 16]  : s_wstrb);
     wire [1:0]              cur_qoff = cur_addr[5:4];
     wire [SET_BITS-1:0]     cur_set  = cur_addr[SET_BITS+5:6];
     wire [TAG_BITS-1:0]     cur_tag  = cur_addr[31:SET_BITS+6];
@@ -819,7 +906,8 @@ module l2c_ctrl #(
                            : (fetch_ar_burst != 2'b01);
     wire dh_burst_ill_c    = !((dh_ar_burst == 2'b01) ||
                                ((dh_ar_burst == 2'b10) && dh_wrap_len_ok_c));
-    wire cur_burst_ill_c = dh_read_sel ? dh_burst_ill_c
+    wire cur_burst_ill_c = dw_write_sel ? (dw_aw_burst != 2'b01)
+                         : dh_read_sel ? dh_burst_ill_c
                          : (fetch_read_sel ? fetch_burst_ill_c
                          : (lsu_read_sel ? (ar_burst != 2'b01)
                          : (flw_avail_c ? 1'b0 : (aw_burst != 2'b01))));
@@ -1122,8 +1210,10 @@ module l2c_ctrl #(
     wire q_same_set_c   = q_v && (q_set == cur_set);
     wire a_same_line_c  = a_same_set_c && (a_tag == cur_tag);
     wire q_same_line_c  = q_same_set_c && (q_tag == cur_tag);
-    wire set_haz_c = (a_same_set_c && !(a_same_line_c && !a_is_write && !write_sel)) ||
-                     (q_same_set_c && !(q_same_line_c && !q_is_write && !write_sel));
+    // P6W: `cur_is_write_c`, not `write_sel` -- a hot WRITE is a write for
+    // the same-line-read-pair exemption exactly as a cold one is.
+    wire set_haz_c = (a_same_set_c && !(a_same_line_c && !a_is_write && !cur_is_write_c)) ||
+                     (q_same_set_c && !(q_same_line_c && !q_is_write && !cur_is_write_c));
     // Response-ordering hazard for a BYPASS dispatch: the pipeline holds
     // ops whose ids are not in the MSHR yet, so `mshr_idq_busy` alone no
     // longer sees them. Widened with the {src, id} tag for the same
@@ -1161,6 +1251,24 @@ module l2c_ctrl #(
                        (is_bypass_c ? (byp_slot_c && byp_req_ready && !id_busy_c && !pipe_id_haz_c)
                                     : (accept_slot_c && !set_haz_c)));
     wire do_accept_c = !rst_busy && any_sel && !is_bypass_c && accept_slot_c && !set_haz_c;
+    // P6W: dw_wready is do_accept_c restricted to the hot write door --
+    // written out term for term, like s_wready's cache branch, so that the
+    // W handshake and the tracker advance (dw_take_c) are the same event.
+    assign dw_wready = dw_write_sel && !rst_busy && !is_bypass_c && accept_slot_c && !set_haz_c;
+    assign dw_take_c = do_accept_c && dw_write_sel;
+    // synthesis translate_off
+    // The hot W handshake and the hot tracker's advance are ONE event.  A
+    // beat taken without an accept is a lost write; an accept without a
+    // beat is a phantom one.  Checked, because every term above is shared
+    // with signals other people edit.
+    always @(posedge clk) begin
+        if (!rst && ((dw_wvalid && dw_wready) !== dw_take_c)) begin
+            $display("L2C_CTRL ASSERT: hot W handshake (%b) != hot write accept (%b)",
+                     dw_wvalid && dw_wready, dw_take_c);
+            $fatal(1);
+        end
+    end
+    // synthesis translate_on
 
     // 2026-07-24: real-HW investigation — boot_fsm's first write into the
     // L2C-fronted DDR path appears to hang (SD-loader LED flashes briefly
@@ -1196,7 +1304,7 @@ module l2c_ctrl #(
     // advance the LSU's own burst bookkeeping on a cycle where a
     // fetch-sourced beat, not an LSU one, actually won the door.
     assign ar_take_c = door_take_c && lsu_read_sel;
-    assign aw_take_c = flw_gath_c || (door_take_c && !read_sel && !flw_avail_c);
+    assign aw_take_c = flw_gath_c || (door_take_c && !read_sel && !dw_write_sel && !flw_avail_c);
     reg [ADDR_WIDTH-1:0] req_addr; reg [SET_BITS-1:0] req_set; reg [TAG_BITS-1:0] req_tag;
     reg req_is_write; reg [ID_WIDTH-1:0] req_id; reg [127:0] req_wdata; reg [15:0] req_wstrb;
     reg [1:0] req_qoff; reg req_last; reg req_need; reg req_illegal;
@@ -1229,11 +1337,14 @@ module l2c_ctrl #(
     reg [3:0] req_cov, req_dty, req_want;
     wire       cur_qfull_c = &cur_wstrb;
     wire       cur_qany_c  = |cur_wstrb;
-    wire [3:0] cur_cov_c   = (gst == G_FULL) ? 4'b1111
+    // P6W: "the accepted write is a gathered full line" is (gst == G_FULL)
+    // only while no hot write holds the door -- see cur_wdata.
+    wire       cur_gfull_c = (gst == G_FULL) && !dw_write_sel;
+    wire [3:0] cur_cov_c   = cur_gfull_c ? 4'b1111
                            : (cur_qfull_c ? (4'b0001 << cur_qoff) : 4'b0000);
-    wire [3:0] cur_dty_c   = (gst == G_FULL) ? 4'b1111
+    wire [3:0] cur_dty_c   = cur_gfull_c ? 4'b1111
                            : (cur_qany_c  ? (4'b0001 << cur_qoff) : 4'b0000);
-    wire [3:0] cur_want_c  = (!read_sel && ((gst == G_FULL) || cur_qfull_c))
+    wire [3:0] cur_want_c  = (!read_sel && (cur_gfull_c || cur_qfull_c))
                            ? 4'b0000 : (4'b0001 << cur_qoff);
     // ======================= ARRAY ADDRESS REGISTER ======================
     //
@@ -2179,8 +2290,10 @@ module l2c_ctrl #(
             aw_have <= 1'b0; ar_have <= 1'b0; aw_pend_v <= 1'b0; ar_pend_v <= 1'b0;
             fetch_ar_have <= 1'b0; fetch_ar_pend_v <= 1'b0;
             dh_ar_have <= 1'b0; dh_ar_pend_v <= 1'b0;
+            dw_aw_have <= 1'b0; dw_aw_pend_v <= 1'b0; dw_favor <= 1'b0;
             rw_favor <= 1'b0; fetch_favor <= 1'b0; hot_favor <= 1'b0;
             cold_wait_q <= 8'd0; cold_starved_q <= 1'b0; hit_rsp_valid <= 1'b0;
+            hot_haz_q <= 1'b0;
             a_v <= 1'b0; q_v <= 1'b0; req_v <= 1'b0; rr_p1 <= 1'b0; rr_p2 <= 1'b0;
             q_stale <= 1'b0; req_stale <= 1'b0;
             victim_push_valid <= 1'b0; byp_req_valid <= 1'b0;
@@ -2291,6 +2404,33 @@ module l2c_ctrl #(
                                (s_awaddr[5:0] == 6'd0) && (s_awlen[1:0] == 2'b11);
             end else if (aw_act_free_c && aw_pend_v) begin
                 aw_pend_v <= 1'b0;
+            end
+            // P6W: hot WRITE header door -- active slot + one-deep
+            // pre-latch, the AW twin of the dh/fetch doors.  Every register
+            // here loses its consumers when DW_PORT_EN == 0 (dw_awready is
+            // then constant 0, so nothing is ever latched).
+            if (dw_aw_act_free_c) begin
+                if (dw_aw_pend_v) begin
+                    dw_aw_have <= 1'b1; dw_aw_id <= dw_aw_pend_id;
+                    dw_aw_len <= dw_aw_pend_len; dw_aw_burst <= dw_aw_pend_burst; dw_aw_beat <= 8'd0;
+                    dw_aw_step <= {{(ADDR_WIDTH-1){1'b0}}, 1'b1} << dw_aw_pend_size;
+                end else if (dw_awvalid && dw_awready) begin
+                    dw_aw_have <= 1'b1; dw_aw_id <= dw_awid;
+                    dw_aw_len <= dw_awlen; dw_aw_burst <= dw_awburst; dw_aw_beat <= 8'd0;
+                    dw_aw_step <= {{(ADDR_WIDTH-1){1'b0}}, 1'b1} << dw_awsize;
+                end else begin
+                    dw_aw_have <= 1'b0;
+                end
+            end else if (dw_take_c) begin
+                dw_aw_beat <= dw_aw_beat + 8'd1;
+            end
+            if (dw_aw_cur_load_c)     dw_aw_cur <= dw_aw_cur_ld;
+            else if (dw_aw_cur_inc_c) dw_aw_cur <= dw_aw_cur_next;
+            if (dw_awvalid && dw_awready && !(dw_aw_act_free_c && !dw_aw_pend_v)) begin
+                dw_aw_pend_v <= 1'b1; dw_aw_pend_id <= dw_awid; dw_aw_pend_addr <= dw_awaddr;
+                dw_aw_pend_len <= dw_awlen; dw_aw_pend_size <= dw_awsize; dw_aw_pend_burst <= dw_awburst;
+            end else if (dw_aw_act_free_c && dw_aw_pend_v) begin
+                dw_aw_pend_v <= 1'b0;
             end
             // Level A (task #269): fetch header door -- active slot + one-deep
             // pre-latch, structurally identical to the s_ar*/ar_have door
@@ -2403,9 +2543,17 @@ module l2c_ctrl #(
             // the door's select cone sees a flop.  Both are held at 0 when
             // the feature is compiled out, so they lose their consumers and
             // synthesis removes them.
-            if ((D_PORT_EN != 0) && door_take_c && hot_take_c) begin
+            // P6W: hot_favor arbitrates between the two hot READ doors, so
+            // it moves only on a hot READ accept; dw_favor moves on every hot
+            // accept and points at whichever of read/write did NOT just win.
+            if ((D_PORT_EN != 0) && door_take_c && hot_take_c && !dw_write_sel) begin
                 hot_favor <= !hot_favor;
             end
+            if ((DW_PORT_EN != 0) && door_take_c && hot_take_c) begin
+                dw_favor <= !dw_write_sel;
+            end
+            hot_haz_q <= (DW_PORT_EN != 0) && hot_take_c && !rst_busy && accept_slot_c &&
+                         !is_bypass_c && set_haz_c;
             if (D_PORT_EN != 0) begin
                 if (!cold_avail_c || (door_take_c && (lsu_read_sel || write_sel))) begin
                     cold_wait_q    <= 8'd0;
@@ -2476,13 +2624,13 @@ module l2c_ctrl #(
                 // ---- S0 -> A ----------------------------------------
                 if (do_accept_c) begin
                     a_addr <= cur_addr; a_set <= cur_set; a_tag <= cur_tag;
-                    a_is_write <= write_sel; a_id <= cur_id; a_wdata <= cur_wdata;
+                    a_is_write <= cur_is_write_c; a_id <= cur_id; a_wdata <= cur_wdata;
                     a_wstrb <= cur_wstrb; a_qoff <= cur_qoff; a_last <= cur_last;
                     a_need <= cur_need; a_illegal <= illegal_c;
                     a_full <= write_sel && (gst == G_FULL);
                     if (write_sel && (gst == G_FULL)) a_line <= flw_data;
-                    a_cov  <= write_sel ? cur_cov_c : 4'b0000;
-                    a_dty  <= write_sel ? cur_dty_c : 4'b0000;
+                    a_cov  <= cur_is_write_c ? cur_cov_c : 4'b0000;
+                    a_dty  <= cur_is_write_c ? cur_dty_c : 4'b0000;
                     a_want <= cur_want_c;
                     // Level A (task #269): thread the fetch source tag
                     // through stage A alongside every other cur_* field.

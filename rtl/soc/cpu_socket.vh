@@ -151,6 +151,49 @@
 //        cacheable answer fail loudly instead of reading aliased DRAM.
 //
 //    See docs/l2c_spec.md "The hot/cold memory split (P6, DH_PORT_EN)".
+//
+// ── PLANNED, NOT YET PART OF THIS HEADER: axi_dh AW/W/B (P6W, the hot
+//    door's WRITE half).  Same status and same two-repo rule as above.
+//
+//    Shape, as l2c.v's dw_axi_* port expects it (behind the write guard):
+//      128 b data, 16 b strobes, CPU_SOCKET_AXI_DH_IW (2) ID bits -- the
+//      write ID space is independent of the read one, as in AXI.
+//      INCR only, awsize = 4.  awlen 0 (one 16 B L1D line) today; 3 for a
+//      64 B sector writeback later.
+//      bready MUST be held high (a refused B stalls the whole L2 front door).
+//      AW may run ahead of W; W beats follow AW order; B is in order per ID.
+//
+//    What may go on it: CACHEABLE writes only -- COPYBACK dirty-victim
+//    writebacks and full-line (noFill) store installs.  Writethrough stores
+//    and every cache-inhibited access stay on axi_d.  Routing key: the
+//    cache mode the line was allocated under, never an address decode; the
+//    fabric guard answers RAM -> L2, ROM mirror -> dropped with OKAY (as the
+//    crossbar drops a CPU ROM write), anything else -> DECERR.
+//
+//    What B means: the write has been accepted by L2's lookup pipeline and
+//    EVERY read accepted afterwards, on any door, observes it.  Nothing
+//    earlier (AW or W handshake) means that, and AW/W/B are NOT ordered
+//    against axi_dh AR/R.  Core-side rules, all HARD:
+//      * WB gate, extended: hold a read of line X -- an axi_dh AR, or a
+//        cold AR on axi_d -- while any write of X, on axi_dh OR axi_d, has
+//        been issued (or is queued to issue) and has no B.  Same CAM as the
+//        P6 gate, over the WB buffer and the WT FIFO.
+//      * No two writes of one line in flight on DIFFERENT doors (L2 orders
+//        same-line writes by front-door accept order, which is not issue
+//        order across doors).  Same-door same-line writes are ordered.
+//      * D4: busQuiesced additionally requires no axi_dh write without its
+//        B; while an inhibited access is outstanding, no axi_dh AW issues.
+//        A CPUSH/CPUSHL push that goes out on this port completes (B) before
+//        a following inhibited access launches -- so device DMA reading
+//        memory through the crossbar sees the pushed data in L2.
+//      * On a core reset nothing is needed on this port: the SoC guard
+//        (abandon = cpu_rst) pads an abandoned burst with no-op beats and
+//        swallows Bs owed to the dead core before it accepts a new AW.
+//
+//    Fabric side (fpga_top_ddr.vh, behind `L2C_DW_PORT`, which requires
+//    `L2C_DH_PORT`): waits on `dha_aw*`/`dha_w*`/`dha_b*` and a
+//    `dha_bready_gated` twin of `dha_rready_gated`.
+//    See docs/l2c_spec.md "The hot door's write half (P6W, DW_PORT_EN)".
 `ifndef CPU_SOCKET_PARAMS
 `define CPU_SOCKET_PARAMS
   `ifndef CPU_SOCKET_AXI_I_DW

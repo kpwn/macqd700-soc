@@ -35,7 +35,10 @@ module tb_l2c #(
     parameter DH_ID_WIDTH = 2,
     // Cold-path fairness bound; 0 = pure fixed priority.  The arbitration
     // tests sweep this.
-    parameter DH_COLD_FAIR_N = 64
+    parameter DH_COLD_FAIR_N = 64,
+    // P6W: the hot door's WRITE half (l2c DW_PORT_EN).  Requires DH_EN.
+    parameter DW_EN = 0,
+    parameter DW_ID_WIDTH = 2
 ) (
     input  wire clk, rst,
     input  wire [5:0]  s_axi_awid, input wire [31:0] s_axi_awaddr,
@@ -83,6 +86,24 @@ module tb_l2c #(
     // Compile-time configuration, readable from C++ so a scenario can skip
     // itself in the OFF build instead of silently passing.
     output wire       dbg_dh_en,
+    // P6W: hot write door, driven at the WRITE GUARD's upstream pins.
+    input  wire [DW_ID_WIDTH-1:0] dw_axi_awid, input wire [31:0] dw_axi_awaddr,
+    input  wire [7:0] dw_axi_awlen, input wire [2:0] dw_axi_awsize,
+    input  wire [1:0] dw_axi_awburst, input wire dw_axi_awvalid,
+    output wire dw_axi_awready,
+    input  wire [127:0] dw_axi_wdata, input wire [15:0] dw_axi_wstrb,
+    input  wire dw_axi_wlast, input wire dw_axi_wvalid, output wire dw_axi_wready,
+    output wire [DW_ID_WIDTH-1:0] dw_axi_bid, output wire [1:0] dw_axi_bresp,
+    output wire dw_axi_bvalid, input wire dw_axi_bready,
+    input  wire       dw_aw_is_rom,
+    input  wire       dw_abandon,
+    output wire [15:0] dw_guard_fault_count,
+    output wire [15:0] dw_guard_drop_count,
+    output wire       dbg_dw_en,
+    output wire       dbg_acc_dw,
+    output wire       dbg_dw_aw_have,
+    output wire       dbg_hot_avail,
+    output wire       dbg_dw_over_gfull,
     output wire [15:0] dbg_dh_cold_fair_n,
     output wire [5:0] m_axi_awid, output wire [31:0] m_axi_awaddr,
     output wire [7:0] m_axi_awlen, output wire [2:0] m_axi_awsize, output wire [1:0] m_axi_awburst,
@@ -221,6 +242,44 @@ module tb_l2c #(
     output wire [15:0] dbg_dh_snap
 );
     assign dbg_dh_en = (DH_EN != 0);
+    assign dbg_dw_en = (DW_EN != 0);
+
+    wire [DW_ID_WIDTH-1:0] dwg_awid;
+    wire [31:0]            dwg_awaddr;
+    wire [7:0]             dwg_awlen;
+    wire [2:0]             dwg_awsize;
+    wire [1:0]             dwg_awburst;
+    wire                   dwg_awvalid, dwg_awready;
+    wire [127:0]           dwg_wdata;
+    wire [15:0]            dwg_wstrb;
+    wire                   dwg_wlast, dwg_wvalid, dwg_wready;
+    wire [DW_ID_WIDTH-1:0] dwg_bid;
+    wire [1:0]             dwg_bresp;
+    wire                   dwg_bvalid, dwg_bready;
+    /* verilator lint_off PINCONNECTEMPTY */
+    dh_write_window_guard #(
+        .ID_WIDTH(DW_ID_WIDTH), .DATA_WIDTH(128)
+    ) u_dw_guard (
+        .clk(clk), .rst(rst),
+        .ram_window_lg2(dh_ram_window_lg2),
+        .s_aw_is_rom(dw_aw_is_rom),
+        .abandon(dw_abandon),
+        .s_awid(dw_axi_awid), .s_awaddr(dw_axi_awaddr), .s_awlen(dw_axi_awlen),
+        .s_awsize(dw_axi_awsize), .s_awburst(dw_axi_awburst),
+        .s_awvalid(dw_axi_awvalid), .s_awready(dw_axi_awready),
+        .s_wdata(dw_axi_wdata), .s_wstrb(dw_axi_wstrb), .s_wlast(dw_axi_wlast),
+        .s_wvalid(dw_axi_wvalid), .s_wready(dw_axi_wready),
+        .s_bid(dw_axi_bid), .s_bresp(dw_axi_bresp), .s_bvalid(dw_axi_bvalid), .s_bready(dw_axi_bready),
+        .m_awid(dwg_awid), .m_awaddr(dwg_awaddr), .m_awlen(dwg_awlen),
+        .m_awsize(dwg_awsize), .m_awburst(dwg_awburst),
+        .m_awvalid(dwg_awvalid), .m_awready(dwg_awready),
+        .m_wdata(dwg_wdata), .m_wstrb(dwg_wstrb), .m_wlast(dwg_wlast),
+        .m_wvalid(dwg_wvalid), .m_wready(dwg_wready),
+        .m_bid(dwg_bid), .m_bresp(dwg_bresp), .m_bvalid(dwg_bvalid), .m_bready(dwg_bready),
+        .fault_sticky(), .fault_addr(),
+        .fault_count(dw_guard_fault_count), .drop_count(dw_guard_drop_count)
+    );
+    /* verilator lint_on PINCONNECTEMPTY */
     assign dbg_dh_cold_fair_n = DH_COLD_FAIR_N;
 
     // ── The window guard, in front of the hot door ─────────────────────
@@ -261,6 +320,7 @@ module tb_l2c #(
         .L2_BYPASS_ALL(L2_BYPASS_ALL),
         .DH_PORT_EN(DH_EN), .DH_ID_WIDTH(DH_ID_WIDTH),
         .DH_COLD_FAIR_N(DH_COLD_FAIR_N),
+        .DW_PORT_EN(DW_EN), .DW_ID_WIDTH(DW_ID_WIDTH),
         .VICTIM_SLOTS(VICTIM_SLOTS),
         .BYPASS_SLOTS(BYPASS_SLOTS),
         .NUM_BYPASS_WINDOWS(1),
@@ -289,6 +349,13 @@ module tb_l2c #(
         .dh_axi_arvalid(dhg_arvalid), .dh_axi_arready(dhg_arready),
         .dh_axi_rid(dhg_rid), .dh_axi_rdata(dhg_rdata), .dh_axi_rresp(dhg_rresp),
         .dh_axi_rlast(dhg_rlast), .dh_axi_rvalid(dhg_rvalid), .dh_axi_rready(dhg_rready),
+        .dw_axi_awid(dwg_awid), .dw_axi_awaddr(dwg_awaddr), .dw_axi_awlen(dwg_awlen),
+        .dw_axi_awsize(dwg_awsize), .dw_axi_awburst(dwg_awburst),
+        .dw_axi_awvalid(dwg_awvalid), .dw_axi_awready(dwg_awready),
+        .dw_axi_wdata(dwg_wdata), .dw_axi_wstrb(dwg_wstrb), .dw_axi_wlast(dwg_wlast),
+        .dw_axi_wvalid(dwg_wvalid), .dw_axi_wready(dwg_wready),
+        .dw_axi_bid(dwg_bid), .dw_axi_bresp(dwg_bresp), .dw_axi_bvalid(dwg_bvalid),
+        .dw_axi_bready(dwg_bready),
         .dbg_dh_snap(dbg_dh_snap),
         .m_axi_awid(m_axi_awid), .m_axi_awaddr(m_axi_awaddr), .m_axi_awlen(m_axi_awlen),
         .m_axi_awsize(m_axi_awsize), .m_axi_awburst(m_axi_awburst), .m_axi_awvalid(m_axi_awvalid),
@@ -397,6 +464,15 @@ module tb_l2c #(
         assign dbg_cold_avail   = dut.g_active.u_ctrl.cold_avail_c;
         assign dbg_cold_starved = dut.g_active.u_ctrl.cold_starved_q;
         assign dbg_dh_ar_have   = dut.g_active.u_ctrl.dh_ar_have;
+        assign dbg_acc_dw       = dut.g_active.u_ctrl.door_take_c && dut.g_active.u_ctrl.dw_write_sel;
+        assign dbg_dw_aw_have   = dut.g_active.u_ctrl.dw_aw_have;
+        assign dbg_hot_avail    = dut.g_active.u_ctrl.hot_read_avail_c ||
+                                  dut.g_active.u_ctrl.dw_wr_avail_c;
+        // A hot write accepted while a COLD gathered line sits at G_FULL --
+        // the one cycle shape where the full-line masks must NOT apply.
+        assign dbg_dw_over_gfull = dut.g_active.u_ctrl.door_take_c &&
+                                   dut.g_active.u_ctrl.dw_write_sel &&
+                                   (dut.g_active.u_ctrl.gst == 2'd2);
         assign dbg_victim_query_hit = dut.g_active.u_ctrl.req_v &&
                                       dut.g_active.u_ctrl.victim_query_hit;
     end else begin : g_no_taps
@@ -407,6 +483,10 @@ module tb_l2c #(
         assign dbg_cold_avail   = 1'b0;
         assign dbg_cold_starved = 1'b0;
         assign dbg_dh_ar_have   = 1'b0;
+        assign dbg_acc_dw       = 1'b0;
+        assign dbg_dw_aw_have   = 1'b0;
+        assign dbg_hot_avail    = 1'b0;
+        assign dbg_dw_over_gfull = 1'b0;
         assign dbg_victim_query_hit = 1'b0;
         assign dbg_vb_occ        = 5'd0;
         assign dbg_vb_out        = 5'd0;
