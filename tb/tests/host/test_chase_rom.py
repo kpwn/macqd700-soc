@@ -56,7 +56,10 @@ class ChaseRomTest(unittest.TestCase):
                 return [lines[0]] + [f"{i} {line.split(' ', 1)[1]}"
                                      for i, line in enumerate(lines[1:])]
 
-            self.assertEqual(parse(good)["hops"], 128)
+            parsed = parse(good)
+            self.assertEqual(parsed["hops"], 128)
+            self.assertEqual(parsed["load_retire_interval_count"], 127)
+            self.assertEqual(parsed["load_retire_interval_cycles"], {1: 127})
             s = meta["symbols"]
             for legacy in (good[1:], ["# cpu040-resume-pc-v0"] + good[1:]):
                 with self.assertRaisesRegex(ValueError, "unsupported retirement trace"):

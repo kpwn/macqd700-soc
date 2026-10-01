@@ -39,6 +39,11 @@ corresponding `.bin` and `+macro_pc_dump_path=<trace>`; the 30000-row cap covers
 the 64 KiB checksum and pass PC. Parse
 with `python3 chase_rom.py parse --meta <json> --rom <bin> --trace <trace>`.
 The parser rejects truncated/failed runs instead of reporting a partial CPI.
+It also reports the histogram of consecutive measured load-retirement
+intervals, with exactly `measured_hops - 1` samples. This separates steady
+retirement spacing from fixed start/end marker overhead; both metrics must
+remain visible. Retirement spacing is not an issue timestamp or an IPC
+measurement of an independent-load workload.
 
 An optional `--bus-trace <path>` consumes accepted CPU-facing hot-door
 `t AR id addr len size burst`, asserted `t RV id resp last ready`, and accepted

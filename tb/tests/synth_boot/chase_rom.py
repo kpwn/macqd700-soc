@@ -224,8 +224,15 @@ def parse_trace(meta, trace):
     if ticks & 1:
         raise ValueError("window is not an integral number of sysclock cycles")
     cycles = ticks // 2
+    load_ticks = [row[1] for row in rows[s1 + 1:e1] if row[2] in loads]
+    load_intervals = [b - a for a, b in zip(load_ticks, load_ticks[1:])]
+    if any(delta & 1 for delta in load_intervals):
+        raise ValueError("load-retirement interval is not an integral number of sysclock cycles")
+    interval_histogram = Counter(delta // 2 for delta in load_intervals)
     return {"cycles": cycles, "hops": meta["measured_hops"],
             "cycles_per_hop": cycles / meta["measured_hops"],
+            "load_retire_interval_cycles": dict(sorted(interval_histogram.items())),
+            "load_retire_interval_count": len(load_intervals),
             "warm_start_tick": rows[s0][1], "warm_end_tick": rows[e0][1],
             "start_tick": rows[s1][1], "end_tick": rows[e1][1]}
 
