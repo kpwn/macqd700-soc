@@ -135,6 +135,17 @@ if {$cpu_axi_dh && (![info exists ::env(CPU_INHIBITED_FULL_BARRIER)] || $::env(C
 }
 puts "=== CPU SOCKET: CPU_AXI_DH=$cpu_axi_dh (L2C_DH_PORT [expr {$cpu_axi_dh ? {defined} : {undefined}}]) ==="
 
+# HOT_RETURN_CONFIG_BEGIN: checked independently by tools/test_hot_return_config.tcl.
+set l2_dh_r_fall_through [expr {[info exists ::env(L2_DH_R_FALL_THROUGH)] ? $::env(L2_DH_R_FALL_THROUGH) : 0}]
+if {$l2_dh_r_fall_through ni {0 1}} {
+    error "L2_DH_R_FALL_THROUGH must be 0 or 1; got '$l2_dh_r_fall_through'"
+}
+if {$l2_dh_r_fall_through && !$cpu_axi_dh} {
+    error "L2_DH_R_FALL_THROUGH=1 requires CPU_AXI_DH=1"
+}
+puts "=== L2 HOT RETURN: L2_DH_R_FALL_THROUGH=$l2_dh_r_fall_through ==="
+# HOT_RETURN_CONFIG_END
+
 # CPU040_SRC_DIR IS AN OVERRIDE, AND IT MUST BE HONOURED HERE.
 #
 # This line used to be an unconditional `$proj_root/cpu040`, and this script
@@ -860,6 +871,7 @@ puts "jtag_repl build_id: $build_id (generic = $build_id_generic)"
 # core clock without changing RTL topology.  CORE_CLK_HZ must stay consistent
 # with the active fabric clock: 200 MHz for SIM_MODEL, 100 MHz for real MIG.
 set top_generic_list [list \
+    L2_DH_R_FALL_THROUGH=$l2_dh_r_fall_through \
     CORE_CLK_HZ=$core_clk_hz \
     CORE_CLK_DIVIDE=$core_clk_divide \
     PB_CLK_HZ=$pb_clk_hz \
@@ -3253,6 +3265,7 @@ puts $buildinfo_fh "l2c_enable=[expr {$l2c_enable_effective ? 1 : 0}]"
 puts $buildinfo_fh "vram_in_ddr=[expr {$vram_in_ddr_effective ? 1 : 0}]"
 puts $buildinfo_fh "l2c_uram_floorplan=[expr {($l2c_enable_effective && $l2c_uram_floorplan) ? 1 : 0}]"
 puts $buildinfo_fh "cpu=$cpu_sel"
+puts $buildinfo_fh "l2_dh_r_fall_through=$l2_dh_r_fall_through"
 puts $buildinfo_fh "cpu_ipc_profile=$cpu_ipc_profile"
 if {$cpu_m68k040} {
     puts $buildinfo_fh "cpu_git_revision=[string trim [exec git -C $cpu040_dir rev-parse HEAD]]"

@@ -2374,6 +2374,9 @@ CPU_M68K040_IDIRS :=
 # the same check on its own regeneration.
 CPU_AXI_DH ?= 0
 export CPU_AXI_DH
+# Optional physical-build experiment; Vivado validates the prerequisite and
+# records the actual top-level generic. Defaults remain registered responses.
+L2_DH_R_FALL_THROUGH ?= 0
 CPU_DCACHE_NONBLOCKING ?= 0
 CPU_INHIBITED_FULL_BARRIER ?= 0
 export CPU_DCACHE_NONBLOCKING CPU_INHIBITED_FULL_BARRIER
@@ -3253,6 +3256,7 @@ VIVADO_RUN_ENV := PCIE_TEST_DIR=$(PCIE_TEST_DIR) INCREMENTAL_REF_DCP=$(INCREMENT
 # CPU socket select for synth/impl — same CPU=stub|m68k knob as the
 # Verilator flow (see "CPU build select" above); consumed by vivado.tcl.
 VIVADO_RUN_ENV += CPU=$(CPU)
+VIVADO_RUN_ENV += L2_DH_R_FALL_THROUGH=$(L2_DH_R_FALL_THROUGH)
 # And the CPU SOURCE TREE. synth/vivado.tcl regenerates M68kSocketTop.v itself from
 # this directory, so without forwarding it the tcl silently used the checked-in
 # cpu040 clone and `CPU040_SRC_DIR=<dev tree>` on the make line did nothing to the
@@ -3576,18 +3580,22 @@ check-cpu-ipc-profile:
 check-cpu-debug-profile:
 	tclsh $(TOOLS_DIR)/test_cpu_debug_profile.tcl
 
+.PHONY: check-hot-return-config
+check-hot-return-config:
+	tclsh $(TOOLS_DIR)/test_hot_return_config.tcl
+
 .PHONY: check-post-route-exit
 check-post-route-exit:
 	tclsh $(TOOLS_DIR)/test_post_route_exit.tcl
 
-synth: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V)) check-synth-sources check-storage-reset-pairing check-cpu-ipc-profile check-cpu-debug-profile
+synth: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V)) check-synth-sources check-storage-reset-pairing check-cpu-ipc-profile check-cpu-debug-profile check-hot-return-config
 	@mkdir -p $(VIVADO_IMPL_DIR)
 	@touch $(VIVADO_LOCK)
 	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado.tcl -tclargs synth_only $(VIVADO_IMPL_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
 .PHONY: impl
-impl: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V)) check-synth-sources check-cpu-ipc-profile check-cpu-debug-profile check-post-route-exit
+impl: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V)) check-synth-sources check-cpu-ipc-profile check-cpu-debug-profile check-post-route-exit check-hot-return-config
 	@mkdir -p $(VIVADO_IMPL_DIR)
 	@touch $(VIVADO_LOCK)
 	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado.tcl -tclargs full_impl $(VIVADO_IMPL_DIR)' \
@@ -3602,7 +3610,7 @@ impl: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V)) check-synth-sources check-
 # placement hour.  ROUTE_DIRECTIVE selects the router directive (default
 # AggressiveExplore).
 .PHONY: impl-split
-impl-split: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V)) check-synth-sources check-cpu-ipc-profile check-cpu-debug-profile check-post-route-exit
+impl-split: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V)) check-synth-sources check-cpu-ipc-profile check-cpu-debug-profile check-post-route-exit check-hot-return-config
 	@mkdir -p $(VIVADO_IMPL_DIR)
 	@touch $(VIVADO_LOCK)
 	flock -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado.tcl -tclargs place_only $(VIVADO_IMPL_DIR)' \
