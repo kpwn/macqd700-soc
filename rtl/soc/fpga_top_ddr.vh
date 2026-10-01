@@ -243,7 +243,11 @@
 
     // ══════════════ P6: THE D-SIDE HOT DOOR (axi_dh) ═══════════════════
     //
-    // NOT ENABLED YET, AND THE REASON IS IN THE CPU REPO.  The hot door needs
+    // ENABLED BY `L2C_DH_PORT` (Makefile / vivado.tcl knob CPU_AXI_DH=1, which
+    // also builds the CPU with its axi_dh master and cross-checks the
+    // generated netlist).  History below.
+    //
+    // WAS NOT ENABLED, AND THE REASON WAS IN THE CPU REPO.  The hot door needs
     // a fifth AXI master on the CPU socket (`cpu_socket.vh` version bump:
     // read-only, 128 b, 4 IDs = AxiIds.dRefill(0..3)), and the core-side
     // prerequisite the design doc calls D4 -- an inhibited access launched
@@ -315,7 +319,7 @@
 
     // ═══════════ P6W: THE HOT DOOR'S WRITE HALF (axi_dh AW/W/B) ══════════
     //
-    // NOT ENABLED YET, for the same reason as the read half above: it needs
+    // NOT ENABLED YET: unlike the read half above, it still needs
     // the CPU socket's axi_dh group to grow AW/W/B (a coordinated two-repo
     // change, see cpu_socket.vh), and it needs the read half, whose source
     // tag and hot class it shares -- `L2C_DW_PORT` without `L2C_DH_PORT` is

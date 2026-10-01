@@ -5,7 +5,8 @@
 // able to drop in by speaking ONLY this socket — no CPU-specific (m68k)
 // signal crosses the boundary.
 //
-// The seam is THREE AXI interfaces + an IRQ pair + a small SoC-fabric
+// The seam has three baseline AXI interfaces, an optional P6 D-side hot-read
+// interface, an IRQ pair and a small SoC-fabric
 // control group + clk/rst:
 //
 //   * axi_i_*    — CPU instruction-read MASTER (AR/R only) at AXI_I_DW.
@@ -13,6 +14,8 @@
 //                  wstrb = AXI_D_DW/8.  AXI_I_DW and AXI_D_DW are
 //                  independent per-master widths (task #266 / SOC-1) —
 //                  they are NOT required to match.
+//   * axi_dh_*   — optional P6 D-side hot-read MASTER (AR/R only), 128 b,
+//                  2-bit ID, present when CPU_AXI_DH=1 / L2C_DH_PORT.
 //   * dbg_axi_*  — CPU-EXPORTED debug/control AXI(-Lite) SLAVE.  This is
 //                  the WHOLE debug + control register map the CPU
 //                  presents: build_id, live PC / arch state, halt /
@@ -111,11 +114,10 @@
 //                       existing 0x5090_0000 debug window (1 MiB).
 //   CPU_SOCKET_DBG_DW : dbg_axi(-Lite) data width = 32.
 //
-// ── PLANNED, NOT YET PART OF THIS HEADER: axi_dh (P6, the D-side hot
-//    door).  Recorded here because this file is the canonical socket
-//    reference and the SoC half is already built and unit-tested; adding
-//    the port group here is a COORDINATED TWO-REPO CHANGE and must not be
-//    done from one side alone.
+// ── axi_dh (P6, the D-side hot door) -- optional socket group
+//    (CPU side: flag CPU_AXI_DH=1; core ports axi_dh_ar*/axi_dh_r*
+//    bind here to dha_ar*/dha_r*). CPU and SoC must enable the group
+//    together; the Makefile and Vivado generator check that coupling.
 //
 //    Shape, as l2c.v's dh_axi_* port already expects it:
 //      CPU_SOCKET_AXI_DH_DW = 128   (native, no decompose in l2c.v)
@@ -125,11 +127,10 @@
 //      INCR and WRAP; WRAP is what lets a 64 B line fill be issued
 //      demanded-sector-first as one burst.
 //
-//    Fabric side, when the port group lands (rtl/soc/fpga_top_ddr.vh,
-//    behind `L2C_DH_PORT`): the guard+door wiring is written and waits on
-//    exactly four names -- `dha_ar*`/`dha_r*`, a `CPU_AXI_DH_IW` localparam
-//    beside `CPU_AXI_IW` in fpga_top_cpu.vh, and a `dha_rready_gated`
-//    twin of `ifa_rready_gated` (the same JTAG-CPU-reset drain policy).
+//    Fabric side (rtl/soc/fpga_top_ddr.vh, behind `L2C_DH_PORT`): the
+//    guard+door use `dha_ar*`/`dha_r*`, `CPU_AXI_DH_IW` beside
+//    `CPU_AXI_IW` in fpga_top_cpu.vh, and `dha_rready_gated` with the
+//    same JTAG-CPU-reset drain policy as `ifa_rready_gated`.
 //
 //    Core side, and these are HARD prerequisites, not niceties:
 //      * a cache-inhibited access is a full barrier BOTH WAYS, launched
@@ -204,6 +205,12 @@
   `endif
   `define CPU_SOCKET_AXI_AW 32
   `define CPU_SOCKET_AXI_IW 4
+  // P6 hot door axi_dh (present on the CPU only when it is built with
+  // CPU_AXI_DH=1; the SoC binds it only under `L2C_DH_PORT`, which the
+  // Makefile/vivado.tcl define from the SAME knob and cross-check against
+  // the generated M68kSocketTop.v -- see the Makefile's CPU_AXI_DH).
+  `define CPU_SOCKET_AXI_DH_DW 128
+  `define CPU_SOCKET_AXI_DH_IW 2
   `define CPU_SOCKET_DBG_AW 20
   `define CPU_SOCKET_DBG_DW 32
 `endif

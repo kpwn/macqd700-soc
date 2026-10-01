@@ -140,6 +140,29 @@
     // a second consumer.
     wire                   ifa_rready_gated = cpu_rst ? 1'b1 : ifa_rready;
 
+    // ── axi_dh_* : P6 D-side HOT DOOR (dha_* names), read-only, 128 b ──
+    // Present only under `L2C_DH_PORT` (Makefile/vivado.tcl CPU_AXI_DH=1,
+    // cross-checked against the generated CPU netlist).  Same JTAG-reset
+    // drain policy as ifa_rready_gated.  Non-m68k040 CPUs tie it off in
+    // fpga_top_debug_ctrl.vh (the stub and the v1 wrapper have no hot door).
+    localparam integer CPU_AXI_DH_IW = `CPU_SOCKET_AXI_DH_IW;
+`ifdef L2C_DH_PORT
+    wire [CPU_AXI_DH_IW-1:0] dha_arid;
+    wire [CPU_AXI_AW-1:0]    dha_araddr;
+    wire [7:0]               dha_arlen;
+    wire [2:0]               dha_arsize;
+    wire [1:0]               dha_arburst;
+    wire                     dha_arvalid;
+    wire                     dha_arready;
+    wire [CPU_AXI_DH_IW-1:0] dha_rid;
+    wire [127:0]             dha_rdata;
+    wire [1:0]               dha_rresp;
+    wire                     dha_rlast;
+    wire                     dha_rvalid;
+    wire                     dha_rready;
+    wire                     dha_rready_gated = cpu_rst ? 1'b1 : dha_rready;
+`endif
+
     // ── axi_d_* : CPU data read/write master → xbar M0 (cpu_d_* names) ─
     wire [CPU_AXI_IW-1:0]  cpu_d_awid;
     wire [CPU_AXI_AW-1:0]  cpu_d_awaddr;

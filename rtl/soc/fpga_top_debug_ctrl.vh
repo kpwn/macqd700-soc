@@ -250,6 +250,16 @@
         .axi_d_rid    (cpu_d_rid    ), .axi_d_rdata  (cpu_d_rdata  ),
         .axi_d_rresp  (cpu_d_rresp  ), .axi_d_rlast  (cpu_d_rlast  ),
         .axi_d_rvalid (cpu_d_rvalid ), .axi_d_rready (cpu_d_rready ),
+`ifdef L2C_DH_PORT
+        // ── axi_dh_* : P6 D-side hot door → dh window guard → l2c dh_axi
+        .axi_dh_arid   (dha_arid   ), .axi_dh_araddr (dha_araddr ),
+        .axi_dh_arlen  (dha_arlen  ), .axi_dh_arsize (dha_arsize ),
+        .axi_dh_arburst(dha_arburst), .axi_dh_arvalid(dha_arvalid),
+        .axi_dh_arready(dha_arready),
+        .axi_dh_rid    (dha_rid    ), .axi_dh_rdata  (dha_rdata  ),
+        .axi_dh_rresp  (dha_rresp  ), .axi_dh_rlast  (dha_rlast  ),
+        .axi_dh_rvalid (dha_rvalid ), .axi_dh_rready (dha_rready ),
+`endif
 
         // ── dbg_axi_* : debug/control SLAVE ← JTAG-AXI window (dbg_core_*)
         // dbg_core_* is the 32-bit / 20-bit AXI-Lite window at the
@@ -493,6 +503,18 @@
     assign dbg_ila_ic_mshr_arsent_gen_w   = 32'd0;
 `endif
 `else
+`ifdef L2C_DH_PORT
+    // P6 hot door, non-m68k040 CPU: neither cpu_stub nor the v1 wrapper has
+    // an axi_dh master.  Tie it off so an L2C_DH_PORT build elaborates (the
+    // door simply never sees a request).
+    assign dha_arid = {CPU_AXI_DH_IW{1'b0}};
+    assign dha_araddr = 32'd0;
+    assign dha_arlen = 8'd0;
+    assign dha_arsize = 3'd4;
+    assign dha_arburst = 2'b01;
+    assign dha_arvalid = 1'b0;
+    assign dha_rready = 1'b1;
+`endif
     // (`dbg_ila_*_w`/`raw_daxi_*` wire declarations now live BEFORE the
     // CPU_M68K040 split above, shared by both branches -- see the
     // 2026-08-27 boot-investigation comment there. Declaring them again

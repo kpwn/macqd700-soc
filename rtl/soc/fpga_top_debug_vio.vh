@@ -176,6 +176,22 @@
     // it), and L2C_ENABLE is opt-in per synth/vivado.tcl, so an
     // unguarded reference here breaks every non-L2C build.  Reads back
     // as all-zero when l2c is absent, which is the honest answer.
+    // ── Window-guard hit counters (P6, 2026-09-30): the I-side fetch guard and
+    // the D-side hot-door guard both answer an out-of-window cacheable read
+    // with DECERR and count it.  A guard hit during boot means the MMU marked
+    // something cacheable that is not memory -- visible here on the first
+    // bitstream (design doc 2.2 correction #1: `OFF_DH_GUARD_HITS`).
+    //   [31:16] dh_guard_fault_count  (0 unless L2C_DH_PORT)
+    //   [15:0]  ifg_fault_count       (0 unless L2C_ENABLE)
+`ifdef L2C_ENABLE
+  `ifdef L2C_DH_PORT
+    wire [31:0] vio_guard_faults = {dh_guard_fault_count, ifg_fault_count};
+  `else
+    wire [31:0] vio_guard_faults = {16'd0, ifg_fault_count};
+  `endif
+`else
+    wire [31:0] vio_guard_faults = 32'd0;
+`endif
 `ifdef L2C_ENABLE
     wire [67:0] vio_l2c_stats = {
         dbg_l2c_hit_count,        // [67:36]
@@ -491,6 +507,7 @@
         .probe_in12(video_dbg_snap),
         .probe_in13(video_dbg_place),
         .probe_in14(vio_scsi_c96),
+        .probe_in15(vio_guard_faults),
         // 5 bits as of the battery-backed-PRAM change (was 4).  Width is
         // set by CONFIG.C_PROBE_OUT0_WIDTH in gen_debug_vio_ip
         // (synth/vivado.tcl) — bump both together or the IP/RTL widths

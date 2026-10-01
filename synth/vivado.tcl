@@ -120,6 +120,14 @@ if {$enable_ipc_ila && (!$perf_detail_enable || !$cpu_m68k040)} {
     error "ENABLE_IPC_ILA requires CPU=m68k040 and PERF_DETAIL_ENABLE=1"
 }
 puts "=== CPU SOCKET: CPU=$cpu_sel ==="
+# P6 D-side HOT DOOR.  ONE knob drives both halves: CPU_AXI_DH=1 builds the CPU with
+# its axi_dh master (the cpu040 generator reads the same env var) AND defines
+# L2C_DH_PORT for the SoC (the third l2c door + its window guard).  The generated
+# netlist is cross-checked below, so the two halves cannot silently disagree.
+set cpu_axi_dh [expr {[info exists ::env(CPU_AXI_DH)] ? $::env(CPU_AXI_DH) : 0}]
+if {$cpu_axi_dh ne "0" && $cpu_axi_dh ne "1"} { error "CPU_AXI_DH must be 0 or 1; got '$cpu_axi_dh'" }
+if {$cpu_axi_dh && !$cpu_m68k040} { error "CPU_AXI_DH=1 requires CPU=m68k040 (the only socket with an axi_dh master)" }
+puts "=== CPU SOCKET: CPU_AXI_DH=$cpu_axi_dh (L2C_DH_PORT [expr {$cpu_axi_dh ? {defined} : {undefined}}]) ==="
 
 # CPU040_SRC_DIR IS AN OVERRIDE, AND IT MUST BE HONOURED HERE.
 #
@@ -144,7 +152,7 @@ if {$cpu_m68k040} {
     }
     puts "=== CPU=m68k040: regenerating $cpu_m68k040_v ==="
     puts "=== CPU=m68k040: cd $cpu040_dir && sbt \"runMain m68k040.top.GenSocketTopVerilog\" ==="
-    if {[catch {exec env DBG_BUILD_ID=$build_id PERF_DETAIL_ENABLE=$perf_detail_enable CPU_IPC_PROFILE=$cpu_ipc_profile CPU_DEBUG_PROFILE=$cpu_debug_profile sh -c "cd $cpu040_dir && sbt \"runMain m68k040.top.GenSocketTopVerilog\"" 2>@1} sbt_out]} {
+    if {[catch {exec env DBG_BUILD_ID=$build_id CPU_AXI_DH=$cpu_axi_dh PERF_DETAIL_ENABLE=$perf_detail_enable CPU_IPC_PROFILE=$cpu_ipc_profile CPU_DEBUG_PROFILE=$cpu_debug_profile sh -c "cd $cpu040_dir && sbt \"runMain m68k040.top.GenSocketTopVerilog\"" 2>@1} sbt_out]} {
         puts stderr "ERROR: cpu040 M68kSocketTop.v regeneration failed:"
         puts stderr $sbt_out
         exit 1
@@ -155,6 +163,15 @@ if {$cpu_m68k040} {
         exit 1
     }
     puts "=== CPU=m68k040: regeneration OK, using $cpu_m68k040_v ==="
+    # CPU/SoC hot-door consistency: the netlist must carry axi_dh iff CPU_AXI_DH=1.
+    set fh [open $cpu_m68k040_v r]; set cpu_v_text [read $fh]; close $fh
+    set cpu_has_dh [expr {[string first "axi_dh_arvalid" $cpu_v_text] >= 0}]
+    unset cpu_v_text
+    if {$cpu_has_dh != $cpu_axi_dh} {
+        puts stderr "ERROR: CPU_AXI_DH=$cpu_axi_dh but the generated M68kSocketTop.v [expr {$cpu_has_dh ? {HAS} : {has NO}}] axi_dh port."
+        puts stderr "       The CPU and SoC halves of the P6 hot door disagree; refusing to build."
+        exit 1
+    }
 }
 
 # Shared include-dir list for every synth_design invocation below.  The
@@ -855,9 +872,9 @@ proc gen_debug_vio_ip {output_dir part} {
     set ip_dir $output_dir/ip
     set ip_xci $ip_dir/debug_vio/debug_vio.xci
     set ip_dcp $ip_dir/debug_vio/debug_vio.dcp
-    # Compact map v27. Exact configuration is the cache key, including
+    # Compact map v28 (v28: probe_in15 = vio_guard_faults). Exact configuration is the cache key, including
     # all probe widths and the disabled activity-detector setting.
-    set widths {32 6 10 8 16 32 32 32 32 68 187 48 96 160 84}
+    set widths {32 6 10 8 16 32 32 32 32 68 187 48 96 160 84 32}
     set config [list CONFIG.C_NUM_PROBE_IN [llength $widths] \
         CONFIG.C_NUM_PROBE_OUT 2 CONFIG.C_PROBE_OUT0_WIDTH 5 \
         CONFIG.C_PROBE_OUT0_INIT_VAL 0x0 CONFIG.C_PROBE_OUT1_WIDTH 1 \
@@ -868,7 +885,7 @@ proc gen_debug_vio_ip {output_dir part} {
         incr n
     }
     set ip_marker $ip_dir/debug_vio/probe_config.txt
-    set signature [list probe_map=v27 part=$part config=$config]
+    set signature [list probe_map=v28 part=$part config=$config]
     file mkdir $ip_dir
     set marker_ok 0
     if {[file exists $ip_marker]} {
@@ -1067,6 +1084,7 @@ if {$mode eq "ddr_pincheck"} {
         # CPU-side downconverter (see the CPU socket select comment above).
         lappend pincheck_def_args -verilog_define CPU_M68K040 \
             -verilog_define L2C_ENABLE -verilog_define VRAM_IN_DDR
+        if {$cpu_axi_dh} { lappend pincheck_def_args -verilog_define L2C_DH_PORT }
     }
     if {$enable_vio} { lappend pincheck_def_args -verilog_define VIO_ENABLE }
     if {$enable_ila} { lappend pincheck_def_args -verilog_define ILA_ENABLE }
@@ -1103,6 +1121,7 @@ if {$mode eq "dry_run"} {
     if {$cpu_m68k040} {
         lappend dry_def_args -verilog_define CPU_M68K040 \
             -verilog_define L2C_ENABLE -verilog_define VRAM_IN_DDR
+        if {$cpu_axi_dh} { lappend dry_def_args -verilog_define L2C_DH_PORT }
     }
     if {$use_sim_model} { lappend dry_def_args -verilog_define SIM_MODEL }
     if {$enable_vio}    { lappend dry_def_args -verilog_define VIO_ENABLE }
@@ -1139,6 +1158,7 @@ if {$mode eq "clock_report"} {
         lappend clock_def_args -verilog_define CPU_M68K040 \
             -verilog_define L2C_ENABLE -verilog_define VRAM_IN_DDR
     }
+    if {$cpu_axi_dh} { lappend clock_def_args -verilog_define L2C_DH_PORT }
     if {$use_sim_model} { lappend clock_def_args -verilog_define SIM_MODEL }
     if {$enable_vio}    { lappend clock_def_args -verilog_define VIO_ENABLE }
     if {$enable_ila}    { lappend clock_def_args -verilog_define ILA_ENABLE }
@@ -1288,6 +1308,10 @@ if {![info exists ::env(ENABLE_SD_JTAG_WRITER)]} {
 set l2c_enable_effective  [expr {$cpu_m68k040 || [info exists ::env(L2C_ENABLE)]}]
 set vram_in_ddr_effective [expr {$cpu_m68k040 || [info exists ::env(VRAM_IN_DDR)]}]
 if {$l2c_enable_effective}  { lappend synth_def_args -verilog_define L2C_ENABLE }
+if {$cpu_axi_dh} {
+    if {!$l2c_enable_effective} { error "CPU_AXI_DH=1 requires L2C_ENABLE (the hot door is an l2c front door)" }
+    lappend synth_def_args -verilog_define L2C_DH_PORT
+}
 if {$vram_in_ddr_effective} { lappend synth_def_args -verilog_define VRAM_IN_DDR }
 if {$cpu_m68k040} {
     puts "=== CPU=m68k040: forcing L2C_ENABLE + VRAM_IN_DDR on (axi_i is native 256b; no CPU-side downconverter) ==="

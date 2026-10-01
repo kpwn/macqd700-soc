@@ -2365,11 +2365,32 @@ CPU040_SCALA_SRCS := $(shell find $(CPU040_SRC_DIR)/src $(CPU040_SRC_DIR)/build.
 CPU_M68K040_SRCS := $(CPU_M68K040_V)
 CPU_M68K040_IDIRS :=
 
+# ── P6 D-side HOT DOOR: ONE knob, both halves ─────────────────────────
+# CPU_AXI_DH=1 builds the CPU with its axi_dh master (the cpu040 generator
+# reads the same env var; it also requires CPU_DCACHE_NONBLOCKING=1 and
+# CPU_INHIBITED_FULL_BARRIER=1 there) AND defines L2C_DH_PORT here (the third
+# l2c door + its window guard).  `check-cpu-dh` refuses any build whose
+# generated M68kSocketTop.v disagrees with the knob; synth/vivado.tcl does
+# the same check on its own regeneration.
+CPU_AXI_DH ?= 0
+export CPU_AXI_DH
+ifneq ($(filter-out 0 1,$(CPU_AXI_DH)),)
+$(error CPU_AXI_DH must be 0 or 1, got '$(CPU_AXI_DH)')
+endif
+CPU_DH_DEFINE := $(if $(filter 1,$(CPU_AXI_DH)),+define+L2C_DH_PORT,)
+
+.PHONY: check-cpu-dh
+check-cpu-dh: $(CPU_M68K040_V)
+	@has=0; grep -q 'axi_dh_arvalid' $(CPU_M68K040_V) && has=1; \
+	if [ "$$has" != "$(CPU_AXI_DH)" ]; then \
+	  echo "ERROR: CPU_AXI_DH=$(CPU_AXI_DH) but $(CPU_M68K040_V) has axi_dh=$$has -- the CPU and SoC halves of the P6 hot door disagree. Regenerate: make cpu040-gen CPU_AXI_DH=$(CPU_AXI_DH)"; \
+	  exit 1; fi; echo "check-cpu-dh: CPU_AXI_DH=$(CPU_AXI_DH) matches the generated CPU"
+
 .PHONY: cpu040-gen
 cpu040-gen:
-	@echo "cpu040-gen: CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE) CPU040_SRC_DIR=$(CPU040_SRC_DIR)"
+	@echo "cpu040-gen: CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE) CPU_AXI_DH=$(CPU_AXI_DH) CPU040_SRC_DIR=$(CPU040_SRC_DIR)"
 	@echo "cpu040-gen: regenerating M68kSocketTop.v via sbt (cd $(CPU040_SRC_DIR) && sbt \"runMain m68k040.top.GenSocketTopVerilog\") ..."
-	cd $(CPU040_SRC_DIR) && CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE) sbt "runMain m68k040.top.GenSocketTopVerilog"
+	cd $(CPU040_SRC_DIR) && CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE) CPU_AXI_DH=$(CPU_AXI_DH) sbt "runMain m68k040.top.GenSocketTopVerilog"
 
 # Only re-run sbt when a cpu040 Scala source (or build.sbt) is newer than
 # the last generated .v -- keeps `make lint-fpga-top CPU=m68k040` cheap on
@@ -2411,7 +2432,7 @@ ifeq ($(CPU),m68k040)
 # CPU_PRF_DEFINES is a no-op today (cpu040 has no PHYS_INT_REGS/
 # PHYS_FP_REGS build-time knob the way cpu/'s uop_pkg.v does), forwarded
 # anyway for symmetry in case that knob lands here later.
-CPU_DEFINE      := +define+CPU_M68K040 +define+L2C_ENABLE +define+VRAM_IN_DDR $(CPU_PRF_DEFINES)
+CPU_DEFINE      := +define+CPU_M68K040 +define+L2C_ENABLE +define+VRAM_IN_DDR $(CPU_PRF_DEFINES) $(CPU_DH_DEFINE)
 CPU_EXTRA_SRCS  := $(CPU_M68K040_SRCS)
 CPU_EXTRA_IDIRS := $(CPU_M68K040_IDIRS)
 # M68kSocketTop.v is SpinalHDL-generated and (a) carries its own
@@ -2451,7 +2472,7 @@ FPGA_TOP_ROM_EXTRA ?=
 SD_IMAGE ?=
 
 .PHONY: lint-fpga-top
-lint-fpga-top: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V))
+lint-fpga-top: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V) check-cpu-dh)
 	$(VERILATOR) --lint-only --cc -DSIM_MODEL $(CPU_DEFINE) $(VERILATOR_EXTRA_DEFINES) \
 		-I$(RTL_DIR)/core/decode -I$(RTL_DIR)/core -I$(RTL_DIR)/soc \
 		-I$(RTL_DIR)/board -I$(RTL_DIR)/board/vendor \
