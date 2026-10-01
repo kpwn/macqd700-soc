@@ -400,6 +400,7 @@
         // (l2c.v internally zero-extends up to its own ID_WIDTH=6 for
         // l2c_ctrl.v's mirrored-s_ar*-shape fetch sub-port).
         .F_ID_WIDTH(CPU_AXI_IW),
+        .DH_R_FALL_THROUGH(L2_DH_R_FALL_THROUGH),
 `ifdef L2C_DH_PORT
         .DH_PORT_EN(1), .DH_ID_WIDTH(CPU_AXI_DH_IW)
 `ifdef L2C_DW_PORT

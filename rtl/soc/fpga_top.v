@@ -212,6 +212,8 @@ module fpga_top #(
     // general.maxThreads 8; set_property generic VIDEO_SMOKE=1 [current_fileset]).
     // See docs/video_smoke.md.
     parameter VIDEO_SMOKE = 0,
+    // Experimental hot-R empty bypass, simulation-selectable; board default OFF.
+    parameter L2_DH_R_FALL_THROUGH = 0,
     // Phase 1 keeps the proven ARP/ICMP endpoint available as a physical-link
     // regression image.  Phase 3 changes this only after the packet adapter
     // exists; it must not make SONIC's current CR_TXP placeholder live.
@@ -307,6 +309,12 @@ module fpga_top #(
 `endif
 `endif
 );
+
+`ifndef L2C_DH_PORT
+    generate if (L2_DH_R_FALL_THROUGH != 0) begin : g_bad_dh_fall_through
+        L2_DH_R_FALL_THROUGH_requires_L2C_DH_PORT u_config_error ();
+    end endgenerate
+`endif
     // ─────────────────────────────────────────────────────────────────
     // fpga_top body is split across include files. Each file is a slice of
     // the original module body and is included in original source order.
