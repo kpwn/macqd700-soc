@@ -22,7 +22,8 @@ def trace_lines(meta):
             pcs.extend(s[f"load_{i}"] for i in range(4))
         pcs.append(s["marker_end"])
     pcs.append(s["pass_pc"])
-    return [f"{index} {2 * index} 0x{pc:08x}" for index, pc in enumerate(pcs)]
+    return [chase.MACRO_TRACE_HEADER] + [
+        f"{index} {2 * index} 0x{pc:08x}" for index, pc in enumerate(pcs)]
 
 
 class ChaseRomTest(unittest.TestCase):
@@ -51,21 +52,32 @@ class ChaseRomTest(unittest.TestCase):
                 trace.write_text("\n".join(lines) + "\n")
                 return chase.parse_trace(meta, trace)
 
+            def renumber(lines):
+                return [lines[0]] + [f"{i} {line.split(' ', 1)[1]}"
+                                     for i, line in enumerate(lines[1:])]
+
             self.assertEqual(parse(good)["hops"], 128)
             s = meta["symbols"]
+            for legacy in (good[1:], ["# cpu040-resume-pc-v0"] + good[1:]):
+                with self.assertRaisesRegex(ValueError, "unsupported retirement trace"):
+                    parse(legacy)
             bad = good[:-1]
             with self.assertRaisesRegex(ValueError, "pass"):
                 parse(bad)
-            bad = good + [f"9999 9999 0x{s['fail_pc']:08x}"]
+            bad = good + [f"{len(good) - 1} {2 * (len(good) - 1)} 0x{s['fail_pc']:08x}"]
             with self.assertRaisesRegex(ValueError, "fail"):
+                parse(bad)
+            bad = good.copy()
+            bad[3] = bad[3].replace("2 ", "1 ", 1)
+            with self.assertRaisesRegex(ValueError, "macro ordinal"):
                 parse(bad)
             bad = [line for line in good if not line.endswith(f"0x{s['marker_end']:08x}")]
             with self.assertRaisesRegex(ValueError, "two start and two end"):
-                parse(bad)
+                parse(renumber(bad))
             second_start = [i for i, line in enumerate(good) if line.endswith(f"0x{s['marker_start']:08x}")][1]
             bad = good[:second_start + 1] + good[second_start + 2:]
             with self.assertRaisesRegex(ValueError, "load PC counts"):
-                parse(bad)
+                parse(renumber(bad))
             bad = good.copy()
             end = [i for i, line in enumerate(good) if line.endswith(f"0x{s['marker_end']:08x}")][1]
             fields = bad[end].split()

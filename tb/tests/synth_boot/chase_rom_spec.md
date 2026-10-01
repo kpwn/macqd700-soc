@@ -70,8 +70,9 @@ parser command above. The bus writer records asserted RVALID every cycle,
 including a held beat, so `hot_r_valid_samples` can exceed
 `hot_r_transfers`; only transfers advance the per-ID burst count.
 
-The previous full-SoC 2 KiB/64 KiB retirement marker numbers were derived
-from the legacy resume-PC dump and remain **pending remeasurement** with the
+The previous full-SoC 2 KiB/64 KiB marker figures (5.0 and 15.9998
+cycles/hop in the OFF snapshot) were derived from the legacy resume-PC dump
+and remain **pending remeasurement** with the
 dedicated macro-PC tap. The independently checked bus recurrence remains
 valid: 4096 ordered Sattolo hot reads, zero measured DDR reads, and a 16-cycle
 OFF / 15-cycle ON hot-AR recurrence in the 64 KiB case. Do not label that bus

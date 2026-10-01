@@ -106,15 +106,13 @@ static uint32_t        g_cpu040_last_pc       = 0;
 // +pc_dump_path= writer state, hoisted to file scope so the CPU_M68K040
 // per-cycle diagnostic block inside tick() (a free function, no access to
 // main()'s locals) can drive it directly off RobPlugin_logic_traceVec_0/1
-// -- the only two macro-retire-order signals that are actually simPublic
-// and live for the whole run on this core.  This replaces the
-// debugMacroRetirePc_0/1-driven +pc_dump path below, which was found
-// (this investigation) to silently stop firing after roughly the first
-// 20 retirements of any run: its own valid signals only pulse during an
-// initial startup burst, not the whole run, on a CPU_M68K040 build. That
-// left EVERY prior +pc_dump_path capture on this build silently truncated
-// to a few dozen lines with no error -- a real, previously undetected gap
-// in this exact testbench feature, not a one-off. traceVec_1 (the second,
+// and live for the whole run on this core.  The older post-edge
+// debugMacroRetirePc-based +pc_dump tap silently truncated after startup;
+// that observation did not establish when its pre-edge valid pulses.  The
+// dedicated +macro_pc_dump_path below now samples those actual instruction
+// PCs before the committing edge.  Keep +pc_dump intact for legacy callers:
+// its traceVec.pc is a RESUME/next PC, unsuitable as a chase instruction PC.
+// traceVec_1 (the second,
 // dual-commit lane) was ALSO previously dropped from the old capped
 // "[retire-pc]" stderr diagnostic (only traceVec_0 was printed), which
 // would have silently skipped every head+1 macro in a dual-retire cycle;
@@ -122,6 +120,11 @@ static uint32_t        g_cpu040_last_pc       = 0;
 static FILE*            g_pc_dump_fp    = nullptr;
 static uint64_t         g_pc_dump_count = 0;
 static uint64_t         g_pc_dump_max   = 0;
+// True retiring instruction PCs, sampled before the committing rising edge.
+// Kept separate from the legacy traceVec resume-PC dump above.
+static FILE*            g_macro_pc_dump_fp    = nullptr;
+static uint64_t         g_macro_pc_dump_count = 0;
+static uint64_t         g_macro_pc_dump_max   = 30000;
 #endif
 // Part 73 IPC investigation: per-cycle store-queue/D-cache probe. Prints
 // one line per cycle, for the first `g_sq_trace_cycles` cycles of THIS
@@ -709,11 +712,33 @@ static void trace_l2_bus_before_edge() {
 #endif
 }
 
+#ifdef CPU_M68K040
+static void trace_macro_pc_before_edge() {
+    if (!g_macro_pc_dump_fp) return;
+    const auto* r = dut->rootp;
+    const auto t = static_cast<unsigned long long>(sim_time + 2);
+    const auto emit = [&](bool valid, uint32_t pc) {
+        if (valid && g_macro_pc_dump_count < g_macro_pc_dump_max) {
+            std::fprintf(g_macro_pc_dump_fp, "%llu %llu 0x%08x\n",
+                (unsigned long long)g_macro_pc_dump_count, t, unsigned(pc));
+            ++g_macro_pc_dump_count;
+        }
+    };
+    emit(r->fpga_top__DOT__u_cpu__DOT__socket_core__DOT__RobPlugin_logic_debugMacroRetirePc_0_valid,
+         r->fpga_top__DOT__u_cpu__DOT__socket_core__DOT__RobPlugin_logic_debugMacroRetirePc_0_payload);
+    emit(r->fpga_top__DOT__u_cpu__DOT__socket_core__DOT__RobPlugin_logic_debugMacroRetirePc_1_valid,
+         r->fpga_top__DOT__u_cpu__DOT__socket_core__DOT__RobPlugin_logic_debugMacroRetirePc_1_payload);
+}
+#endif
+
 static void tick() {
     dut->sys_clk_p = 0;
     dut->sys_clk_n = 1;
     dut->eval();
     trace_l2_bus_before_edge();
+#ifdef CPU_M68K040
+    trace_macro_pc_before_edge();
+#endif
 #if VM_TRACE_FST
     if (g_wave_open && g_fst) g_fst->dump(sim_time);
 #endif
@@ -2264,6 +2289,8 @@ int main(int argc, char** argv) {
     std::string pc_dump_path;
     uint64_t pc_dump_max = 10000;
     uint64_t pc_dump_every = 1;
+    std::string macro_pc_dump_path;
+    uint64_t macro_pc_dump_max = 30000;
 
     // +audio_dump=<path> — capture every ASC audio_sample_valid edge
     // with the L/R PCM samples + retired count + sim_time.  Empty path
@@ -2524,6 +2551,10 @@ int main(int argc, char** argv) {
             pc_dump_max = std::stoull(a.substr(13));
         else if (a.rfind("+pc_dump_every=", 0) == 0)
             pc_dump_every = std::stoull(a.substr(15));
+        else if (a.rfind("+macro_pc_dump_path=", 0) == 0)
+            macro_pc_dump_path = a.substr(20);
+        else if (a.rfind("+macro_pc_dump_max=", 0) == 0)
+            macro_pc_dump_max = std::stoull(a.substr(19));
         else if (a.rfind("+sq_trace_cycles=", 0) == 0)
             g_sq_trace_cycles = std::stoull(a.substr(17));
         else if (a.rfind("+pipe_trace_cycles=", 0) == 0)
@@ -2852,10 +2883,25 @@ int main(int argc, char** argv) {
 #ifdef CPU_M68K040
         // See the g_pc_dump_fp declaration comment: CPU_M68K040 drives the
         // dump from tick()'s traceVec_0/1-based tap, not the
-        // debugMacroRetirePc_0/1 path below (which silently stops firing
-        // after roughly the first 20 retirements on this core).
+        // former post-edge debugMacroRetirePc path below. The separate
+        // +macro_pc_dump_path samples true instruction PCs pre-edge.
         g_pc_dump_fp = pc_dump_fp;
         g_pc_dump_max = pc_dump_max;
+#endif
+    }
+    if (!macro_pc_dump_path.empty()) {
+#ifdef CPU_M68K040
+        g_macro_pc_dump_fp = std::fopen(macro_pc_dump_path.c_str(), "w");
+        if (!g_macro_pc_dump_fp) {
+            std::fprintf(stderr, "[fpga-rom] cannot open macro_pc_dump_path=%s\n",
+                         macro_pc_dump_path.c_str());
+            return 1;
+        }
+        g_macro_pc_dump_max = macro_pc_dump_max;
+        std::fprintf(g_macro_pc_dump_fp, "# cpu040-macro-retire-v1 ticks-per-cycle=2\n");
+#else
+        std::fprintf(stderr, "[fpga-rom] macro_pc_dump_path requires CPU=m68k040\n");
+        return 1;
 #endif
     }
 
@@ -4627,6 +4673,15 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "[fpga-rom] pc_dump wrote %llu entries to %s\n",
                      (unsigned long long)pc_dump_count, pc_dump_path.c_str());
     }
+#ifdef CPU_M68K040
+    if (g_macro_pc_dump_fp) {
+        std::fflush(g_macro_pc_dump_fp);
+        std::fclose(g_macro_pc_dump_fp);
+        g_macro_pc_dump_fp = nullptr;
+        std::fprintf(stderr, "[fpga-rom] macro_pc_dump wrote %llu entries to %s\n",
+                     (unsigned long long)g_macro_pc_dump_count, macro_pc_dump_path.c_str());
+    }
+#endif
     if (g_l2_bus_trace_fp) {
         std::fclose(g_l2_bus_trace_fp);
         g_l2_bus_trace_fp = nullptr;

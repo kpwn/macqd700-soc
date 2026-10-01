@@ -12,6 +12,7 @@ ROM_BASE = 0x40000000
 RING_BASE = ROM_BASE + 0x10000
 MASK = 0xFFFFFFFF
 SIZES = (2048, 65536)
+MACRO_TRACE_HEADER = "# cpu040-macro-retire-v1 ticks-per-cycle=2"
 
 
 class JavaRandom:
@@ -187,17 +188,19 @@ def parse_trace(meta, trace):
     loads = [sym[f"load_{i}"] for i in range(4)]
     if meta["measured_marker_occurrence"] != 2 or meta["load_pcs"] != loads:
         raise ValueError("metadata marker occurrence or load PCs disagree with symbols")
+    lines = trace.read_text().splitlines()
+    if not lines or lines[0] != MACRO_TRACE_HEADER:
+        raise ValueError("unsupported retirement trace: require cpu040-macro-retire-v1 header; legacy resume-PC dump is invalid")
     rows = []
-    last_retired = -1
     last_time = -1
-    for number, line in enumerate(trace.read_text().splitlines(), 1):
+    for number, line in enumerate(lines[1:], 2):
         parts = line.split()
         if len(parts) != 3:
             raise ValueError(f"trace line {number}: expected retired time pc")
         retired, tick, pc = (int(parts[0], 0), int(parts[1], 0), int(parts[2], 0))
-        if retired < last_retired or tick < last_time:
-            raise ValueError(f"trace line {number}: retire/time order regressed")
-        last_retired, last_time = retired, tick
+        if retired != len(rows) or tick < last_time:
+            raise ValueError(f"trace line {number}: macro ordinal or time order regressed")
+        last_time = tick
         rows.append((retired, tick, pc))
         for name in markers:
             if pc == sym[name]:
