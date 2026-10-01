@@ -44,10 +44,18 @@ per AXI ID, counts only ready R beats, tolerates repeated stalled RVALID,
 requires a correct final RLAST and RESP=OKAY, and rejects orphan/incomplete
 bursts. It reports AR-to-first-RVALID and AR-to-first-transfer cycle histograms
 for requests accepted in the measured interval, plus warm and measured hot
-AR/R-transfer and DDR_AR counts. No bus payload is checked; the ROM's
-post-window checksum and pass PC validate data. `--acceptance warmL2` requires
-the bus trace, the 64 KiB image, at least one warm and measured hot AR, and no
-measured DDR_AR (the warm lap has populated L2). This acceptance is specific
+AR/R-transfer and DDR_AR counts. No RDATA payload is logged. The ROM checks
+the final pointer and stored table checksum; these alone do not check every
+intermediate returned pointer. `--acceptance warmL2` therefore also requires
+exactly one single-beat 16-byte INCR hot read per measured hop and checks the
+complete ordered AR address sequence against the generated Sattolo ring.
+Every returned pointer except the last determines the following request
+address; the ROM's final-pointer comparison checks the last. The parser
+reports a SHA-256 digest of that sequence instead of thousands of addresses.
+A shortened/repeated cycle must fail even if its request count and final
+pointer match. The gate also requires the bus trace, the 64 KiB image, at
+least one warm hot AR, and no measured DDR_AR (the warm lap has populated
+L2). This acceptance is specific
 to the P1/P3 CPU path exercised by this ROM and does not establish other
 request classes.
 
