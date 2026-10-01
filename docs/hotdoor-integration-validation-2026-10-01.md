@@ -1,5 +1,52 @@
 # CPU040 hot-read door integration validation (2026-10-01)
 
+## Actual CPU plus L2 dependent chase (2026-10-02)
+
+The paired full-top ROM run uses frozen SoC `e3896db` and identical generated
+CPU inputs from `63171ff62b253d10cba982b60aca36814bf95225`. Both Verilator
+builds and all four ROM runs passed. Only `L2_DH_R_FALL_THROUGH` changes
+between arms. CPU options include NB4/ring8, hot read door, D4 ordering,
+P1 early loads (An and Dn), P3/probe forwarding, probe-miss staging,
+early response, eager/preselected AR, dynamic release, speculative wakeup
+and LS-OoO; direct refill is OFF. Exact generation flags and file hashes
+are in the input manifest below.
+
+| Hot R fall-through | L1 cycles / 128 hops | L2 cycles / 4096 hops | L2 cycles/hop | Accepted hot AR to first RVALID / transfer |
+| --- | ---: | ---: | ---: | --- |
+| OFF | 640 | 65535 | 15.999756 | 6 / 6 cycles for all 4096 requests |
+| ON | 640 | 61439 | 14.999756 | 5 / 5 cycles for all 4096 requests |
+
+Both measured L1 windows have zero hot reads and zero DDR reads. Both
+measured L2 windows have exactly 4096 hot reads/transfers and zero DDR
+reads. The ROM reaches its post-check pass PC in every run. Reanalysis with
+parser `d667639` also checks every measured L2 request address, in order,
+against all four laps of the generated Sattolo ring; it rejects a short
+repeated cycle, reordered accesses, missing requests, and wrong read shape.
+The two L2 address sequences have the same SHA-256:
+`79510e223956378f424e61e694b9e5cdc8b0f9eeab84c894e33140b65516ade1`.
+The strengthened parser's host suite passes 4/4 tests. Parser reanalysis
+does not modify the frozen simulator or original input manifest.
+
+The end-to-end saving is exactly 4096 cycles for 4096 hops. L1 remains
+5.000 cycles/hop. The ON L2-over-L1 difference is therefore approximately
+**10 cycles**, not the requested six. This is an actual CPU/guard/L2 RTL
+simulation with a behavioral downstream memory, not board timing or a
+whole-program IPC result. It proves the response bypass's cycle saving;
+it does not prove mapped area or routed timing. The option remains OFF
+by default. The synthetic reset ROM also does not establish a full OS boot.
+
+Artifacts under `/tmp/codex-soc-chase-e3896db/`:
+
+- `input-manifest.json`: SoC/CPU provenance and frozen input hashes, all
+  rechecked after both builds and simulations.
+- `results.json`: commands, exit codes, and original parser measurements.
+- `sequence-validation-results.json`: strengthened parser revision/hash,
+  original manifest hash, raw trace hashes, and all four rechecked results.
+- `ft{0,1}-{2,64}k.{pc,bus,log}`: retirement, AXI, and simulator evidence.
+
+The sections below retain the earlier unit/integration experiments and
+their original narrower scopes.
+
 Scope: SoC branch `codex/bandwidth-soc` after `3ad9018`, generated CPU from
 `m68k-core-040-ooo` commit `5577d139`. The CPU was generated in isolated
 agent-53 with `CPU_DCACHE_NONBLOCKING=1`, `CPU_INHIBITED_FULL_BARRIER=1`,
