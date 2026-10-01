@@ -1,5 +1,49 @@
 # CPU040 hot-read door integration validation (2026-10-01)
 
+## Hot-AR socket bypass: matched actual-SoC result (2026-10-02)
+
+A second matched pair uses CPU `d1b76823bbfd75d12ac722f2e981979d65543161`
+and SoC `e49327a`, with L2 response fallthrough fixed ON. Only
+`CPU_AXI_DH_AR_FALL_THROUGH` changes between CPU generations. Both socket
+netlists pass the interface checker; the sixteen generated files match except
+for the top Verilog, whose module definitions after the socket top are identical.
+Both full-top builds and all four ROM runs passed strict macro-retirement,
+final-pointer/checksum, and warm-L2 ordered pointer-request validation.
+
+| CPU AR bypass | L1 marker cycles / hops | L2 marker cycles / hops | Steady L1 / L2 retirement spacing |
+| --- | ---: | ---: | ---: |
+| OFF | 646 / 128 | 61445 / 4096 | 5 / 15 cycles |
+| ON | 646 / 128 | 57349 / 4096 | 5 / 14 cycles |
+
+Every one of the 4095 bounded L2 retirement intervals changes from 15 to 14
+cycles; marker totals save exactly 4096 cycles over 4096 hops. The 127 bounded
+L1 intervals remain five cycles. Both measured L2 windows contain 4096 hot
+requests and responses with zero DDR reads, and both L1 windows contain no
+hot requests or DDR reads. Both L2 address-sequence digests equal
+`79510e223956378f424e61e694b9e5cdc8b0f9eeab84c894e33140b65516ade1`.
+
+Accepted hot AR to R remains five cycles for every request. R to the next
+dependent accepted AR improves from ten to nine cycles in all 4095 bounded
+intervals; R to retirement of that same load remains four cycles. Thus the
+saved cycle is on request delivery, not in L2 service or return completion.
+The measured L2-over-L1 penalty is now nine cycles; the six-cycle target
+remains unmet. This dependent chase is not a general IPC or MLP result.
+
+Exact frozen inputs and per-arm results are in
+`/tmp/codex-soc-chase-d1b76823-ar{0,1}/input-manifest.json` and `results.json`.
+The cross-arm report `/tmp/codex-soc-ar-pair-d1b76823-analysis.json` rechecks
+all input hashes, identical SoC sources, the sole CPU environment difference,
+load counts, zero measured DDR, pointer-sequence equality, and trace hashes.
+The analysis also checks single-outstanding request identity before pairing
+responses with retirements. Both CPU generation manifests are preserved in
+`/tmp/codex-soc-cpu-inputs-d1b76823-ar{0,1}/manifest.json`.
+
+This is CPU/guard/L2 RTL with behavioral downstream memory, not a board run.
+The AR option remains default OFF: mapped area and routed 5.000 ns timing are
+still unmeasured. Its generated Verilog removes 64 declared register bits,
+including 16 unused sideband bits; this is not a mapped flip-flop savings claim.
+
+
 ## Actual CPU plus L2 dependent chase (2026-10-02)
 
 The corrected paired full-top ROM run uses frozen SoC `446abae` and identical
