@@ -443,3 +443,12 @@ backpressure and first-beat timestamps. Report accepted AR, RVALID and R
 transfer separately. This cannot alone meet a six-cycle L2-over-L1 CPU
 load-use target: CPU miss discovery, launch and wakeup remain outside this
 L2 measurement. End-to-end CPU/SoC simulation and physical checks remain open.
+
+The actual SoC top exposes the same experiment as parameter
+`L2_DH_R_FALL_THROUGH=0`, passed directly to the L2 instance. A nonzero value
+without `L2C_DH_PORT` must fail elaboration. Unit success alone does not
+activate this parameter in synthesis: simulation/lint may select it with
+`-GL2_DH_R_FALL_THROUGH=1`, while the board build retains the default.
+Paired full-top lint uses identical generated CPU RTL, SoC inputs and
+shipping defines with only this parameter changed. This checks the physical
+binding/elaboration, not post-route timing or CPU load-use performance.
