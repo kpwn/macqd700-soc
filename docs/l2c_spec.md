@@ -481,3 +481,22 @@ experiment environment variables. Record the CPU source revision/dirty state
 and hashes of generated CPU input files. This record describes the inputs to
 synthesis; it is not a timing-closure or clean-source certificate. Keep the
 full-implementation buildinfo unchanged apart from the selected response knob.
+
+### CPU plus actual L2 measurement harness
+
+Use the existing `tb-fpga-top-rom` harness with the generated m68k040 socket,
+`CPU_AXI_DH=1`, nonblocking L1D, D4 ordering, and `SIM_L2C_ENABLE=1`. A synthetic
+reset-vector ROM may warm and chase deterministic 2 KiB and 64 KiB pointer
+rings, checking its final pointer before reporting success. Enable the CPU
+D-cache explicitly and establish cacheable transparent translations; reset
+cache-disabled or inhibited traffic is not a cache-latency measurement.
+Measure retirement-window cycles and actual hot-port/DDR handshakes, requiring
+warm 64 KiB hot reads with no DDR reads in the measurement window. Report the
+L2-over-L1 difference, and keep that separate from accepted-AR-to-first-R.
+
+The ROM harness must pass `L2_DH_R_FALL_THROUGH` as a Verilator top generic.
+The ON binary uses a distinct build directory so toggling this parameter
+cannot reuse the registered-response binary. ON without the CPU hot door or
+simulated L2 must fail before compilation. Use separate build roots for paired
+experiments and pin the same generated CPU and ROM hashes in both arms. This
+is a test-harness selection change, not default enablement or a board build.
