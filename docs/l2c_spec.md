@@ -463,3 +463,12 @@ not change the CPU configuration or authorize board deployment. Physical
 comparisons must freeze the CPU source/flags and SoC source, use identical
 constraints, and report both timing and resources; no default promotion is
 implied by making the experiment selectable.
+
+Build-selection validation (2026-10-01, implementation `ee3140f`):
+`make check-hot-return-config` passes six cases by executing the actual Vivado
+configuration and generic-application blocks: absent/default, explicit OFF,
+explicit ON, missing hot door, invalid value, and empty value. Successful cases
+also check the actual buildinfo emission. `make -n synth` with explicit 0 and 1
+confirms forwarding into the Vivado command; no Vivado process was launched.
+These checks establish selection/provenance only. Paired physical results are
+still outstanding, and the default remains OFF.
