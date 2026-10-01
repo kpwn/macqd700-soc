@@ -109,7 +109,8 @@ class ChaseRomTest(unittest.TestCase):
             self.assertEqual(result["windows"]["measured"]["hot_r_valid_samples"], 6)
             self.assertEqual(result["measured_ar_to_first_rvalid_cycles"], {1: 1, 5: 1})
             self.assertEqual(result["measured_ar_to_first_transfer_cycles"], {3: 1, 5: 1})
-            chase.validate_acceptance(meta, result, "warmL2")
+            with self.assertRaisesRegex(ValueError, "pointer request sequence"):
+                chase.validate_acceptance(meta, result, "warmL2")
             reordered = [
                 f"{measured + 2} AR 1 0x40010000 0 2 1",
                 f"{measured + 4} AR 2 0x40010040 0 2 1",
@@ -131,6 +132,44 @@ class ChaseRomTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValueError, reason):
                     parse_bus(bad)
+
+    def test_warm_l2_requires_every_pointer_request_in_order(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            paths = chase.generate(65536, root)
+            meta = json.loads(paths["json"].read_text())
+            timing = {"warm_start_tick": 0, "warm_end_tick": 20,
+                      "start_tick": 100, "end_tick": 100 + 16 * meta["measured_hops"]}
+            path = root / "bus.txt"
+            links = chase.ring(meta["size_bytes"])
+            addresses = []
+            node = 0
+            for _ in range(meta["measured_hops"]):
+                addresses.append(chase.RING_BASE + 64 * node)
+                node = links[node]
+
+            def accept(requests, size=4):
+                lines = [f"2 AR 0 0x{chase.RING_BASE:x} 0 4 1", "14 RV 0 0 1 1"]
+                for i, addr in enumerate(requests):
+                    tick = 102 + i * 16
+                    lines.extend((f"{tick} AR 0 0x{addr:x} 0 {size} 1",
+                                  f"{tick + 12} RV 0 0 1 1"))
+                path.write_text("\n".join(lines) + "\n")
+                bus = chase.parse_bus_trace(path, timing)
+                chase.validate_acceptance(meta, bus, "warmL2")
+                return bus
+
+            self.assertEqual(accept(addresses)["measured_ar_to_first_transfer_cycles"],
+                             {6: meta["measured_hops"]})
+            reordered = addresses.copy()
+            reordered[10], reordered[11] = reordered[11], reordered[10]
+            # Counts and terminal pointer alone cannot detect reordered accesses
+            # or a short cycle repeated to fill the expected measurement window.
+            for bad in (reordered, addresses[:32] * (len(addresses) // 32), addresses[:-1]):
+                with self.assertRaisesRegex(ValueError, "pointer request sequence"):
+                    accept(bad)
+            with self.assertRaisesRegex(ValueError, "line-read shape"):
+                accept(addresses, size=2)
 
 
 if __name__ == "__main__":

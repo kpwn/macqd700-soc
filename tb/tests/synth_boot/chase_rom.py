@@ -236,6 +236,8 @@ def parse_bus_trace(path, timing):
     counts = {window: Counter() for window in windows}
     first_valid = Counter()
     first_transfer = Counter()
+    measured_addresses = hashlib.sha256()
+    measured_line_reads = 0
     pending = defaultdict(deque)
     last_tick = -1
 
@@ -264,13 +266,17 @@ def parse_bus_trace(path, timing):
                 ident, addr, length, size, burst = (number(parts[2]), address(parts[3]),
                                                     number(parts[4]), number(parts[5]),
                                                     number(parts[6]))
-                if min(ident, addr, length, size, burst) < 0 or size > 7 or burst > 3:
+                if min(ident, addr, length, size, burst) < 0 or addr > MASK or size > 7 or burst > 3:
                     raise ValueError("invalid AR payload")
                 pending[ident].append({"tick": tick, "len": length,
                                        "first_valid": None, "first_transfer": None,
                                        "transfers": 0, "window": window})
                 if window:
                     counts[window]["hot_ar"] += 1
+                if window == "measured":
+                    measured_addresses.update(addr.to_bytes(4, "big"))
+                    if length == 0 and size == 4 and burst == 1:
+                        measured_line_reads += 1
             elif kind == "RV" and len(parts) == 6:
                 ident, resp, last, ready = map(number, parts[2:])
                 if not pending[ident]:
@@ -319,6 +325,8 @@ def parse_bus_trace(path, timing):
                     for name in windows},
         "measured_ar_to_first_rvalid_cycles": dict(sorted(first_valid.items())),
         "measured_ar_to_first_transfer_cycles": dict(sorted(first_transfer.items())),
+        "measured_hot_sequence_sha256": measured_addresses.hexdigest(),
+        "measured_hot_line_reads": measured_line_reads,
     }
 
 
@@ -330,6 +338,20 @@ def validate_acceptance(meta, bus, mode):
     if meta["size_bytes"] != 65536 or warm["hot_ar"] == 0 or \
             measured["hot_ar"] == 0 or measured["ddr_ar"] != 0:
         raise ValueError("warmL2 acceptance failed: need 64 KiB, warm/measured hot AR, no measured DDR_AR")
+    links = ring(meta["size_bytes"])
+    if meta["ring_base"] != RING_BASE or meta["nodes"] != len(links) or \
+            meta["measured_hops"] != 4 * len(links):
+        raise ValueError("warmL2 acceptance failed: metadata differs from ring contract")
+    expected = hashlib.sha256()
+    node = 0
+    for _ in range(meta["measured_hops"]):
+        expected.update((RING_BASE + 64 * node).to_bytes(4, "big"))
+        node = links[node]
+    if measured["hot_ar"] != meta["measured_hops"] or \
+            measured["hot_r_transfers"] != meta["measured_hops"] or \
+            bus.get("measured_hot_line_reads") != meta["measured_hops"] or \
+            bus.get("measured_hot_sequence_sha256") != expected.hexdigest():
+        raise ValueError("warmL2 acceptance failed: measured pointer request sequence or line-read shape differs")
 
 
 def main():
