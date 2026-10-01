@@ -20,17 +20,23 @@ checksum of every stored pointer after the measured window. A pass PC is
 reached only after these checks; any fail PC or missing pass PC rejects a trace.
 The checksum catches a collapsed ring even if four laps happen to end at base.
 
-The ROM testbench's `+pc_dump_path` provides true retire order from both ROB
-lanes. Its `sim_time` is two ticks per system clock, so parser cycles are
-`(end_time-start_time)/2`. Raw trace and JSON metadata are kept with each
-binary. This is a dependent-load latency test, not an instruction-count or
-cache-miss-count proxy. No runtime change to the full-top testbench is made here.
+The ROM testbench's legacy `+pc_dump_path` uses `RobPlugin.traceVec.pc`, which
+is the resume/next PC rather than the retired instruction PC. It must never
+define the chase markers. A dedicated `+macro_pc_dump_path` samples the existing
+`debugMacroRetirePc_{0,1}_{valid,payload}` signals before the rising edge and
+labels events with the corresponding post-edge `sim_time+2`, lane 0 before
+lane 1. It writes `# cpu040-macro-retire-v1 ticks-per-cycle=2` followed by
+`<ordinal> <tick> <instruction-pc>` rows. The parser requires that exact
+header and rejects legacy traces even when their numeric rows happen to match
+marker values. Its cycles are `(end_tick-start_tick)/2`. The new dump defaults
+to a 30000-row cap, independently of the legacy dump, and is CPU040-only.
+This is a dependent-load latency test, not an instruction-count proxy.
 
 The checked-in generated files are `chase_generated/chase_{2,64}k.{s,elf,bin,json}`.
 Regenerate with `python3 chase_rom.py generate --size 2048 --out-dir
 chase_generated` (and `--size 65536`). Run the full-top ROM test with the
-corresponding `.bin`, `+pc_dump_path=<trace>`, and `+pc_dump_max=30000`; the
-default 10000-entry cap can truncate the 64 KiB checksum and pass PC. Parse
+corresponding `.bin` and `+macro_pc_dump_path=<trace>`; the 30000-row cap covers
+the 64 KiB checksum and pass PC. Parse
 with `python3 chase_rom.py parse --meta <json> --rom <bin> --trace <trace>`.
 The parser rejects truncated/failed runs instead of reporting a partial CPI.
 
@@ -63,3 +69,10 @@ For that gate, append `--bus-trace <bus_trace> --acceptance warmL2` to the
 parser command above. The bus writer records asserted RVALID every cycle,
 including a held beat, so `hot_r_valid_samples` can exceed
 `hot_r_transfers`; only transfers advance the per-ID burst count.
+
+The previous full-SoC 2 KiB/64 KiB retirement marker numbers were derived
+from the legacy resume-PC dump and remain **pending remeasurement** with the
+dedicated macro-PC tap. The independently checked bus recurrence remains
+valid: 4096 ordered Sattolo hot reads, zero measured DDR reads, and a 16-cycle
+OFF / 15-cycle ON hot-AR recurrence in the 64 KiB case. Do not label that bus
+recurrence as CPU issue-to-issue or retirement latency.
