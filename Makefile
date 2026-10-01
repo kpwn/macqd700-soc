@@ -2377,6 +2377,11 @@ export CPU_AXI_DH
 # Optional physical-build experiment; Vivado validates the prerequisite and
 # records the actual top-level generic. Defaults remain registered responses.
 L2_DH_R_FALL_THROUGH ?= 0
+ifneq ($(L2_DH_R_FALL_THROUGH),0)
+ifneq ($(L2_DH_R_FALL_THROUGH),1)
+$(error L2_DH_R_FALL_THROUGH must be 0 or 1, got '$(L2_DH_R_FALL_THROUGH)')
+endif
+endif
 CPU_DCACHE_NONBLOCKING ?= 0
 CPU_INHIBITED_FULL_BARRIER ?= 0
 export CPU_DCACHE_NONBLOCKING CPU_INHIBITED_FULL_BARRIER
@@ -2486,8 +2491,8 @@ CPU_EXTRA_LINT_FLAGS :=
 endif
 
 FPGA_TOP_RTL_SRCS := $(shell find $(RTL_DIR) \( -name '*.v' -o -name '*.sv' \) ! -name '._*' | sort)
-FPGA_TOP_ROM_BUILD := $(BUILD_DIR)/fpga_top_rom
-FPGA_TOP_ROM_PPM ?= $(BUILD_DIR)/fpga_top_rom/scaler_scanout.ppm
+FPGA_TOP_ROM_BUILD := $(BUILD_DIR)/fpga_top_rom$(if $(filter 1,$(L2_DH_R_FALL_THROUGH)),_dhft1,)
+FPGA_TOP_ROM_PPM ?= $(FPGA_TOP_ROM_BUILD)/scaler_scanout.ppm
 FPGA_TOP_ROM_MAX_INSTS ?= 100000000
 FPGA_TOP_ROM_TIMEOUT ?= 2000000000
 FPGA_TOP_ROM_PATCH ?=
@@ -3003,16 +3008,23 @@ tb-scc-uart-loopback: $(FPGA_TOP_ROM_BUILD)/Vfpga_top
 		+scc_tx_uart_log=$(SCC_TX_UART_LOG) \
 		+scc_tx_max=$(SCC_TX_MAX)
 
+.PHONY: check-rom-hot-return
+check-rom-hot-return:
+	@if [ "$(L2_DH_R_FALL_THROUGH)" = 1 ] && \
+	    { [ "$(CPU_AXI_DH)" != 1 ] || [ "$(SIM_L2C_ENABLE)" != 1 ]; }; then \
+	    echo "ERROR: ROM simulation L2_DH_R_FALL_THROUGH=1 requires CPU_AXI_DH=1 and SIM_L2C_ENABLE=1"; exit 1; fi
+
 $(FPGA_TOP_ROM_BUILD)/Vfpga_top: $(FPGA_TOP_RTL_SRCS) $(CPU_EXTRA_SRCS) \
 		$(TB_DIR)/verilator_xilinx_stubs.v \
 		$(TB_DIR)/tb_fpga_top_rom.cpp \
 		$(TB_DIR)/models/rom_patch_sets.h \
 		$(TB_DIR)/models/sd_card_spi.h \
-		| $(if $(filter m68k040,$(CPU)),check-cpu-dh)
+		| check-rom-hot-return $(if $(filter m68k040,$(CPU)),check-cpu-dh)
 	@mkdir -p $(FPGA_TOP_ROM_BUILD)
 	$(VERILATOR) --cc --exe --build --assert --public-flat-rw --savable \
 		$(if $(filter 1,$(WAVES)),--trace-fst,) \
 		-DSIM_MODEL -DFPGA_ROM_SIM $(CPU_DEFINE) \
+		-GL2_DH_R_FALL_THROUGH=$(L2_DH_R_FALL_THROUGH) \
 		$(if $(filter 1,$(SIM_L2C_ENABLE)),-DL2C_ENABLE,) \
 		$(if $(SIM_DDR_READ_DELAY),+define+SIM_DDR_READ_DELAY=$(SIM_DDR_READ_DELAY),) \
 		$(if $(filter 1,$(DEBUG)),+define+CORE_DEBUG +define+LSU_DEBUG,) \
