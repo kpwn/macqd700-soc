@@ -119,3 +119,40 @@ same-ID tests before implementation.
 
 No Vivado, board, or full CPU+SoC boot was run in this validation. The hot
 write half remains a separate CPU socket and routing integration task.
+
+## Empty hot-R bypass experiment (2026-10-01, default OFF)
+
+Isolated branch `codex/hot-return` selects the experiment in spec commit
+`62e754b` and implements it in `40eacb5`. No board top enables the new
+`DH_R_FALL_THROUGH` parameter. Paired `make tb-l2c-dh` runs with
+`L2C_DH_FALL_THROUGH=0/1` each pass 79 tests, zero failures. For all four
+first-beat rows above (32 samples each), accepted AR to first RVALID and
+first transfer changes from exactly **6 to 5 cycles**. Checked bytes, no-DDR
+warm-hit checks, same-ID ordering and AXI payload stability pass. The mixed
+one-beat row still observes a cold write accepted inside all 32 measured
+windows; the four-beat row still does not, so it is not evidence of
+within-window cold-write contention.
+
+The standalone FIFO scoreboard passes in both modes over more than 20,000
+cycles. It verifies data order, every refused payload, full-buffer behavior,
+reset discard count, one-beat-per-cycle unstalled admission, and upstream
+ready independence from downstream ready. ON exercised 2,832 empty bypass
+transfers and 4,103 full cycles. A single-mechanism mutant that discards an
+empty bypassed beat when downstream refuses it compiled successfully and
+failed at cycle 4 with `refused response changed payload`.
+
+Exact commands, source hash and result codes:
+`/tmp/codex-l2-hot-return-results.json`; paired logs:
+`/tmp/codex-l2-hot-return-{fifo-off,fifo-on,l2-off,l2-on}.log`.
+Mutant source, compile/run logs and result:
+`/tmp/codex-l2-hot-return-mutant/`. The implementation adds no payload or
+valid registers, but adds an output mux/control cone; raw state equality
+is not mapped area or Fmax evidence. End-to-end CPU load-use and routed
+SoC timing remain unmeasured, and board defaults remain unchanged.
+
+Separately, SoC commit `6086cf4` corrects the VIO v28 simulation stub's
+missing 32-bit `probe_in15`. Its clean snapshot with CPU `46413280`'s actual
+dynamic-release ON socket passes basic and shipping full-top lint; see
+`/tmp/codex-soc-hot-integration-6086cf4/{manifest,results}.json`. That lint
+predates the response-bypass RTL and must not be cited as its integration
+gate. No live board or owner worktree was modified.
