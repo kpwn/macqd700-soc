@@ -3583,6 +3583,7 @@ check-cpu-debug-profile:
 .PHONY: check-hot-return-config
 check-hot-return-config:
 	tclsh $(TOOLS_DIR)/test_hot_return_config.tcl
+	tclsh $(TOOLS_DIR)/test_synth_selection.tcl
 
 .PHONY: check-post-route-exit
 check-post-route-exit:

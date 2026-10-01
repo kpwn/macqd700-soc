@@ -1440,6 +1440,42 @@ if {$cpu_m68k040 && ((([info exists ::env(PRF_INT)]) && $::env(PRF_INT) ne "") |
 # ⚠️ An earlier attempt at `phys_opt_design -force_replication_on_nets` did NOTHING
 # ("no rep_nets matched") because it needed net names, which are synthesis-generated
 # and unstable. A threshold needs no names.
+# SYNTH_SELECTION_BEGIN: input evidence also exists for synth_only runs.
+set synth_selection [dict create format_version 1 mode $mode part $part \
+    cpu $cpu_sel cpu_ipc_profile $cpu_ipc_profile cpu_debug_profile $cpu_debug_profile \
+    target_freq_mhz $target_freq_mhz core_clk_hz $core_clk_hz \
+    cpu_axi_dh $cpu_axi_dh l2_dh_r_fall_through $l2_dh_r_fall_through \
+    top_generics $top_generic_list defines $synth_def_args build_id $build_id]
+foreach {label source_root} [list soc $proj_root cpu $cpu040_dir] {
+    if {$label eq "cpu" && !$cpu_m68k040} {continue}
+    dict set synth_selection ${label}_source_root [file normalize $source_root]
+    set revision UNKNOWN
+    set dirty UNKNOWN
+    catch {set revision [string trim [exec git -C $source_root rev-parse HEAD]]}
+    catch {set dirty [exec git -C $source_root status --porcelain]}
+    dict set synth_selection ${label}_revision $revision
+    dict set synth_selection ${label}_dirty $dirty
+}
+# Only generation/configuration knobs, never an unrestricted environment dump.
+dict set synth_selection cpu_environment [dict create]
+foreach key [lsort [array names ::env]] {
+    if {[string match CPU_* $key] || [string match LS_* $key] ||
+        [string match IQ_* $key] || $key in {SPEC_LOAD_WAKEUP PERF_DETAIL_ENABLE}} {
+        dict set synth_selection cpu_environment $key $::env($key)
+    }
+}
+dict set synth_selection generated_cpu_files [dict create]
+if {$cpu_m68k040} {
+    foreach input [lsort [glob -nocomplain -directory [file dirname $cpu_m68k040_v] *.v *.bin *.mem *.hex]] {
+        if {![file isfile $input]} {continue}
+        dict set synth_selection generated_cpu_files [file tail $input] \
+            [dict create bytes [file size $input] sha256 [lindex [exec sha256sum -- $input] 0]]
+    }
+}
+set selection_fh [open [file join $output_dir fpga_top.synth_selection] w]
+puts $selection_fh $synth_selection
+close $selection_fh
+# SYNTH_SELECTION_END
 synth_design \
     -top fpga_top \
     -part $part \
