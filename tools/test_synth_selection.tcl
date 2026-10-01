@@ -32,6 +32,7 @@ try {
     set build_id 0x12345678
     set ::env(CPU_LS_P1_EARLY_LOAD) 1
     set ::env(SPEC_LOAD_WAKEUP) 1
+    set ::env(CORE_BUDGET_NS) 4.0
     set ::env(EXPERIMENT_SECRET) do_not_record
     foreach {cpu_m68k040 cpu_sel cpu_axi_dh l2_dh_r_fall_through} {0 stub 0 0 1 m68k040 1 1} {
         set top_generic_list [list L2_DH_R_FALL_THROUGH=$l2_dh_r_fall_through]
@@ -43,6 +44,7 @@ try {
             [dict get $record core_clk_hz] != 200000000 ||
             [dict get $record top_generics] ne $top_generic_list ||
             [dict get $record l2_dh_r_fall_through] != $l2_dh_r_fall_through} {error "Wrong effective selection"}
+        if {[dict get $record physical_environment CORE_BUDGET_NS] ne "4.0"} {error "Missing timing stress selection"}
         if {[dict exists $record cpu_environment EXPERIMENT_SECRET] ||
             [dict get $record cpu_environment CPU_LS_P1_EARLY_LOAD] ne "1" ||
             [dict get $record cpu_environment SPEC_LOAD_WAKEUP] ne "1"} {error "Environment filtering failed"}

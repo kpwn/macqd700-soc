@@ -1458,10 +1458,17 @@ foreach {label source_root} [list soc $proj_root cpu $cpu040_dir] {
 }
 # Only generation/configuration knobs, never an unrestricted environment dump.
 dict set synth_selection cpu_environment [dict create]
+dict set synth_selection physical_environment [dict create]
 foreach key [lsort [array names ::env]] {
     if {[string match CPU_* $key] || [string match LS_* $key] ||
         [string match IQ_* $key] || $key in {SPEC_LOAD_WAKEUP PERF_DETAIL_ENABLE}} {
         dict set synth_selection cpu_environment $key $::env($key)
+    }
+    if {$key in {CORE_BUDGET_NS NO_INCREMENTAL INCREMENTAL_REF_DCP
+                 DDR4_MIG_DCP USE_REAL_MIG REAL_FPGA_BUILD CORE_MMCM
+                 ENABLE_VIO ENABLE_JTAG_AXI ENABLE_ILA ENABLE_PCIE_XDMA
+                 ETH_ENABLE ETH_DEBUG_ENABLE}} {
+        dict set synth_selection physical_environment $key $::env($key)
     }
 }
 dict set synth_selection generated_cpu_files [dict create]
