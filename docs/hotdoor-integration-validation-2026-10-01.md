@@ -44,6 +44,40 @@ still unmeasured. Its generated Verilog removes 64 declared register bits,
 including 16 unused sideband bits; this is not a mapped flip-flop savings claim.
 
 
+## Independent four-chain actual-SoC result (2026-10-02)
+
+The same frozen CPU `d1b76823` OFF/ON AR binaries and SoC `e49327a` were
+reused with a four-chain ROM generated/validated by harness `d57fd18`.
+Four independent 16 KiB pointer cycles share a 64 KiB table. A0..A3 perform
+simple longword loads; every chain warms once, then traverses four times.
+All final pointers and the table checksum pass. No HDL rebuild was needed.
+
+| AR bypass | Marker cycles / aggregate loads | Payload bytes/cycle | Peak outstanding hot reads |
+| --- | ---: | ---: | ---: |
+| OFF | 17103 / 4096 | 0.957961 | 4 |
+| ON | 15919 / 4096 | 1.029210 | 4 |
+
+The ON arm saves 1184 cycles, improving this kernel's payload throughput by
+7.43765%. Each arm validates all 256 warm plus 1024 measured request steps
+per chain, allowing different inter-chain issue orders. All 4096 measured-phase
+requests have five-cycle AR-to-R service. Two measured-phase requests precede
+the start retirement marker; the marker window contains 4095 hot reads and
+responses and zero DDR reads. This is why phase checks use each chain's
+full accepted request prefix rather than equating bus-event window counts
+with architectural load counts. Post-prefix requests are not attributed to
+measurement; the full AXI integrity checker still checks them. Retirement
+interval histograms describe aggregate throughput, not load-to-use latency.
+
+The first raw OFF run was rejected by an overly strict marker-window count;
+its guest execution passed. Harness `d57fd18` revalidated the preserved raw
+trace after adding explicit phase accounting and four host tests, including
+preissued requests, inter-chain reordering, missing steps, bad pointers and
+misalignment. The ON arm ran on the same ROM image. Frozen parser/ROM hashes,
+binary hashes, reused OFF trace provenance, and complete results are in
+`/tmp/codex-soc-parallel-chase-d57fd18/{manifest,results}.json`.
+Both arms still use five-cycle L1. Four-cycle L1 is a separate experiment;
+this is not its throughput evidence and is not a routed timing result.
+
 ## Actual CPU plus L2 dependent chase (2026-10-02)
 
 The corrected paired full-top ROM run uses frozen SoC `446abae` and identical
