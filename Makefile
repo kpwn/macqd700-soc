@@ -2374,17 +2374,41 @@ CPU_M68K040_IDIRS :=
 # the same check on its own regeneration.
 CPU_AXI_DH ?= 0
 export CPU_AXI_DH
+CPU_DCACHE_NONBLOCKING ?= 0
+CPU_INHIBITED_FULL_BARRIER ?= 0
+export CPU_DCACHE_NONBLOCKING CPU_INHIBITED_FULL_BARRIER
 ifneq ($(filter-out 0 1,$(CPU_AXI_DH)),)
 $(error CPU_AXI_DH must be 0 or 1, got '$(CPU_AXI_DH)')
+endif
+ifeq ($(CPU_AXI_DH),1)
+ifneq ($(CPU),m68k040)
+$(error CPU_AXI_DH=1 requires CPU=m68k040 (other CPU sockets have no axi_dh master))
+endif
+ifneq ($(CPU_DCACHE_NONBLOCKING),1)
+$(error CPU_AXI_DH=1 requires CPU_DCACHE_NONBLOCKING=1)
+endif
+ifneq ($(CPU_INHIBITED_FULL_BARRIER),1)
+$(error CPU_AXI_DH=1 requires CPU_INHIBITED_FULL_BARRIER=1 (D4 ordering))
+endif
 endif
 CPU_DH_DEFINE := $(if $(filter 1,$(CPU_AXI_DH)),+define+L2C_DH_PORT,)
 
 .PHONY: check-cpu-dh
 check-cpu-dh: $(CPU_M68K040_V)
-	@has=0; grep -q 'axi_dh_arvalid' $(CPU_M68K040_V) && has=1; \
+	@ports=$$(sed -n '/^module M68kSocketTop (/ , /^);/p' $(CPU_M68K040_V)); \
+	if [ -z "$$ports" ]; then echo "ERROR: M68kSocketTop port list missing in $(CPU_M68K040_V)"; exit 1; fi; \
+	has=0; echo "$$ports" | grep -q 'axi_dh_' && has=1; \
 	if [ "$$has" != "$(CPU_AXI_DH)" ]; then \
 	  echo "ERROR: CPU_AXI_DH=$(CPU_AXI_DH) but $(CPU_M68K040_V) has axi_dh=$$has -- the CPU and SoC halves of the P6 hot door disagree. Regenerate: make cpu040-gen CPU_AXI_DH=$(CPU_AXI_DH)"; \
-	  exit 1; fi; echo "check-cpu-dh: CPU_AXI_DH=$(CPU_AXI_DH) matches the generated CPU"
+	  exit 1; fi; \
+	if [ "$$has" = 1 ]; then \
+	  for port in arid araddr arlen arsize arburst arvalid arready rid rdata rresp rlast rvalid rready; do \
+	    if ! echo "$$ports" | grep -qw "axi_dh_$$port"; then \
+	      echo "ERROR: generated CPU hot door is missing axi_dh_$$port"; exit 1; fi; \
+	  done; \
+	  if echo "$$ports" | grep -Eq 'axi_dh_(aw|w|b)'; then \
+	    echo "ERROR: generated CPU has axi_dh AW/W/B, but the SoC build knob does not enable L2C_DW_PORT"; exit 1; fi; \
+	fi; echo "check-cpu-dh: CPU_AXI_DH=$(CPU_AXI_DH) matches the generated CPU read-door socket"
 
 .PHONY: cpu040-gen
 cpu040-gen:

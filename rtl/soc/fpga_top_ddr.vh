@@ -247,18 +247,11 @@
     // also builds the CPU with its axi_dh master and cross-checks the
     // generated netlist).  History below.
     //
-    // WAS NOT ENABLED, AND THE REASON WAS IN THE CPU REPO.  The hot door needs
-    // a fifth AXI master on the CPU socket (`cpu_socket.vh` version bump:
-    // read-only, 128 b, 4 IDs = AxiIds.dRefill(0..3)), and the core-side
-    // prerequisite the design doc calls D4 -- an inhibited access launched
-    // only at ROB head under `dQuiesce`, with no younger LS op launching
-    // until it completes.  Until the socket carries `dha_*`, defining
-    // `L2C_DH_PORT` here would reference wires that do not exist.
-    //
-    // So: everything below is written, reviewed and unit-tested (tb_l2c.cpp's
-    // dh_* scenarios, `make tb-l2c-dh`), and compiled out.  With the define
-    // absent the port is tied off and l2c's own DH_PORT_EN stays 0, so this
-    // block contributes nothing to the netlist.
+    // The generated CPU must have the read-only 128 b, 4-ID axi_dh socket,
+    // and its non-blocking L1D plus D4 inhibited-access barrier must be ON.
+    // The Makefile and direct Vivado flow reject mismatched configurations.
+    // With L2C_DH_PORT absent this block is compiled out and l2c's
+    // DH_PORT_EN stays 0.
     //
     // WHAT THE GUARD IS FOR (design doc 2.2, correction #1).  The hot door
     // has NO ADDRESS DECODE and the DDR side serves (addr mod DRAM size).

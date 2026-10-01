@@ -127,6 +127,12 @@ puts "=== CPU SOCKET: CPU=$cpu_sel ==="
 set cpu_axi_dh [expr {[info exists ::env(CPU_AXI_DH)] ? $::env(CPU_AXI_DH) : 0}]
 if {$cpu_axi_dh ne "0" && $cpu_axi_dh ne "1"} { error "CPU_AXI_DH must be 0 or 1; got '$cpu_axi_dh'" }
 if {$cpu_axi_dh && !$cpu_m68k040} { error "CPU_AXI_DH=1 requires CPU=m68k040 (the only socket with an axi_dh master)" }
+if {$cpu_axi_dh && (![info exists ::env(CPU_DCACHE_NONBLOCKING)] || $::env(CPU_DCACHE_NONBLOCKING) ne "1")} {
+    error "CPU_AXI_DH=1 requires CPU_DCACHE_NONBLOCKING=1"
+}
+if {$cpu_axi_dh && (![info exists ::env(CPU_INHIBITED_FULL_BARRIER)] || $::env(CPU_INHIBITED_FULL_BARRIER) ne "1")} {
+    error "CPU_AXI_DH=1 requires CPU_INHIBITED_FULL_BARRIER=1 (D4 ordering)"
+}
 puts "=== CPU SOCKET: CPU_AXI_DH=$cpu_axi_dh (L2C_DH_PORT [expr {$cpu_axi_dh ? {defined} : {undefined}}]) ==="
 
 # CPU040_SRC_DIR IS AN OVERRIDE, AND IT MUST BE HONOURED HERE.
@@ -163,15 +169,32 @@ if {$cpu_m68k040} {
         exit 1
     }
     puts "=== CPU=m68k040: regeneration OK, using $cpu_m68k040_v ==="
-    # CPU/SoC hot-door consistency: the netlist must carry axi_dh iff CPU_AXI_DH=1.
+    # CPU/SoC hot-door consistency: inspect the TOP-LEVEL port list, not an
+    # internal signal that happens to contain the same name.
     set fh [open $cpu_m68k040_v r]; set cpu_v_text [read $fh]; close $fh
-    set cpu_has_dh [expr {[string first "axi_dh_arvalid" $cpu_v_text] >= 0}]
+    set port_start [string first "module M68kSocketTop (" $cpu_v_text]
+    if {$port_start < 0} { error "M68kSocketTop port list missing in $cpu_m68k040_v" }
+    set port_end [string first ");" $cpu_v_text $port_start]
+    if {$port_end < 0} { error "M68kSocketTop port list is unterminated in $cpu_m68k040_v" }
+    set cpu_ports [string range $cpu_v_text $port_start $port_end]
     unset cpu_v_text
+    set cpu_has_dh [expr {[string first "axi_dh_" $cpu_ports] >= 0}]
     if {$cpu_has_dh != $cpu_axi_dh} {
         puts stderr "ERROR: CPU_AXI_DH=$cpu_axi_dh but the generated M68kSocketTop.v [expr {$cpu_has_dh ? {HAS} : {has NO}}] axi_dh port."
         puts stderr "       The CPU and SoC halves of the P6 hot door disagree; refusing to build."
         exit 1
     }
+    if {$cpu_has_dh} {
+        foreach port {arid araddr arlen arsize arburst arvalid arready rid rdata rresp rlast rvalid rready} {
+            if {[string first "axi_dh_$port" $cpu_ports] < 0} {
+                error "generated CPU hot door is missing axi_dh_$port"
+            }
+        }
+        if {[regexp {axi_dh_(aw|w|b)} $cpu_ports]} {
+            error "generated CPU has axi_dh AW/W/B, but the SoC build knob does not enable L2C_DW_PORT"
+        }
+    }
+    unset cpu_ports
 }
 
 # Shared include-dir list for every synth_design invocation below.  The
