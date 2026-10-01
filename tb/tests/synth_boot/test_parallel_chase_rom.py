@@ -13,7 +13,7 @@ class ParallelSequenceTest(unittest.TestCase):
         nodes = [c * parallel.PER_CHAIN for c in range(4)]
         events = []
         tick = 2
-        for step in range(4 * parallel.PER_CHAIN):
+        for step in range(5 * parallel.PER_CHAIN):
             order = [(step+c) % 4 for c in range(4)]
             for chain in order:
                 address = parallel.single.RING_BASE + nodes[chain] * 64
@@ -24,7 +24,7 @@ class ParallelSequenceTest(unittest.TestCase):
                 events.append(f'{tick} RV {chain} 0 1 1')
             tick += 2
         self.events = events
-        self.timing = dict(start_tick=0, end_tick=tick)
+        self.timing = dict(start_tick=4*parallel.PER_CHAIN+8, end_tick=tick)
 
     def check_events(self, events):
         self.path.write_text('\n'.join(events)+'\n')
@@ -34,6 +34,7 @@ class ParallelSequenceTest(unittest.TestCase):
         result = self.check_events(self.events)
         self.assertEqual(result['pointer_reads_per_chain'], [1024]*4)
         self.assertEqual(result['max_outstanding_hot_reads'], 4)
+        self.assertGreater(result['measured_requests_before_start_marker'], 0)
 
     def test_wrong_next_pointer_is_rejected(self):
         events = self.events.copy()

@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import subprocess
+from collections import defaultdict, deque, Counter
 from pathlib import Path
 import chase_rom as single
 
@@ -76,34 +77,64 @@ def generate(out):
 
 
 def validate_requests(path, timing):
+    # A retirement marker is not an issue fence. Classify each chain's full
+    # warm+measured request prefix, including requests issued before the marker.
     links = ring()
     next_node = [c * PER_CHAIN for c in range(CHAINS)]
     counts = [0] * CHAINS
-    pending, peak = 0, 0
+    pending = defaultdict(deque)
+    inflight, peak, transfers, preissued = 0, 0, 0, 0
+    latency = Counter()
+    digest = hashlib.sha256()
     for line in path.read_text().splitlines():
         row = line.split()
-        if not row or not timing['start_tick'] < int(row[0], 0) <= timing['end_tick']:
+        if not row:
             continue
+        tick = int(row[0], 0)
+        if tick > timing['end_tick']:
+            break
         if row[1] == 'AR':
-            addr = int(row[3], 16)
+            ident, addr = int(row[2], 0), int(row[3], 16)
             offset = addr - single.RING_BASE
-            if offset < 0 or offset >= SIZE or offset % 64:
-                raise ValueError('pointer request outside aligned table nodes')
-            node = offset // 64
-            chain = node // PER_CHAIN
-            if node != next_node[chain]:
-                raise ValueError(f'chain {chain} skipped or repeated a pointer step')
-            next_node[chain] = links[node]
-            counts[chain] += 1
-            pending += 1
-            peak = max(peak, pending)
-        elif row[1] == 'RV' and int(row[5], 0):
-            pending -= 1
-            if pending < 0:
-                raise ValueError('response crosses measured start boundary')
-    if counts != [4*PER_CHAIN]*CHAINS or next_node != [c*PER_CHAIN for c in range(CHAINS)] or pending:
-        raise ValueError('incomplete measured chains or outstanding responses')
-    return dict(pointer_reads_per_chain=counts, max_outstanding_hot_reads=peak)
+            measured = False
+            if 0 <= offset < SIZE:
+                if offset % 64:
+                    raise ValueError('pointer request outside aligned table nodes')
+                node = offset // 64
+                chain = node // PER_CHAIN
+                if counts[chain] < 5 * PER_CHAIN:
+                    if node != next_node[chain]:
+                        raise ValueError(f'chain {chain} skipped or repeated a pointer step')
+                    if tuple(int(x, 0) for x in row[4:]) != (0, 4, 1):
+                        raise ValueError('pointer request is not one 16-byte line')
+                    next_node[chain] = links[node]
+                    measured = counts[chain] >= PER_CHAIN
+                    counts[chain] += 1
+                    if measured:
+                        digest.update(addr.to_bytes(4, 'big'))
+                        inflight += 1
+                        peak = max(peak, inflight)
+                        preissued += tick <= timing['start_tick']
+            pending[ident].append((tick, measured))
+        elif row[1] == 'RV' and int(row[5], 0) and int(row[4], 0):
+            ident = int(row[2], 0)
+            if not pending[ident]:
+                raise ValueError('response without request')
+            issued, measured = pending[ident].popleft()
+            if measured:
+                if int(row[3], 0) or (tick-issued) % 2:
+                    raise ValueError('bad measured response')
+                inflight -= 1
+                transfers += 1
+                latency[(tick-issued)//2] += 1
+    if counts != [5*PER_CHAIN]*CHAINS or next_node != [c*PER_CHAIN for c in range(CHAINS)] or inflight or transfers != 4*NODES:
+        raise ValueError('incomplete warm/measured chain prefix or responses before retirement end')
+    return dict(pointer_reads_per_chain=[4*PER_CHAIN]*CHAINS,
+                warm_pointer_reads_per_chain=[PER_CHAIN]*CHAINS,
+                measured_requests_before_start_marker=preissued,
+                phase_ar_to_transfer_cycles=dict(sorted(latency.items())),
+                phase_request_sha256=digest.hexdigest(),
+                max_outstanding_hot_reads=peak)
 
 
 def parse(meta_path, rom, trace, bus):
@@ -117,8 +148,8 @@ def parse(meta_path, rom, trace, bus):
     result = single.parse_trace(meta, trace)
     result['bus'] = single.parse_bus_trace(bus, result)
     traffic = result['bus']['windows']['measured']
-    if (traffic['hot_ar'], traffic['hot_r_transfers'], traffic['ddr_ar'], result['bus']['measured_hot_line_reads']) != (4*NODES, 4*NODES, 0, 4*NODES):
-        raise ValueError('need complete warm-L2 line reads and zero measured DDR')
+    if traffic['ddr_ar'] != 0:
+        raise ValueError('measured retirement window contains DDR reads')
     if result['bus']['windows']['warm']['hot_ar'] == 0:
         raise ValueError('missing warmup requests')
     result['parallel'] = validate_requests(bus, result)

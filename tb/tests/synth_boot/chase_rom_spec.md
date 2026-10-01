@@ -106,3 +106,21 @@ Report aggregate cycles/bytes per cycle and maximum outstanding measured hot
 reads; aggregate retirement spacing is not dependent load-to-use latency.
 This ROM provides actual CPU/guard/L2 simulation evidence, not mapped area,
 routed timing, board execution, or proof of general application IPC.
+
+
+Phase-accounting refinement: the first guest passed, but two next-traversal
+requests appeared before the warm-end retirement marker, and the measured
+retirement window contained 4095 rather than 4096 reads. Retirement markers
+are not issue fences, especially across a predicted loop boundary. Therefore
+classify each chain's full accepted request prefix: 256 warm then 1024 measured
+steps. Check every step against the generated cycle, match responses by AXI ID,
+and require all four 1280-step prefixes and measured responses complete by the
+measured retirement end. Count preissued measured requests explicitly. Do not
+force marker-window traffic to equal architectural load count or call an
+aggregate retirement interval dependent latency. Keep zero DDR reads in the
+measured retirement window, report phase request-to-response latency and
+marker-window traffic separately, and validate guest final pointers/checksum.
+Requests after a chain's complete prefix are not attributed to its measured
+phase. This is needed for speculation/cleanup; the full bus parser still
+checks their AXI integrity. The raw first run remains preserved at
+`/tmp/codex-soc-parallel-chase-57672e3` as a rejected measurement.
