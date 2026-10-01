@@ -406,3 +406,40 @@ broken copy of the RTL before being trusted. Unit tests and integrated CDC/MIG t
 boundaries; passing one does not establish the other. Test queued traffic,
 same-line conflicts, partial writes, backpressure and reset with operations
 in flight. Current suite limitations are recorded in the main README.
+
+## Experimental hot-read response fall-through (2026-10-01)
+
+`DH_R_FALL_THROUGH` is a default-zero L2 parameter, valid only with the hot
+read door enabled. It selects an empty-buffer bypass in the hot R response
+slice only. Cold R/B, fetch reassembly and hot B keep registered outputs.
+This is a selected experiment, not a shipping timing decision. The baseline
+at `83f7f96` is six accepted-hot-AR to first-RVALID cycles on isolated warm
+hits; the target is five, with identical checked bytes and request counts.
+
+The slice retains its two valid bits and two payload registers. Upstream
+ready remains exactly `!v1`, independent of downstream ready and of input
+valid/data. When empty and out of reset, input valid/payload may reach the
+output combinationally. A beat accepted at both ends is not also enqueued.
+If the consumer refuses that bypassed beat, upstream still transfers it into
+the head register on the edge; the following cycle must expose the identical
+payload regardless of response-arbiter changes. Occupied-buffer transitions
+retain FIFO order and the existing full-buffer recovery bubble. Reset drops
+buffered valid bits and suppresses empty-buffer forwarding while asserted.
+Upstream state may retire on acceptance into the slice, as it does today.
+
+No new payload slots, IDs or arbitration priority are introduced. The expected
+raw storage delta is zero; a payload mux and empty/valid control replace the
+registered-only output selection. This extends the registered hit/MSHR
+response-to-CPU combinational path, so cycle reduction alone cannot establish
+an Fmax or area improvement. Keep the parameter off in the board top until
+paired mapped timing and area are measured.
+
+Acceptance requires independent FIFO scoreboarding of empty pass-through,
+empty-to-stalled capture, two-slot fill, full pop/refill, sustained throughput,
+reset with data present, and upstream-ready independence; deliberately dropping
+a refused bypass beat must fail the scoreboard. Then run the full hot-door
+suite on matched OFF/ON builds, including same-ID ordering, randomized
+backpressure and first-beat timestamps. Report accepted AR, RVALID and R
+transfer separately. This cannot alone meet a six-cycle L2-over-L1 CPU
+load-use target: CPU miss discovery, launch and wakeup remain outside this
+L2 measurement. End-to-end CPU/SoC simulation and physical checks remain open.
