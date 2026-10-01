@@ -452,3 +452,14 @@ activate this parameter in synthesis: simulation/lint may select it with
 Paired full-top lint uses identical generated CPU RTL, SoC inputs and
 shipping defines with only this parameter changed. This checks the physical
 binding/elaboration, not post-route timing or CPU load-use performance.
+
+For reproducible physical OFF/ON experiments, the build exposes
+`L2_DH_R_FALL_THROUGH=0|1` through Make and the Vivado environment, defaulting
+strictly to 0. Vivado must validate the value before generating the CPU,
+reject 1 unless `CPU_AXI_DH=1`, and include the selected value in the actual
+`fpga_top` generic list and `fpga_top.buildinfo`. Merely recording an environment
+variable without applying the generic is insufficient. The selection does
+not change the CPU configuration or authorize board deployment. Physical
+comparisons must freeze the CPU source/flags and SoC source, use identical
+constraints, and report both timing and resources; no default promotion is
+implied by making the experiment selectable.
