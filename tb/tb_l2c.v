@@ -31,6 +31,7 @@ module tb_l2c #(
     // "the OFF netlist/behaviour is unchanged".  `make tb-l2c-dh` builds
     // -GDH_EN=1 and is the only thing that runs the dh scenarios.
     parameter DH_EN = 0,
+    parameter DH_R_FALL_THROUGH = 0,
     // Native ID width of the hot door: 2 = 4 IDs = AxiIds.dRefill(0..3).
     parameter DH_ID_WIDTH = 2,
     // Cold-path fairness bound; 0 = pure fixed priority.  The arbitration
@@ -321,6 +322,7 @@ module tb_l2c #(
         .ADDR_WIDTH(32), .DATA_WIDTH(128), .ID_WIDTH(6),
         .L2_BYPASS_ALL(L2_BYPASS_ALL),
         .DH_PORT_EN(DH_EN), .DH_ID_WIDTH(DH_ID_WIDTH),
+        .DH_R_FALL_THROUGH(DH_R_FALL_THROUGH),
         .DH_COLD_FAIR_N(DH_COLD_FAIR_N),
         .DW_PORT_EN(DW_EN), .DW_ID_WIDTH(DW_ID_WIDTH),
         .VICTIM_SLOTS(VICTIM_SLOTS),

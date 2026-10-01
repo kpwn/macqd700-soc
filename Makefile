@@ -7655,7 +7655,8 @@ tb-l2c-collision:
 #                                      # NEGATIVE CONTROL that is EXPECTED
 #                                      # TO FAIL, see its own target below
 #   make tb-l2c-dh-stress              # the randomized scoreboard, door ON
-L2C_DH_BUILD := $(BUILD_DIR)/l2c_dh
+L2C_DH_FALL_THROUGH ?= 0
+L2C_DH_BUILD := $(BUILD_DIR)/l2c_dh$(if $(filter 1,$(L2C_DH_FALL_THROUGH)),_ft1,)
 .PHONY: tb-l2c-dh
 tb-l2c-dh: $(L2C_DH_BUILD)/Vtb_l2c
 	@echo "Running l2c unit tb with the D-side hot door ENABLED..."
@@ -7670,7 +7671,7 @@ $(L2C_DH_BUILD)/Vtb_l2c: $(L2C_RTL) $(TB_DIR)/tb_l2c.cpp
 		-Wno-WIDTHEXPAND -Wno-SELRANGE \
 		-Irtl/soc \
 		-Mdir $(L2C_DH_BUILD) \
-		--top-module tb_l2c -GDH_EN=1 \
+		--top-module tb_l2c -GDH_EN=1 -GDH_R_FALL_THROUGH=$(L2C_DH_FALL_THROUGH) \
 		$(L2C_RTL) \
 		$(TB_DIR)/tb_l2c.cpp \
 		-CFLAGS "-std=c++17"
@@ -9162,3 +9163,17 @@ $(BUILD_DIR)/peripheral_reset_sequencer/Vperipheral_reset_sequencer: \
 		$(RTL_DIR)/soc/peripheral_reset_sequencer.v \
 		$(TB_DIR)/tb_peripheral_reset_sequencer.cpp \
 		-CFLAGS "-std=c++17"
+
+# Standalone FIFO/AXI contract gate for the optional hot-R empty bypass.
+L2C_RSP_FT ?= 0
+L2C_RSP_BUILD := $(BUILD_DIR)/l2c_rsp_ft$(L2C_RSP_FT)
+.PHONY: tb-l2c-rsp-skid
+tb-l2c-rsp-skid: $(L2C_RSP_BUILD)/Vl2c_rsp_skid
+	$(L2C_RSP_BUILD)/Vl2c_rsp_skid
+
+$(L2C_RSP_BUILD)/Vl2c_rsp_skid: $(RTL_DIR)/soc/l2c.v $(TB_DIR)/tb_l2c_rsp_skid.cpp
+	@mkdir -p $(L2C_RSP_BUILD)
+	$(VERILATOR) --cc --exe --build --assert -Wall -Wno-DECLFILENAME -Wno-UNUSED \
+		--top-module l2c_rsp_skid -GW=32 -GFALL_THROUGH=$(L2C_RSP_FT) \
+		-Mdir $(L2C_RSP_BUILD) $(RTL_DIR)/soc/l2c.v $(TB_DIR)/tb_l2c_rsp_skid.cpp \
+		-CFLAGS "-std=c++17 -DFALL_THROUGH_BUILD=$(L2C_RSP_FT)"

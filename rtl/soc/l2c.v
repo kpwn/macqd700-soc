@@ -127,6 +127,8 @@ module l2c #(
     // path, not that it adds L2 bandwidth.  Banking was considered and
     // dropped for exactly that reason.
     parameter DH_PORT_EN = 0,
+    // Experimental empty hot-R bypass; board top retains default OFF.
+    parameter DH_R_FALL_THROUGH = 0,
     // Native AXI ID width of the hot D door.  2 = 4 IDs, which is
     // AxiIds.dRefill(0..3) -- the four the CPU reserves for cacheable
     // refills.  Zero-extended to ID_WIDTH for l2c_ctrl, exactly as
@@ -367,6 +369,9 @@ end else begin : g_active
     if ((DW_PORT_EN != 0) && ((DH_PORT_EN == 0) || (DW_ID_WIDTH > ID_WIDTH - 1) ||
                               (DH_ID_WIDTH > ID_WIDTH - 1))) begin : g_dw_misconfigured
         l2c_DW_PORT_EN_needs_DH_PORT_EN_and_ID_WIDTH_room_for_the_write_marker u_elaboration_error ();
+    end
+    if ((DH_R_FALL_THROUGH != 0) && (DH_PORT_EN == 0)) begin : g_dh_ft_misconfigured
+        l2c_DH_R_FALL_THROUGH_requires_DH_PORT_EN u_elaboration_error ();
     end
     assign dh_axi_arready = dctrl_arready;
     // Level A (task #269): l2c_ctrl.v's fetch-side AR sub-port.  Decompose
@@ -1125,7 +1130,8 @@ end else begin : g_active
         wire [ID_WIDTH-1:0] dh_q_id    = dh_pick_mshr ? mshr_rsp_id    : hit_rsp_id;
         wire                dh_q_last  = dh_pick_mshr ? mshr_rsp_last  : hit_rsp_last;
         wire idh_ready;
-        l2c_rsp_skid #(.W(DH_ID_WIDTH + DATA_WIDTH + 2 + 1)) u_dh_r_skid (
+        l2c_rsp_skid #(.W(DH_ID_WIDTH + DATA_WIDTH + 2 + 1),
+                       .FALL_THROUGH(DH_R_FALL_THROUGH)) u_dh_r_skid (
             .clk(clk), .rst(rst),
             .s_valid(dh_q_avail), .s_ready(idh_ready),
             .s_data({dh_q_id[DH_ID_WIDTH-1:0], dh_q_rdata, dh_q_resp, dh_q_last}),
@@ -1284,8 +1290,9 @@ endmodule
 //   * `s_ready` is `!v1` -- a REGISTER, with no combinational dependence on
 //     `m_ready` whatsoever.  That is the entire point: it is what makes the
 //     upstream's accept decision independent of the downstream's.
-//   * `m_valid`/`m_data` come straight out of registers, so the downstream
-//     sees no combinational path from this module's inputs either.
+//   * With default FALL_THROUGH=0, output valid/data come from registers.
+//     The optional hot-R experiment bypasses only while empty and out of
+//     reset; see docs/l2c_spec.md for its separate output timing contract.
 //   * ORDER IS PRESERVED.  v1 can only be occupied while v0 is, and v1 always
 //     drains into v0, so this is a 2-entry FIFO, not a bypass.
 //   * PAYLOAD STABILITY.  d0 is only ever rewritten on a cycle in which it was
@@ -1303,7 +1310,8 @@ endmodule
 // ============================================================================
 `default_nettype none
 module l2c_rsp_skid #(
-    parameter W = 1
+    parameter W = 1,
+    parameter FALL_THROUGH = 0
 ) (
     input  wire         clk,
     input  wire         rst,
@@ -1317,12 +1325,16 @@ module l2c_rsp_skid #(
     reg         v0, v1;
     reg [W-1:0] d0, d1;
 
-    assign m_valid = v0;
-    assign m_data  = d0;
+    // Empty bypass consumes no slot on a downstream transfer. A refused
+    // beat is accepted upstream and captured into d0, preserving AXI payload
+    // stability even if the upstream response arbiter changes on that edge.
+    wire bypass_c = (FALL_THROUGH != 0) && !v0 && !rst;
+    assign m_valid = v0 || (bypass_c && s_valid);
+    assign m_data  = bypass_c ? s_data : d0;
     assign s_ready = !v1;
 
     wire pop_c  = v0 && m_ready;
-    wire push_c = s_valid && !v1;
+    wire push_c = s_valid && !v1 && !(bypass_c && m_ready);
 
     always @(posedge clk) begin
         if (rst) begin
