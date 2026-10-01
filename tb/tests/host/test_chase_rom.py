@@ -74,6 +74,64 @@ class ChaseRomTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "order regressed|empty or inverted"):
                 parse(bad)
 
+    def test_bus_stalls_fifo_histograms_and_rejections(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            paths = chase.generate(65536, root)
+            meta = json.loads(paths["json"].read_text())
+            trace = root / "retire.txt"
+            trace.write_text("\n".join(trace_lines(meta)) + "\n")
+            timing = chase.parse_trace(meta, trace)
+            warm = timing["warm_start_tick"]
+            measured = timing["start_tick"]
+            bus_path = root / "bus.txt"
+
+            def parse_bus(lines):
+                bus_path.write_text("\n".join(lines) + "\n")
+                return chase.parse_bus_trace(bus_path, timing)
+
+            good = [
+                f"{warm + 2} AR 1 0x40010000 0 2 1",
+                f"{warm + 4} DDR_AR 0x40010000 0",
+                f"{warm + 6} RV 1 0 1 1",
+                f"{measured + 2} AR 3 0x40010040 1 2 1",
+                f"{measured + 4} AR 3 0x40010080 0 2 1",  # same-ID FIFO
+                f"{measured + 4} RV 3 0 0 0",             # repeated stall
+                f"{measured + 6} RV 3 0 0 0",
+                f"{measured + 8} RV 3 0 0 1",
+                f"{measured + 10} RV 3 0 1 0",
+                f"{measured + 12} RV 3 0 1 1",
+                f"{measured + 14} RV 3 0 1 1",
+            ]
+            result = parse_bus(good)
+            self.assertEqual(result["windows"]["measured"]["hot_ar"], 2)
+            self.assertEqual(result["windows"]["measured"]["hot_r_transfers"], 3)
+            self.assertEqual(result["windows"]["measured"]["hot_r_valid_samples"], 6)
+            self.assertEqual(result["measured_ar_to_first_rvalid_cycles"], {1: 1, 5: 1})
+            self.assertEqual(result["measured_ar_to_first_transfer_cycles"], {3: 1, 5: 1})
+            chase.validate_acceptance(meta, result, "warmL2")
+            reordered = [
+                f"{measured + 2} AR 1 0x40010000 0 2 1",
+                f"{measured + 4} AR 2 0x40010040 0 2 1",
+                f"{measured + 6} RV 2 0 1 1",
+                f"{measured + 8} RV 1 0 1 1",
+            ]
+            self.assertEqual(parse_bus(reordered)["windows"]["measured"]["hot_r_transfers"], 2)
+            with self.assertRaisesRegex(ValueError, "warmL2 acceptance failed"):
+                chase.validate_acceptance({**meta, "size_bytes": 2048}, result, "warmL2")
+            with self.assertRaisesRegex(ValueError, "warmL2 acceptance failed"):
+                chase.validate_acceptance(meta, {"windows": {**result["windows"],
+                    "measured": {**result["windows"]["measured"], "ddr_ar": 1}}}, "warmL2")
+
+            for bad, reason in (
+                ([f"{warm + 2} RV 9 0 1 1"], "orphan"),
+                (good[:5] + [f"{measured + 4} RV 3 2 0 1"] + good[6:], "RRESP"),
+                (good[:5] + [f"{measured + 4} RV 3 0 1 1"] + good[6:], "RLAST"),
+                (good[:-1], "incomplete"),
+            ):
+                with self.assertRaisesRegex(ValueError, reason):
+                    parse_bus(bad)
+
 
 if __name__ == "__main__":
     unittest.main()

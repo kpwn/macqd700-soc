@@ -2,6 +2,7 @@
 """Build a CPU040 ROM chase image, or validate its full-top retirement trace."""
 
 import argparse
+from collections import Counter, defaultdict, deque
 import hashlib
 import json
 import subprocess
@@ -222,7 +223,113 @@ def parse_trace(meta, trace):
     cycles = ticks // 2
     return {"cycles": cycles, "hops": meta["measured_hops"],
             "cycles_per_hop": cycles / meta["measured_hops"],
+            "warm_start_tick": rows[s0][1], "warm_end_tick": rows[e0][1],
             "start_tick": rows[s1][1], "end_tick": rows[e1][1]}
+
+
+def parse_bus_trace(path, timing):
+    """Check hot-door AXI burst integrity and summarize marker-window traffic."""
+    windows = {
+        "warm": (timing["warm_start_tick"], timing["warm_end_tick"]),
+        "measured": (timing["start_tick"], timing["end_tick"]),
+    }
+    counts = {window: Counter() for window in windows}
+    first_valid = Counter()
+    first_transfer = Counter()
+    pending = defaultdict(deque)
+    last_tick = -1
+
+    def window_at(tick):
+        return next((name for name, (start, end) in windows.items()
+                     if start < tick <= end), None)
+
+    def number(value):
+        return int(value, 0)
+
+    def address(value):
+        return int(value, 16)
+
+    for line_no, line in enumerate(path.read_text().splitlines(), 1):
+        parts = line.split()
+        if not parts:
+            continue
+        try:
+            tick = number(parts[0])
+            kind = parts[1]
+            if tick < last_tick:
+                raise ValueError("bus timestamp regressed")
+            last_tick = tick
+            window = window_at(tick)
+            if kind == "AR" and len(parts) == 7:
+                ident, addr, length, size, burst = (number(parts[2]), address(parts[3]),
+                                                    number(parts[4]), number(parts[5]),
+                                                    number(parts[6]))
+                if min(ident, addr, length, size, burst) < 0 or size > 7 or burst > 3:
+                    raise ValueError("invalid AR payload")
+                pending[ident].append({"tick": tick, "len": length,
+                                       "first_valid": None, "first_transfer": None,
+                                       "transfers": 0, "window": window})
+                if window:
+                    counts[window]["hot_ar"] += 1
+            elif kind == "RV" and len(parts) == 6:
+                ident, resp, last, ready = map(number, parts[2:])
+                if not pending[ident]:
+                    raise ValueError(f"orphan RV for ID {ident}")
+                if resp != 0 or last not in (0, 1) or ready not in (0, 1):
+                    raise ValueError("bad RRESP/RLAST/RREADY")
+                burst = pending[ident][0]
+                if tick < burst["tick"]:
+                    raise ValueError("R precedes accepted AR")
+                if last != int(burst["transfers"] == burst["len"]):
+                    raise ValueError("bad RLAST or beat count")
+                if burst["first_valid"] is None:
+                    burst["first_valid"] = tick
+                if window:
+                    counts[window]["hot_r_valid_samples"] += 1
+                if ready:
+                    if burst["first_transfer"] is None:
+                        burst["first_transfer"] = tick
+                    burst["transfers"] += 1
+                    if window:
+                        counts[window]["hot_r_transfers"] += 1
+                    if last:
+                        if burst["window"] == "measured":
+                            for event_tick, histogram in ((burst["first_valid"], first_valid),
+                                                          (burst["first_transfer"], first_transfer)):
+                                delta = event_tick - burst["tick"]
+                                if delta & 1:
+                                    raise ValueError("AR-to-R interval is not whole sysclock cycles")
+                                histogram[delta // 2] += 1
+                        pending[ident].popleft()
+            elif kind == "DDR_AR" and len(parts) == 4:
+                addr, length = address(parts[2]), number(parts[3])
+                if addr < 0 or length < 0:
+                    raise ValueError("invalid DDR_AR payload")
+                if window:
+                    counts[window]["ddr_ar"] += 1
+            else:
+                raise ValueError("unrecognized bus event or field count")
+        except (IndexError, ValueError) as exc:
+            raise ValueError(f"bus trace line {line_no}: {exc}") from exc
+    if any(pending.values()):
+        raise ValueError("bus trace ends with incomplete hot-door AR bursts")
+    return {
+        "windows": {name: {key: counts[name][key] for key in
+                            ("hot_ar", "hot_r_valid_samples", "hot_r_transfers", "ddr_ar")}
+                    for name in windows},
+        "measured_ar_to_first_rvalid_cycles": dict(sorted(first_valid.items())),
+        "measured_ar_to_first_transfer_cycles": dict(sorted(first_transfer.items())),
+    }
+
+
+def validate_acceptance(meta, bus, mode):
+    if mode != "warmL2":
+        raise ValueError(f"unknown acceptance mode: {mode}")
+    warm = bus["windows"]["warm"]
+    measured = bus["windows"]["measured"]
+    if meta["size_bytes"] != 65536 or warm["hot_ar"] == 0 or \
+            measured["hot_ar"] == 0 or measured["ddr_ar"] != 0:
+        raise ValueError("warmL2 acceptance failed: need 64 KiB, warm/measured hot AR, no measured DDR_AR")
 
 
 def main():
@@ -235,6 +342,9 @@ def main():
     check.add_argument("--meta", type=Path, required=True)
     check.add_argument("--trace", type=Path, required=True)
     check.add_argument("--rom", type=Path, help="verify trace is paired with this ROM image")
+    check.add_argument("--bus-trace", type=Path, help="optional hot-door/L2 bus events")
+    check.add_argument("--acceptance", choices=("warmL2",),
+                       help="require a complete 64 KiB warm-L2 measurement")
     args = parser.parse_args()
     if args.command == "generate":
         print(json.dumps({key: str(value) for key, value in generate(args.size, args.out_dir).items()}, indent=2))
@@ -242,7 +352,14 @@ def main():
         meta = json.loads(args.meta.read_text())
         if args.rom and hashlib.sha256(args.rom.read_bytes()).hexdigest() != meta["rom_sha256"]:
             raise ValueError("ROM image SHA-256 differs from metadata")
-        print(json.dumps(parse_trace(meta, args.trace), indent=2))
+        result = parse_trace(meta, args.trace)
+        if args.acceptance and not args.bus_trace:
+            raise ValueError("warmL2 acceptance requires --bus-trace")
+        if args.bus_trace:
+            result["bus"] = parse_bus_trace(args.bus_trace, result)
+        if args.acceptance == "warmL2":
+            validate_acceptance(meta, result["bus"], args.acceptance)
+        print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

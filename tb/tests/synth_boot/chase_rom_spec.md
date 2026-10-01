@@ -33,3 +33,25 @@ corresponding `.bin`, `+pc_dump_path=<trace>`, and `+pc_dump_max=30000`; the
 default 10000-entry cap can truncate the 64 KiB checksum and pass PC. Parse
 with `python3 chase_rom.py parse --meta <json> --rom <bin> --trace <trace>`.
 The parser rejects truncated/failed runs instead of reporting a partial CPI.
+
+An optional `--bus-trace <path>` consumes accepted CPU-facing hot-door
+`t AR id addr len size burst`, asserted `t RV id resp last ready`, and accepted
+L2-master `t DDR_AR addr len` rows. Timestamps share the PC trace's two ticks
+per system clock and denote the post-edge time for a pre-edge bus sample. A
+same-timestamp event belongs to the interval ending at that marker, so window
+membership is `start < t <= end`. The parser tracks outstanding bursts FIFO
+per AXI ID, counts only ready R beats, tolerates repeated stalled RVALID,
+requires a correct final RLAST and RESP=OKAY, and rejects orphan/incomplete
+bursts. It reports AR-to-first-RVALID and AR-to-first-transfer cycle histograms
+for requests accepted in the measured interval, plus warm and measured hot
+AR/R-transfer and DDR_AR counts. No bus payload is checked; the ROM's
+post-window checksum and pass PC validate data. `--acceptance warmL2` requires
+the bus trace, the 64 KiB image, at least one warm and measured hot AR, and no
+measured DDR_AR (the warm lap has populated L2). This acceptance is specific
+to the P1/P3 CPU path exercised by this ROM and does not establish other
+request classes.
+
+For that gate, append `--bus-trace <bus_trace> --acceptance warmL2` to the
+parser command above. The bus writer records asserted RVALID every cycle,
+including a held beat, so `hot_r_valid_samples` can exceed
+`hot_r_transfers`; only transfers advance the per-ID burst count.
