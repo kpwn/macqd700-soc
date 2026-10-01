@@ -151,12 +151,13 @@ module debug_vio (
     input wire [95:0] probe_in12,
     input wire [159:0] probe_in13,
     input wire [83:0] probe_in14,
+    input wire [31:0] probe_in15, // v28: hot/fetch window guard fault counters
     output wire [4:0] probe_out0,
     output wire probe_out1
 );
     assign probe_out0 = 5'b00011;
     assign probe_out1 = 1'b0;
-    wire _unused = &{1'b0, clk, probe_in0, probe_in1, probe_in2, probe_in3, probe_in4, probe_in5, probe_in6, probe_in7, probe_in8, probe_in9, probe_in10, probe_in11, probe_in12, probe_in13, probe_in14};
+    wire _unused = &{1'b0, clk, probe_in0, probe_in1, probe_in2, probe_in3, probe_in4, probe_in5, probe_in6, probe_in7, probe_in8, probe_in9, probe_in10, probe_in11, probe_in12, probe_in13, probe_in14, probe_in15};
 endmodule
 
 // Ethernet-link clock/delay primitives used by q700_eth_link.sv.  Functional
