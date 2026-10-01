@@ -2564,7 +2564,7 @@ lint-fpga-top: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V) check-cpu-dh)
 # VIDEO_SMOKE=0 arm.  CPU= is whatever the invoking environment sets
 # (CPU=stub is the default, and is the rig's configuration).
 .PHONY: lint-configs
-lint-configs: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V))
+lint-configs: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V) check-cpu-dh)
 	@rc=0; \
 	for cfg in "default:" \
 	           "vio:-DVIO_ENABLE" \
@@ -2617,7 +2617,7 @@ lint-configs: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V))
 # the only thing missing was STARTUPE3, now in tb/verilator_xilinx_stubs.v.
 # Defines match the `ship` row minus -DSIM_MODEL.
 .PHONY: lint-realmig
-lint-realmig: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V))
+lint-realmig: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V) check-cpu-dh)
 	@printf '%-10s ' "realmig"; \
 	if $(VERILATOR) --lint-only --cc $(CPU_DEFINE) $(VERILATOR_EXTRA_DEFINES) \
 	    -DVIO_ENABLE -DJTAG_AXI_ENABLE -DL2C_ENABLE -DVRAM_IN_DDR \
@@ -3004,7 +3004,8 @@ $(FPGA_TOP_ROM_BUILD)/Vfpga_top: $(FPGA_TOP_RTL_SRCS) $(CPU_EXTRA_SRCS) \
 		$(TB_DIR)/verilator_xilinx_stubs.v \
 		$(TB_DIR)/tb_fpga_top_rom.cpp \
 		$(TB_DIR)/models/rom_patch_sets.h \
-		$(TB_DIR)/models/sd_card_spi.h
+		$(TB_DIR)/models/sd_card_spi.h \
+		| $(if $(filter m68k040,$(CPU)),check-cpu-dh)
 	@mkdir -p $(FPGA_TOP_ROM_BUILD)
 	$(VERILATOR) --cc --exe --build --assert --public-flat-rw --savable \
 		$(if $(filter 1,$(WAVES)),--trace-fst,) \
@@ -3069,7 +3070,8 @@ $(FPGA_TOP_ROM_REALBOOT_BUILD)/Vfpga_top: $(FPGA_TOP_RTL_SRCS) $(CPU_EXTRA_SRCS)
 		$(TB_DIR)/verilator_xilinx_stubs.v \
 		$(TB_DIR)/tb_fpga_top_rom.cpp \
 		$(TB_DIR)/models/rom_patch_sets.h \
-		$(TB_DIR)/models/sd_card_spi.h
+		$(TB_DIR)/models/sd_card_spi.h \
+		| $(if $(filter m68k040,$(CPU)),check-cpu-dh)
 	@mkdir -p $(FPGA_TOP_ROM_REALBOOT_BUILD)
 	$(VERILATOR) --cc --exe --build --assert --public-flat-rw \
 		$(if $(filter 1,$(WAVES)),--trace-fst,) \
@@ -3111,7 +3113,8 @@ $(FPGA_TOP_ROM_MIG_BUILD)/Vfpga_top: $(FPGA_TOP_RTL_SRCS) $(CPU_EXTRA_SRCS) \
 		$(TB_DIR)/verilator_xilinx_stubs.v \
 		$(TB_DIR)/tb_fpga_top_rom.cpp \
 		$(TB_DIR)/models/rom_patch_sets.h \
-		$(TB_DIR)/models/sd_card_spi.h
+		$(TB_DIR)/models/sd_card_spi.h \
+		| $(if $(filter m68k040,$(CPU)),check-cpu-dh)
 	@mkdir -p $(FPGA_TOP_ROM_MIG_BUILD)
 	$(VERILATOR) --cc --exe --build --assert --public-flat-rw \
 		$(if $(filter 1,$(WAVES)),--trace-fst,) \
