@@ -500,3 +500,15 @@ cannot reuse the registered-response binary. ON without the CPU hot door or
 simulated L2 must fail before compilation. Use separate build roots for paired
 experiments and pin the same generated CPU and ROM hashes in both arms. This
 is a test-harness selection change, not default enablement or a board build.
+
+For the CPU/L2 chase, optional `+l2_bus_trace=<path>` logs the CPU-facing hot
+AR acceptance and every RVALID cycle (including READY), plus accepted L2
+master DDR reads. Sample these signals before the clock edge and label them
+with that edge's post-tick `sim_time`, matching the retirement trace's time
+units (two ticks per system-clock cycle). The host joins the two traces at
+the ROM's second start/end marker pair. Track request FIFOs by AXI ID,
+including multi-beat and stalled responses; report first RVALID and first
+transfer separately and reject orphan/error responses or bad burst lengths.
+The trace is available only for the CPU040 + simulated L2 + hot-door build;
+requesting it in another build must fail explicitly. No production signals,
+ports, registers, or default logging are added.
