@@ -2,62 +2,66 @@
 
 ## Actual CPU plus L2 dependent chase (2026-10-02)
 
-**Marker correction:** the first run below used the legacy `+pc_dump_path`,
-whose `traceVec.pc` is the retiring uop's resume/next PC, not its instruction
-PC (`RobPlugin.driveCommit` / `commitPcs`). Therefore its claimed retirement
-windows and per-load-PC counts are superseded pending a rerun with
-`+macro_pc_dump_path`. The corrected parser rejects that legacy format.
-The raw AXI evidence remains valid independently: all 4095 bounded successive
-request intervals are exactly 16 cycles OFF and 15 ON, with response-to-next-AR
-exactly 10 cycles in both arms. The checked address sequences and zero-DDR
-observations remain evidence for those bus intervals. Do not use the older
-marker table as exact instruction-retirement timing. See
-`/tmp/codex-soc-chase-e3896db/recurrence-breakdown.json`.
+The corrected paired full-top ROM run uses frozen SoC `446abae` and identical
+generated CPU inputs from `63171ff62b253d10cba982b60aca36814bf95225`. Both
+Verilator builds and all four ROM runs passed. Only
+`L2_DH_R_FALL_THROUGH` changes between arms. CPU options include NB4/ring8,
+hot read door, D4 ordering, P1 early loads (An and Dn), P3/probe forwarding,
+probe-miss staging, early response, eager/preselected AR, dynamic release,
+speculative wakeup and LS-OoO; direct refill is OFF. Exact generation flags
+and file hashes are in the input manifest below.
 
-The paired full-top ROM run uses frozen SoC `e3896db` and identical generated
-CPU inputs from `63171ff62b253d10cba982b60aca36814bf95225`. Both Verilator
-builds and all four ROM runs passed. Only `L2_DH_R_FALL_THROUGH` changes
-between arms. CPU options include NB4/ring8, hot read door, D4 ordering,
-P1 early loads (An and Dn), P3/probe forwarding, probe-miss staging,
-early response, eager/preselected AR, dynamic release, speculative wakeup
-and LS-OoO; direct refill is OFF. Exact generation flags and file hashes
-are in the input manifest below.
+The dedicated `+macro_pc_dump_path` samples actual retiring instruction PCs
+before each edge, including both retirement lanes. The parser requires its
+versioned header. This corrects the earlier `e3896db` experiment's use of
+legacy `traceVec.pc` resume/next PCs. Those earlier marker-window measurements
+are superseded; their independently checked 16/15-cycle AXI request spacing
+was correct. The legacy raw artifacts remain at
+`/tmp/codex-soc-chase-e3896db/` for audit.
 
-| Hot R fall-through | L1 cycles / 128 hops | L2 cycles / 4096 hops | L2 cycles/hop | Accepted hot AR to first RVALID / transfer |
-| --- | ---: | ---: | ---: | --- |
-| OFF | 640 | 65535 | 15.999756 | 6 / 6 cycles for all 4096 requests |
-| ON | 640 | 61439 | 14.999756 | 5 / 5 cycles for all 4096 requests |
+| Hot R fall-through | L1 marker cycles / 128 hops | L2 marker cycles / 4096 hops | Consecutive L1 / L2 load-retirement spacing | Accepted hot AR to first RVALID / transfer |
+| --- | ---: | ---: | --- | --- |
+| OFF | 646 | 65541 | 5 / 16 cycles | 6 / 6 cycles for all 4096 requests |
+| ON | 646 | 61445 | 5 / 15 cycles | 5 / 5 cycles for all 4096 requests |
+
+Marker-window cycles/hop are 5.046875 for L1, 16.001221 for L2 OFF, and
+15.001221 for L2 ON. They include fixed marker overhead. The separate
+retirement-spacing histograms contain 127 L1 intervals and 4095 L2 intervals
+per arm, all exactly the values in the table. In both L2 arms, returned data
+to that load's retirement is exactly four cycles (4096 samples), and returned
+data to the next accepted hot AR is exactly ten cycles (4095 samples).
+These are actual observed endpoints, not inferred issue timestamps.
 
 Both measured L1 windows have zero hot reads and zero DDR reads. Both
-measured L2 windows have exactly 4096 hot reads/transfers and zero DDR
-reads. The ROM reaches its post-check pass PC in every run. Reanalysis with
-parser `d667639` also checks every measured L2 request address, in order,
-against all four laps of the generated Sattolo ring; it rejects a short
-repeated cycle, reordered accesses, missing requests, and wrong read shape.
-The two L2 address sequences have the same SHA-256:
+measured L2 windows have exactly 4096 hot reads/transfers and zero DDR reads.
+Every run reaches its post-check pass PC. The parser checks each measured L2
+request address, in order, against all four laps of the generated Sattolo
+ring, rejecting short repeated cycles, reordered accesses, missing requests,
+and wrong read shape. Both L2 address sequences have SHA-256
 `79510e223956378f424e61e694b9e5cdc8b0f9eeab84c894e33140b65516ade1`.
-The strengthened parser's host suite passes 4/4 tests. Parser reanalysis
-does not modify the frozen simulator or original input manifest.
+Host validation passes 4/4 tests, including legacy-trace rejection and
+corrupted-sequence controls.
 
-The end-to-end saving is exactly 4096 cycles for 4096 hops. L1 remains
-5.000 cycles/hop. The ON L2-over-L1 difference is therefore approximately
-**10 cycles**, not the requested six. This is an actual CPU/guard/L2 RTL
-simulation with a behavioral downstream memory, not board timing or a
-whole-program IPC result. It proves the response bypass's cycle saving;
-it does not prove mapped area or routed timing. The option remains OFF
-by default. The synthetic reset ROM also does not establish a full OS boot.
+The end-to-end saving is exactly 4096 cycles for 4096 hops. Steady L1 stays
+at five cycles; the ON L2-over-L1 difference is **ten cycles**, not the
+requested six. This is actual CPU/guard/L2 RTL simulation with behavioral
+downstream memory, not board timing or a whole-program IPC result. It proves
+the response bypass's cycle saving, not mapped area or routed timing. The
+option remains OFF by default. The synthetic reset ROM does not establish
+an OS boot.
 
-Artifacts under `/tmp/codex-soc-chase-e3896db/`:
+Artifacts under `/tmp/codex-soc-chase-446abae/`:
 
 - `input-manifest.json`: SoC/CPU provenance and frozen input hashes, all
   rechecked after both builds and simulations.
-- `results.json`: commands, exit codes, and original parser measurements.
-- `sequence-validation-results.json`: strengthened parser revision/hash,
-  original manifest hash, raw trace hashes, and all four rechecked results.
-- `ft{0,1}-{2,64}k.{pc,bus,log}`: retirement, AXI, and simulator evidence.
+- `results.json`: commands, exit codes and original corrected-parser results.
+- `retirement-validation-results.json`: parser `92a9abd` revision/hash,
+  input-manifest and raw-trace hashes, all four rechecked measurements, and
+  per-load retirement/AXI interval histograms.
+- `ft{0,1}-{2,64}k.{pc,bus,log}`: true macro retirement, AXI and simulator data.
 
-The sections below retain the earlier unit/integration experiments and
-their original narrower scopes.
+The sections below retain earlier unit/integration experiments and their
+original narrower scopes.
 
 Scope: SoC branch `codex/bandwidth-soc` after `3ad9018`, generated CPU from
 `m68k-core-040-ooo` commit `5577d139`. The CPU was generated in isolated
