@@ -2,6 +2,18 @@
 
 ## Actual CPU plus L2 dependent chase (2026-10-02)
 
+**Marker correction:** the first run below used the legacy `+pc_dump_path`,
+whose `traceVec.pc` is the retiring uop's resume/next PC, not its instruction
+PC (`RobPlugin.driveCommit` / `commitPcs`). Therefore its claimed retirement
+windows and per-load-PC counts are superseded pending a rerun with
+`+macro_pc_dump_path`. The corrected parser rejects that legacy format.
+The raw AXI evidence remains valid independently: all 4095 bounded successive
+request intervals are exactly 16 cycles OFF and 15 ON, with response-to-next-AR
+exactly 10 cycles in both arms. The checked address sequences and zero-DDR
+observations remain evidence for those bus intervals. Do not use the older
+marker table as exact instruction-retirement timing. See
+`/tmp/codex-soc-chase-e3896db/recurrence-breakdown.json`.
+
 The paired full-top ROM run uses frozen SoC `e3896db` and identical generated
 CPU inputs from `63171ff62b253d10cba982b60aca36814bf95225`. Both Verilator
 builds and all four ROM runs passed. Only `L2_DH_R_FALL_THROUGH` changes
