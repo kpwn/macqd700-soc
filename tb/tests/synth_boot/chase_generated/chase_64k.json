@@ -1,0 +1,28 @@
+{
+  "checksum": 2324096741,
+  "load_pcs": [
+    1073741978,
+    1073741980,
+    1073741982,
+    1073741984
+  ],
+  "measured_hops": 4096,
+  "measured_marker_occurrence": 2,
+  "nodes": 1024,
+  "ring_base": 1073807360,
+  "rom_sha256": "389ba6798998bd8b4aedcda37471363c286766d13e3ee02c04d809ef2ca9e3b8",
+  "size_bytes": 65536,
+  "symbols": {
+    "fail_pc": 1073741974,
+    "load_0": 1073741978,
+    "load_1": 1073741980,
+    "load_2": 1073741982,
+    "load_3": 1073741984,
+    "marker_end": 1073741990,
+    "marker_start": 1073741976,
+    "pass_pc": 1073741972,
+    "ring_data": 1073807360,
+    "start": 1073741832
+  },
+  "warm_hops": 1024
+}
