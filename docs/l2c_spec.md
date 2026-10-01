@@ -472,3 +472,12 @@ also check the actual buildinfo emission. `make -n synth` with explicit 0 and 1
 confirms forwarding into the Vivado command; no Vivado process was launched.
 These checks establish selection/provenance only. Paired physical results are
 still outstanding, and the default remains OFF.
+
+Synthesis-only comparisons also need a durable selection record: the current
+`fpga_top.buildinfo` is written only after full implementation. Before writing
+the synthesized checkpoint, emit `fpga_top.synth_selection` with the effective
+CPU/profile, target clock, hot-door selection, top-level generics, and the CPU
+experiment environment variables. Record the CPU source revision/dirty state
+and hashes of generated CPU input files. This record describes the inputs to
+synthesis; it is not a timing-closure or clean-source certificate. Keep the
+full-implementation buildinfo unchanged apart from the selected response knob.
