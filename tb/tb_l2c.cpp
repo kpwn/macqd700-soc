@@ -591,7 +591,7 @@ struct DhBurst {
     uint8_t  last_resp = 0;
     bool     any_decerr = false;
     bool     done = false;
-    uint64_t t_ar = 0, t_r0 = 0, t_rl = 0;
+    uint64_t t_ar = 0, t_rvalid0 = 0, t_r0 = 0, t_rl = 0;
 };
 static std::deque<std::shared_ptr<DhBurst>> dh_pending_issue;
 static std::shared_ptr<DhBurst>             dh_issuing;
@@ -630,6 +630,7 @@ struct DhFdStats {
     uint64_t victim_query_hit = 0;
 };
 static DhFdStats g_dhfd;
+static uint64_t g_last_cold_write_accept = 0;
 static DhFdStats dhfd_diff(const DhFdStats& n, const DhFdStats& t) {
     DhFdStats d;
     d.cycles = n.cycles - t.cycles;
@@ -719,6 +720,14 @@ static void dh_latch_edge() {
                 g_dh_stream_id = (g_dh_stream_id + 1) % g_dh_stream_nid;
         }
     }
+    // First presentation is distinct from first transfer if the requester
+    // backpressures R.  Both are measured from the accepted AR below.
+    if (dut->dh_axi_rvalid) {
+        auto it = dh_awaiting.find(dut->dh_axi_rid);
+        if (it != dh_awaiting.end() && !it->second.empty() &&
+            it->second.front()->t_rvalid0 == 0)
+            it->second.front()->t_rvalid0 = sim_time;
+    }
     if (dut->dh_axi_rvalid && dut->dh_axi_rready) {
         g_dh_r_beats++;
         const uint32_t id = dut->dh_axi_rid;
@@ -757,7 +766,10 @@ static void dh_sample_taps() {
     if (dut->dbg_acc_dh)    g_dhfd.acc_dh++;
     if (dut->dbg_acc_fetch) g_dhfd.acc_fetch++;
     if (dut->dbg_acc_lsu)   g_dhfd.acc_lsu++;
-    if (dut->dbg_acc_write) g_dhfd.acc_write++;
+    if (dut->dbg_acc_write) {
+        g_dhfd.acc_write++;
+        g_last_cold_write_accept = sim_time;
+    }
     if (dut->dbg_cold_avail)   g_dhfd.cold_avail++;
     if (dut->dbg_cold_starved) g_dhfd.cold_starved++;
     if (dut->dh_axi_arvalid) {
@@ -4983,6 +4995,103 @@ static bool test_dh_single_outstanding_parity() {
     return ok;
 }
 
+// AR-accept -> first RVALID is the latency relevant to a dependent CPU load.
+// The older 64 B parity row above divides total completion time by lines and
+// therefore includes the last three beats and host bookkeeping.  Use warmed,
+// disjoint L2 lines, one hot request at a time, and reject any downstream DDR
+// read in the measurement window so a miss cannot masquerade as a slow hit.
+static bool test_dh_first_beat_latency() {
+    bool ok = true;
+    DH_SKIP_IF_OFF("dh_first_beat_latency");
+    const bool old_always = g_perf_always_ready, old_force = g_mem_force_ready;
+    const int old_lat = g_ddr_latency_base, old_jit = g_ddr_latency_jitter;
+    const int old_gap = g_ddr_beat_gap_max;
+    g_perf_always_ready = true; g_mem_force_ready = true;
+    g_ddr_latency_base = 40; g_ddr_latency_jitter = 0; g_ddr_beat_gap_max = 0;
+
+    constexpr int N = 32;
+    const uint64_t hot_base = 0x0050'0000ull, write_base = 0x0060'0000ull;
+    for (int i = 0; i < N; i++) {
+        CHECK("first-beat hot line warmed",
+              do_read_check(hot_base + static_cast<uint64_t>(i) * LINE_BYTES, "first-beat hot warm"));
+        CHECK("first-beat cold-write line warmed",
+              do_read_check(write_base + static_cast<uint64_t>(i) * LINE_BYTES, "first-beat write warm"));
+    }
+    dh_quiesce();
+
+    for (int beats : {1, 4}) for (bool mixed : {false, true}) {
+        std::vector<uint64_t> valid_latency, transfer_latency;
+        bool exact = true, timed = true, no_backpressure = true, writes_ok = true;
+        int overlap_samples = 0;
+        const uint64_t mem_ar0 = g_dbg_ar_accepts;
+        const uint64_t cold_write0 = g_dhfd.acc_write;
+        const uint64_t hot_accept0 = g_dhfd.acc_dh;
+        for (int i = 0; i < N; i++) {
+            const uint64_t ha = hot_base + static_cast<uint64_t>(i) * LINE_BYTES;
+            const uint64_t wa = write_base + static_cast<uint64_t>(i) * LINE_BYTES;
+            uint32_t wid = 0;
+            if (mixed) wid = issue_write_full(wa, static_cast<uint64_t>(0x40 + i));
+            auto b = dh_issue(ha, beats);
+            if (!dh_wait(b, 20000)) { timed = false; break; }
+            if (mixed && g_last_cold_write_accept >= b->t_ar &&
+                g_last_cold_write_accept <= b->t_rvalid0) overlap_samples++;
+            timed &= b->t_ar > 0 && b->t_rvalid0 >= b->t_ar &&
+                     b->t_r0 >= b->t_rvalid0 && b->t_rl >= b->t_r0;
+            no_backpressure &= b->t_rvalid0 == b->t_r0;
+            exact &= b->last_resp == 0 && b->got.size() == static_cast<size_t>(beats);
+            for (int k = 0; k < beats && k < static_cast<int>(b->got.size()); k++)
+                exact &= std::memcmp(b->got[k].data(), &golden[ha + 16 * k], 16) == 0;
+            if (timed) {
+                valid_latency.push_back(b->t_rvalid0 - b->t_ar);
+                transfer_latency.push_back(b->t_r0 - b->t_ar);
+            }
+            dh_free(b);
+            if (mixed) {
+                if (!wait_write_done(wid, 20000)) { writes_ok = false; break; }
+                writes_ok &= w_done[wid]->resp_ok;
+                for (int j = 0; j < 16; j++)
+                    golden[wa + j] = static_cast<uint8_t>((0x40 + i + j) & 0xFF);
+                touched[wa] = true;
+                free_write(wid);
+            }
+        }
+        auto report = [&](const char* metric, std::vector<uint64_t> v) {
+            if (v.empty()) return;
+            std::sort(v.begin(), v.end());
+            const double median = (v[(v.size()-1)/2] + v[v.size()/2]) / 2.0;
+            printf("  L2 hot first-beat %-8s %d beat(s), %s: n=%zu min=%llu median=%.1f max=%llu cycles\n",
+                   metric, beats, mixed ? "cold-write mix" : "isolated", v.size(),
+                   (unsigned long long)v.front(), median, (unsigned long long)v.back());
+        };
+        report("RVALID", valid_latency);
+        report("R fire", transfer_latency);
+        CHECK("first-beat sample count and timestamps", timed && valid_latency.size() == N);
+        CHECK("first-beat warm responses are byte-exact", exact);
+        CHECK("first-beat test has no R backpressure", no_backpressure);
+        CHECK("first-beat samples did not access DDR", g_dbg_ar_accepts == mem_ar0);
+        CHECK("first-beat hot beats really entered L2",
+              g_dhfd.acc_dh - hot_accept0 == static_cast<uint64_t>(N * beats));
+        if (mixed) {
+            CHECK("cold writes completed with OKAY", writes_ok);
+            CHECK("cold writes contended at the shared L2 front door",
+                  g_dhfd.acc_write - cold_write0 >= N);
+            printf("  L2 hot first-beat cold-write overlap: %d/%d samples had a cold write accepted between hot AR and first RVALID\n",
+                   overlap_samples, N);
+            // Four hot beats retain front-door priority long enough that this
+            // one-write-per-request pattern can defer cold acceptance until
+            // after first R.  Report that as a finding; the 1-beat arm must
+            // prove real acceptance overlap rather than merely offered AW/W.
+            if (beats == 1)
+                CHECK("mixed first-beat sample actually overlaps cold writes",
+                      overlap_samples >= N / 2);
+        }
+        dh_quiesce();
+    }
+    g_perf_always_ready = old_always; g_mem_force_ready = old_force;
+    g_ddr_latency_base = old_lat; g_ddr_latency_jitter = old_jit; g_ddr_beat_gap_max = old_gap;
+    return ok;
+}
+
 
 // ═════════════════════════════════════════════════════════════════════════
 // P6W: THE HOT WRITE DOOR (l2c DW_PORT_EN, `make tb-l2c-dw`)
@@ -7459,6 +7568,7 @@ int main(int argc, char** argv) {
     run("dh_id_namespace_independent_of_lsu",
         test_dh_id_namespace_independent_of_lsu);
     run("dh_single_outstanding_parity",   test_dh_single_outstanding_parity);
+    run("dh_first_beat_latency",          test_dh_first_beat_latency);
     // ── P6W: the hot WRITE door.  Registered only in a DW_EN=1 build, so
     // the OFF builds' output files are byte-identical (not merely the same
     // PASS count) to the tree before P6W.

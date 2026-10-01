@@ -83,8 +83,25 @@ passes the shared A→Q→S2 lookup registers; a hit registers `hit_rsp_*`, and
 the hot R path passes a two-entry **registered-output** skid
 ([`l2c_ctrl.v`](../rtl/soc/l2c_ctrl.v), [`l2c.v`](../rtl/soc/l2c.v)).
 Arbitration, same-set hazards and response backpressure add variable waits.
-The requested L2-over-L1 ≤6-cycle first-use goal is therefore **unproven**
-by the current parity number.
+The new `dh_first_beat_latency` check timestamps accepted hot AR, first
+RVALID, and first R transfer with RREADY held high. It warms 32 disjoint
+lines, checks every returned byte, and rejects downstream DDR reads during
+measurement. The results from `make tb-l2c-dh` (79 pass, 0 fail) are:
+
+| Warm hit | Isolated AR→first RVALID / transfer | Mixed cold-write AR→first RVALID / transfer | Cold write accepted before first RVALID |
+| --- | --- | --- | --- |
+| 1 beat | 6 / 6 / 6 cycles (min/median/max) | 6 / 6 / 6 cycles | 32 / 32 samples |
+| 4 beats | 6 / 6 / 6 cycles | 6 / 6 / 6 cycles | 0 / 32 samples |
+
+The four-beat mixed arm still checks that all 32 cold writes enter the shared
+front door and finish with OKAY. Hot-burst priority defers their acceptance
+until after first RVALID, so that arm does not establish within-window write
+contention. The one-beat arm does. The measured six cycles encompass hot
+header capture, shared S0→A→Q→S2 lookup, registered hit response and
+registered-output R skid. They start at **accepted hot AR**, excluding CPU
+miss discovery, AR launch, refill handling, and dependent-instruction wakeup.
+Thus they do not prove the requested L2-over-L1 ≤6-cycle load-to-use goal;
+the 10.0-cycle parity row is completed-line throughput, a different endpoint.
 
 A concrete next latency experiment is a fall-through variant of the **hot R
 skid only**: when empty, forward the already-registered `hit_rsp_*` beat to
@@ -92,9 +109,9 @@ skid only**: when empty, forward the already-registered `hit_rsp_*` beat to
 beat and keeping the upstream `s_ready` independent of `dh_axi_rready`.
 That could remove one output register cycle on an uncontended hit. It risks
 an extra combinational route to the CPU, AXI payload instability or duplicate
-beats during an empty-to-stalled transition, and a timing regression. Before
-any RTL change, timestamp hot AR handshake, first RVALID/RREADY and RLAST
-for 1-beat and 4-beat warmed hits under isolated and contended traffic.
+beats during an empty-to-stalled transition, and a timing regression. The
+first-beat timestamp experiment above supplies the baseline for this proposal;
+the remaining CPU-side stages and registered timing boundaries need measurement.
 The proposal is falsified if the output skid is not a material first-beat
 component, or if backpressure tests or paired post-route timing regress.
 It needs an architecture-spec update and focused ready/valid, reset and
