@@ -3047,7 +3047,7 @@ $(FPGA_TOP_ROM_BUILD)/Vfpga_top: $(FPGA_TOP_RTL_SRCS) $(CPU_EXTRA_SRCS) \
 		$(CPU_EXTRA_SRCS) \
 		$(TB_DIR)/verilator_xilinx_stubs.v \
 		$(TB_DIR)/tb_fpga_top_rom.cpp \
-		-CFLAGS "-std=c++17 $(if $(filter m68k,$(CPU)),-DCPU_M68K,) $(if $(filter m68k040,$(CPU)),-DCPU_M68K040,) $(if $(filter 1,$(SIM_L2C_ENABLE)),-DSIM_L2C_ENABLE,) -I$(TB_DIR) -I$(TB_DIR)/models"
+		-CFLAGS "-std=c++17 $(if $(filter m68k,$(CPU)),-DCPU_M68K,) $(if $(filter m68k040,$(CPU)),-DCPU_M68K040,) $(if $(filter 1,$(SIM_L2C_ENABLE)),-DSIM_L2C_ENABLE,) $(if $(filter 1,$(CPU_AXI_DH)),-DCPU_AXI_DH,) -I$(TB_DIR) -I$(TB_DIR)/models"
 
 # fpga_top_rom_realboot: same fpga_top_rom harness, but WITHOUT the
 # FPGA_ROM_SIM boot bypass -- boot_fsm runs for real (cpu_rst/

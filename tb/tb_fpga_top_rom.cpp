@@ -685,10 +685,35 @@ static void irq_cycle_tick() {
     }
 }
 
+// Optional pre-edge AXI trace for the synthetic CPU/L2 chase. Times use the
+// same post-edge sim_time convention as the existing retirement PC trace.
+static FILE* g_l2_bus_trace_fp = nullptr;
+static std::string g_l2_bus_trace_path;
+static void trace_l2_bus_before_edge() {
+#if defined(CPU_M68K040) && defined(SIM_L2C_ENABLE) && defined(CPU_AXI_DH)
+    if (!g_l2_bus_trace_fp) return;
+    const auto* r = dut->rootp;
+    const auto t = static_cast<unsigned long long>(sim_time + 2);
+    if (r->fpga_top__DOT__dha_arvalid && r->fpga_top__DOT__dha_arready)
+        std::fprintf(g_l2_bus_trace_fp, "%llu AR %u 0x%08x %u %u %u\n", t,
+            unsigned(r->fpga_top__DOT__dha_arid), unsigned(r->fpga_top__DOT__dha_araddr),
+            unsigned(r->fpga_top__DOT__dha_arlen), unsigned(r->fpga_top__DOT__dha_arsize),
+            unsigned(r->fpga_top__DOT__dha_arburst));
+    if (r->fpga_top__DOT__dha_rvalid)
+        std::fprintf(g_l2_bus_trace_fp, "%llu RV %u %u %u %u\n", t,
+            unsigned(r->fpga_top__DOT__dha_rid), unsigned(r->fpga_top__DOT__dha_rresp),
+            unsigned(r->fpga_top__DOT__dha_rlast), unsigned(r->fpga_top__DOT__dha_rready_gated));
+    if (r->fpga_top__DOT__l2c_m_arvalid && r->fpga_top__DOT__l2c_m_arready)
+        std::fprintf(g_l2_bus_trace_fp, "%llu DDR_AR 0x%08x %u\n", t,
+            unsigned(r->fpga_top__DOT__l2c_m_araddr), unsigned(r->fpga_top__DOT__l2c_m_arlen));
+#endif
+}
+
 static void tick() {
     dut->sys_clk_p = 0;
     dut->sys_clk_n = 1;
     dut->eval();
+    trace_l2_bus_before_edge();
 #if VM_TRACE_FST
     if (g_wave_open && g_fst) g_fst->dump(sim_time);
 #endif
@@ -2458,6 +2483,8 @@ int main(int argc, char** argv) {
             sd_image_path = a.substr(10);
         else if (a.rfind("+sd_card_image=", 0) == 0)
             sd_card_image_path = a.substr(15);
+        else if (a.rfind("+l2_bus_trace=", 0) == 0)
+            g_l2_bus_trace_path = a.substr(14);
         else if (a.rfind("+c96_probe_at_pc=", 0) == 0) {
             g_c96_probe_pc = std::stoul(a.substr(17), nullptr, 0);
             if (g_c96_probe_max == 0) g_c96_probe_max = 64;
@@ -2792,6 +2819,18 @@ int main(int argc, char** argv) {
     // bisect "where did the CPU jump to a wild PC?" — emits up to N entries
     // (default 10000) of `<retired> <sim_time> <pc>` text.  Stop sampling
     // when the limit is hit; the rest of the run continues normally.
+    if (!g_l2_bus_trace_path.empty()) {
+#if defined(CPU_M68K040) && defined(SIM_L2C_ENABLE) && defined(CPU_AXI_DH)
+        g_l2_bus_trace_fp = std::fopen(g_l2_bus_trace_path.c_str(), "w");
+        if (!g_l2_bus_trace_fp) {
+            std::fprintf(stderr, "[fpga-rom] cannot open l2_bus_trace=%s\n", g_l2_bus_trace_path.c_str());
+            return 1;
+        }
+#else
+        std::fprintf(stderr, "[fpga-rom] l2_bus_trace requires CPU040, SIM_L2C_ENABLE=1 and CPU_AXI_DH=1\n");
+        return 1;
+#endif
+    }
     FILE* pc_dump_fp = nullptr;
     uint64_t pc_dump_count = 0;
     uint32_t pc_dump_prev = 0;
@@ -4587,6 +4626,10 @@ int main(int argc, char** argv) {
 #endif
         std::fprintf(stderr, "[fpga-rom] pc_dump wrote %llu entries to %s\n",
                      (unsigned long long)pc_dump_count, pc_dump_path.c_str());
+    }
+    if (g_l2_bus_trace_fp) {
+        std::fclose(g_l2_bus_trace_fp);
+        g_l2_bus_trace_fp = nullptr;
     }
     if (audio_dump_fp) {
         std::fflush(audio_dump_fp);
