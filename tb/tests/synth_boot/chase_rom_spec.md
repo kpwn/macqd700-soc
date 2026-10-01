@@ -82,3 +82,27 @@ dedicated macro-PC tap. The independently checked bus recurrence remains
 valid: 4096 ordered Sattolo hot reads, zero measured DDR reads, and a 16-cycle
 OFF / 15-cycle ON hot-AR recurrence in the 64 KiB case. Do not label that bus
 recurrence as CPU issue-to-issue or retirement latency.
+
+## Independent four-chain warm-L2 experiment (2026-10-02)
+
+A separate `parallel_chase_rom.py` benchmark keeps the single-chain benchmark
+unchanged. It partitions the same 64 KiB, 64-byte-stride table into four
+16 KiB Sattolo cycles, addressed by A0..A3. Each loop issues one simple
+`MOVEA.L (An),An` per chain, with D7 controlling the loop and A7 retained as
+stack. Warmup traverses every chain once; measurement traverses each four
+times (4096 total pointer loads). Both invocations check all four final
+pointers; a whole-table checksum follows measurement. Translation/cache setup
+and true macro-retirement markers match the existing chase ROM.
+
+Acceptance uses the existing strict macro trace parser, ROM hash, and AXI
+burst checker. Requests from different chains may interleave in any order;
+within each chain, every accepted measured address must equal its next
+expected pointer and advance that chain's Sattolo state. Require exactly
+1024 reads per chain, 4096 total single-beat 16-byte hot reads/responses,
+zero measured DDR reads, final closure of all chains, and guest PASS. No
+fixed global request order is assumed. Reject unknown/out-of-range/misaligned
+addresses, skipped/repeated chain steps, missing transactions, or wrong ROM.
+Report aggregate cycles/bytes per cycle and maximum outstanding measured hot
+reads; aggregate retirement spacing is not dependent load-to-use latency.
+This ROM provides actual CPU/guard/L2 simulation evidence, not mapped area,
+routed timing, board execution, or proof of general application IPC.
