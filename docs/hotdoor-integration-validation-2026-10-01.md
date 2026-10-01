@@ -156,3 +156,14 @@ dynamic-release ON socket passes basic and shipping full-top lint; see
 `/tmp/codex-soc-hot-integration-6086cf4/{manifest,results}.json`. That lint
 predates the response-bypass RTL and must not be cited as its integration
 gate. No live board or owner worktree was modified.
+
+SoC `9419a10` now passes paired shipping full-top lint with
+`L2_DH_R_FALL_THROUGH=0/1` and the same actual generated CPU `46413280`
+artifact in both arms. VIO, JTAG AXI, disabled SD JTAG writer, hot read door,
+NB and D4 selections are held identical. A separate negative configuration
+with the bypass selected but no hot door fails specifically at the
+`L2_DH_R_FALL_THROUGH_requires_L2C_DH_PORT` elaboration guard. Inputs,
+commands and results: `/tmp/codex-soc-hot-integration-9419a10/`.
+This closes the response-bypass binding check under the SoC's existing lint
+warning suppressions, not end-to-end functional or timing acceptance. No
+board default, synthesis setting or live board state changed.
