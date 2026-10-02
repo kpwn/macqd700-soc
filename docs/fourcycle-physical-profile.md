@@ -27,6 +27,11 @@ the real MIG checkpoint, and the board debug/peripheral settings. This profile
 does not depend on the temporary JSON file at build time.
 
 The four-cycle latency and correctness gates were validated on the frozen
-experiment sources. The 200 MHz routed timing report and board boot/throughput
-gates are pending. Keep this profile opt-in until those reports are reviewed.
+experiment sources. Both physical builds produced bitstreams, but neither is a
+timing-clean production result. At 100 MHz, routed setup WNS was +0.059 ns;
+the real MIG had a pulse-width violation of -0.068 ns. At 200 MHz, routed setup
+WNS was -1.785 ns and TNS was -30,717.590 ns across 45,974 failing endpoints.
+The 200 MHz build remains opt-in and must not be loaded as a timing-passing
+image. These measurements are from the frozen agent-81 CPU source and the
+`codex-physical-100-200` SoC worktree's `build/fourcycle-{100,200}mhz/reports`.
 The target does not program the FPGA.
