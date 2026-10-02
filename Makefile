@@ -3647,6 +3647,34 @@ impl-split: $(if $(filter m68k040,$(CPU)),$(CPU_M68K040_V)) check-synth-sources 
 	flock -E 75 $(VIVADO_LOCK) -c '$(VIVADO_RUN_ENV) $(VIVADO) -mode batch -source $(SYNTH_DIR)/resume_from_place.tcl -tclargs $(VIVADO_IMPL_DIR) $${ROUTE_DIRECTIVE:-AggressiveExplore}' \
 	  || { status=$$?; echo "ERROR: route stage failed ($$status); place.dcp retained for a retry with another directive"; exit $$status; }
 
+# Exact opt-in CPU+SoC selection from the frozen 2026-10-02 four-cycle physical
+# experiment. Only the source tree, output directory, and frequency are inputs;
+# all performance and board features below are pinned. This target never runs
+# from a normal `impl` invocation. See docs/fourcycle-physical-profile.md.
+FOURCYCLE_IMPL_DIR ?= $(BUILD_DIR)/fourcycle-$(TARGET_FREQ_MHZ)mhz
+.PHONY: impl-fourcycle
+impl-fourcycle:
+	$(MAKE) impl-split CPU=m68k040 \
+	  CPU040_SRC_DIR="$(CPU040_SRC_DIR)" VIVADO_IMPL_DIR="$(FOURCYCLE_IMPL_DIR)" \
+	  TARGET_FREQ_MHZ="$(TARGET_FREQ_MHZ)" CORE_CLK_HZ="$(subst _,,$(CORE_CLK_HZ))" \
+	  SBT_OPTS='-Xmx6g -Xss16m' HEAVY_POLL_S=5 \
+	  CPU_IPC_PROFILE=throughput-v2 CPU_DEBUG_PROFILE=full DBG_BUILD_ID=0 PERF_DETAIL_ENABLE=0 \
+	  CPU_AXI_DH=1 CPU_DCACHE_NONBLOCKING=1 CPU_INHIBITED_FULL_BARRIER=1 \
+	  CPU_DCACHE_MSHRS=4 CPU_LS_LOAD_RING_DEPTH=8 CPU_LS_P1_EARLY_LOAD=1 \
+	  CPU_LS_P3_FAST_LOAD=1 CPU_DCACHE_EARLY_PROBE_LINE_FORWARD=1 \
+	  CPU_DCACHE_NB_EARLY_RESPONSE=1 CPU_DCACHE_NB_EAGER_AR=1 \
+	  CPU_DCACHE_NB_PRESELECT_AR=1 CPU_DCACHE_NB_DYNAMIC_RELEASE=1 \
+	  CPU_DCACHE_NB_PROBE_MISS_STAGE=1 CPU_DCACHE_DIRECT_REFILL=0 \
+	  LS_OOO_ISSUE=1 SPEC_LOAD_WAKEUP=1 CPU_AXI_DH_AR_FALL_THROUGH=1 \
+	  CPU_LS_FOUR_CYCLE_L1=1 L2_DH_R_FALL_THROUGH=1 NO_INCREMENTAL=1 \
+	  USE_REAL_MIG=1 REAL_FPGA_BUILD=1 CORE_MMCM=1 CORE_CLK_DIVIDE=1 \
+	  PB_CLK_HZ=50000000 VIDEO_SMOKE=0 BOOT_ROM_SECTORS=2048 \
+	  ENABLE_VIO=1 ENABLE_JTAG_AXI=1 ENABLE_ILA=0 ENABLE_PCIE_XDMA=0 \
+	  ETH_ENABLE=1 ETH_ICMP_RESPONDER=0 ETH_DEBUG_ENABLE=0 \
+	  L2C_ENABLE=1 VRAM_IN_DDR=1 \
+	  DDR4_MIG_DCP=/home/qwertyoruiop/macqd700-soc/build/ddr4_mig/design_1_ddr4_0_1.dcp \
+	  ROUTE_DIRECTIVE=AggressiveExplore
+
 .PHONY: incremental-status
 incremental-status:
 	@ref="$(INCREMENTAL_REF_DCP)"; \
