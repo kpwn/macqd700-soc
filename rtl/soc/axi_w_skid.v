@@ -33,7 +33,7 @@
 // plain register output, so the two cones are cut apart and each is timed
 // on its own.
 //
-// THROUGHPUT IS UNCHANGED.  `s_wready = !skd_v` is fully registered (it
+// THROUGHPUT IS UNCHANGED.  `s_wready` ("FIFO not full", see axi_pipe2) is fully registered (it
 // does NOT look at `m_wready`), which is the entire point; the classic
 // cost of that is one bubble when a stalled slice drains, and this design
 // pays it only on the cycle the skid entry moves to the output register.
@@ -92,43 +92,26 @@ module axi_w_skid #(
     localparam PAY_W = DATA_WIDTH + STRB_WIDTH + 1;
 
     wire [PAY_W-1:0] s_pay = {s_wlast, s_wstrb, s_wdata};
+    wire [PAY_W-1:0] out_pay;
 
-    reg [PAY_W-1:0] out_pay, skd_pay;
-    reg             out_v,   skd_v;
+    // 2026-10-06 (200 MHz FMax): the storage is now axi_pipe2, a two-entry
+    // pointer FIFO, instead of an output register + skid register.  The old
+    // shape loaded its 2 x 145 payload flops on `!out_v || m_wready`, so the
+    // slave's WREADY -- for u_s0_w_slice that is l2c_ctrl's s_wready, the
+    // tail of the whole front-door accept cone -- fanned out to ~290 CE
+    // pins (u_s0_w_slice/out_pay/CE + skd_pay/CE: ~287 failing endpoints).
+    // In axi_pipe2 a payload slot loads only from REGISTERED state (the slot
+    // is empty), and m_wready reaches just the read pointer and two
+    // occupancy flops.  Cycle behaviour is identical: capacity 2, upstream
+    // ready = "not full" (registered, no reference to m_wready), a beat
+    // accepted on edge T is presented downstream from T+1.
+    axi_pipe2 #(.WIDTH(PAY_W)) u_q (
+        .clk(clk), .rst(rst),
+        .s_data(s_pay), .s_valid(s_wvalid), .s_ready(s_wready),
+        .m_data(out_pay), .m_valid(m_wvalid), .m_ready(m_wready)
+    );
 
-    // The whole reason this module exists: REGISTERED, and with no
-    // reference to m_wready.  Do not "optimise" this into
-    // `!skd_v || m_wready` -- that re-creates the cross-module loop.
-    assign s_wready = !skd_v;
-
-    assign m_wvalid = out_v;
     assign {m_wlast, m_wstrb, m_wdata} = out_pay;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            out_v <= 1'b0;
-            skd_v <= 1'b0;
-        end else begin
-            if (!out_v || m_wready) begin
-                // Output register is free (or drains this cycle): refill it
-                // from the skid if the skid holds anything, else straight
-                // from the upstream beat we are accepting this cycle.
-                if (skd_v) begin
-                    out_v   <= 1'b1;
-                    out_pay <= skd_pay;
-                    skd_v   <= 1'b0;
-                end else begin
-                    out_v   <= s_wvalid;
-                    out_pay <= s_pay;
-                end
-            end else if (s_wvalid && !skd_v) begin
-                // Output register is stalled but we advertised s_wready, so
-                // this beat has been handed to us and must be kept.
-                skd_v   <= 1'b1;
-                skd_pay <= s_pay;
-            end
-        end
-    end
 
     // synthesis translate_off
     // AXI payload stability: once WVALID is asserted, WDATA/WSTRB/WLAST may
@@ -152,6 +135,69 @@ module axi_w_skid #(
     end
     // synthesis translate_on
 
+endmodule
+
+// axi_pipe2 -- generic two-entry valid/ready register FIFO (one AXI channel).
+//
+// Same contract as the classic output-register + skid buffer pair: full
+// throughput, capacity two, s_ready is a REGISTER ("not full") that never
+// looks at m_ready, m_valid is a REGISTER, and a beat accepted on edge T is
+// offered downstream from T+1.  Beats leave in arrival order, unmodified.
+//
+// What differs is WHERE the downstream ready lands.  Slots are written only
+// while they are empty -- a decision made from registered pointers alone --
+// and the head is selected by a registered read pointer, so m_ready drives
+// only `rp`, `full_q` and `nemp_q`, never a payload clock enable.  The price
+// is one 2:1 mux (select = a flop) on m_data.
+//
+// Payload stability (AXI): while m_valid && !m_ready, rp holds and slot rp
+// is occupied, and an occupied slot is never written, so m_data is stable.
+module axi_pipe2 #(
+    parameter WIDTH = 8
+) (
+    input  wire             clk,
+    input  wire             rst,
+    input  wire [WIDTH-1:0] s_data,
+    input  wire             s_valid,
+    output wire             s_ready,
+    output wire [WIDTH-1:0] m_data,
+    output wire             m_valid,
+    input  wire             m_ready
+);
+    reg [WIDTH-1:0] slot0, slot1;
+    reg wp, rp, full_q, nemp_q;
+
+    assign s_ready = !full_q;
+    assign m_valid = nemp_q;
+    assign m_data  = rp ? slot1 : slot0;
+
+    wire push = s_valid && !full_q;
+    wire pop  = nemp_q && m_ready;
+
+    // Write the slot at wp whenever the FIFO is not full: with count 0 both
+    // slots are free, with count 1 the free slot is exactly wp (= !rp).  A
+    // write without s_valid is harmless (the slot stays free), so the enable
+    // needs no input-side term either.
+    always @(posedge clk) begin
+        if (!full_q && !wp) slot0 <= s_data;
+        if (!full_q &&  wp) slot1 <= s_data;
+    end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            wp <= 1'b0; rp <= 1'b0; full_q <= 1'b0; nemp_q <= 1'b0;
+        end else begin
+            if (push) wp <= !wp;
+            if (pop)  rp <= !rp;
+            // count' = count + push - pop, with count in {0,1,2}:
+            //   full'  = count'==2,  nemp' = count'!=0
+            case ({push, pop})
+                2'b10: begin full_q <= nemp_q; nemp_q <= 1'b1; end
+                2'b01: begin full_q <= 1'b0;   nemp_q <= full_q; end
+                default: ;
+            endcase
+        end
+    end
 endmodule
 
 `default_nettype wire

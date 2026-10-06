@@ -116,6 +116,40 @@ module q700_sonic_tx #(
     reg [6:0] stream_byte;
     reg [511:0] stream_shift;
     reg failed;
+    // 2026-10-06 (200 MHz FMax) -- REGISTERED PAYLOAD REQUEST.  The payload
+    // request used to be computed live: issue_fragment -> fragment_len[]
+    // (LUTRAM) -> 16-bit subtract -> 64-clamp -> dma_req_valid/len/addr, and
+    // from there through dma_engine's round-robin pick into every client's
+    // req_ready, the engine's queue writes and q700_sonic_rx's frame BRAM
+    // enables, plus chunk_len[]'s 336 CE pins (u_q700_sonic_tx/issue_fragment:
+    // 375 failing paths, worst -0.582 ns).  Now the request is computed into
+    // pay_*_q and presented from those registers, so dma_req_valid in
+    // ST_PAYLOAD is a flop.  Back-to-back issue is kept: while a request is
+    // presented, the logic already computes the request for the coordinates
+    // that FOLLOW it (which depend only on registers -- pay_lastfrag_q,
+    // issue_fragment, issue_offset), and the fire edge loads that.  Cost:
+    // one compute cycle on entry to ST_PAYLOAD (and after a refused/invalid
+    // computation), i.e. +1 cycle per frame.
+    reg pay_v_q;                // pay_* hold the request for (issue_fragment, issue_offset)
+    reg [31:0] pay_addr_q;
+    reg [6:0]  pay_len_q;
+    reg        pay_lastfrag_q;  // this chunk ends its fragment
+    // chunk_len[] is written one cycle AFTER the request fire, from
+    // registers, so its CE no longer carries dma_req_ready.  ST_COLLECT waits
+    // for !cl_wr_q, so every entry is written before streaming reads it.
+    reg        cl_wr_q;
+    reg [5:0]  cl_idx_q;
+    reg [6:0]  cl_len_q;
+    // Streaming bookkeeping as REGISTERED flags (2026-10-06, 200 MHz FMax:
+    // stream_chunk -> chunk_len[stream_chunk] 48:1 mux -> compare ->
+    // stream_shift's 512 CE/mux pins and the MAC CDC FIFO's tlast/write,
+    // 500+ failing paths).  Invariants, asserted in simulation below:
+    //   s_len_q   == chunk_len[stream_chunk]
+    //   s_lastb_q == (stream_byte + 1 == chunk_len[stream_chunk])
+    //   s_lastc_q == (stream_chunk + 1 == total_chunks)
+    reg [6:0]  s_len_q;
+    reg        s_lastb_q;
+    reg        s_lastc_q;
     integer k;
 
     function automatic [15:0] descriptor_word;
@@ -130,12 +164,20 @@ module q700_sonic_tx #(
         end
     endfunction
 
+    // Coordinates the payload request is computed for: the current ones
+    // while no request is held, else the ones that follow the held request.
+    wire [4:0]  cmp_fragment = (pay_v_q && pay_lastfrag_q) ? issue_fragment + 1'b1 : issue_fragment;
+    wire [15:0] cmp_offset   = !pay_v_q ? issue_offset :
+                               (pay_lastfrag_q ? 16'd0 : issue_offset + 16'd64);
+    wire [5:0]  cmp_chunks   = pay_v_q ? chunks_issued + 1'b1 : chunks_issued;
     wire [15:0] current_fragment_remaining =
-        fragment_len[issue_fragment] - issue_offset;
+        fragment_len[cmp_fragment] - cmp_offset;
     wire [6:0] next_chunk_len =
         (current_fragment_remaining > 16'd64) ? 7'd64 :
                                                 current_fragment_remaining[6:0];
-    wire payload_req_fire = (state == ST_PAYLOAD) && dma_req_valid && dma_req_ready;
+    wire payload_req_fire = (state == ST_PAYLOAD) && pay_v_q && dma_req_ready;
+    wire [5:0] stream_chunk_nx = stream_chunk + 1'b1;
+    wire [6:0] chunk_len_nx    = chunk_len[stream_chunk_nx];
     wire payload_rsp = dma_rsp_valid && (dma_rsp_tag < MAX_CHUNKS);
     wire [15:0] link_rsp_word = descriptor_word(dma_rsp_rdata, 0, wide_desc);
     // TDA layout is status, config, packet size, fragment count.  The
@@ -147,9 +189,7 @@ module q700_sonic_tx #(
     assign dma_rsp_ready = 1'b1;
     assign tx_axis_tvalid = (state == ST_STREAM);
     assign tx_axis_tdata = stream_shift[7:0];
-    assign tx_axis_tlast = (state == ST_STREAM) &&
-                           (stream_chunk == total_chunks-1'b1) &&
-                           (stream_byte == chunk_len[stream_chunk]-1'b1);
+    assign tx_axis_tlast = (state == ST_STREAM) && s_lastc_q && s_lastb_q;
     assign tx_cpl_ready = (state == ST_CPL);
     assign dbg_state = state;
     assign dbg_descriptor_addr = descriptor_addr;
@@ -184,13 +224,10 @@ module q700_sonic_tx #(
                 dma_req_valid = 1'b1;
             end
             ST_PAYLOAD: begin
-                if ((issue_fragment < fragment_count) &&
-                    (chunks_issued < MAX_CHUNKS)) begin
-                    dma_req_addr = fragment_addr[issue_fragment] + issue_offset;
-                    dma_req_len = next_chunk_len;
-                    dma_req_tag = chunks_issued;
-                    dma_req_valid = (next_chunk_len != 0);
-                end
+                dma_req_addr = pay_addr_q;
+                dma_req_len = pay_len_q;
+                dma_req_tag = chunks_issued;
+                dma_req_valid = pay_v_q;
             end
             ST_STATUS_REQ: begin
                 dma_req_addr = descriptor_addr;
@@ -224,9 +261,14 @@ module q700_sonic_tx #(
             done_tps <= 16'd0;
             done_tfc <= 16'd0;
             chunk_read_addr <= 0;
+            pay_v_q <= 1'b0;
+            cl_wr_q <= 1'b0;
             for (k = 0; k < MAX_CHUNKS; k = k + 1)
                 chunk_len[k] <= 7'd0;
         end else begin
+            cl_wr_q <= 1'b0;
+            if (cl_wr_q)
+                chunk_len[cl_idx_q] <= cl_len_q;
             if (payload_rsp) begin
                 chunks_received <= chunks_received + 1'b1;
                 if (dma_rsp_status != 0 || dma_rsp_write)
@@ -284,6 +326,7 @@ module q700_sonic_tx #(
                         chunks_received <= 0;
                         total_chunks <= 0;
                         chunk_read_addr <= 0;
+                        pay_v_q <= 1'b0;
                         state <= ST_PAYLOAD;
                     end else begin
                         fragment_index <= fragment_index + 1'b1;
@@ -291,28 +334,49 @@ module q700_sonic_tx #(
                     end
                 end
                 ST_PAYLOAD: begin
-                    if (payload_req_fire) begin
-                        chunk_len[chunks_issued] <= next_chunk_len;
+                    if (!pay_v_q || payload_req_fire) begin
+                        // Load the request for cmp_* (see above).  Same
+                        // guards as the old live request: nothing is
+                        // offered past the last fragment, past MAX_CHUNKS,
+                        // or for a zero length.
+                        pay_addr_q     <= fragment_addr[cmp_fragment] + cmp_offset;
+                        pay_len_q      <= next_chunk_len;
+                        pay_lastfrag_q <= (current_fragment_remaining <= 16'd64);
+                        pay_v_q        <= (cmp_fragment < fragment_count) &&
+                                          (cmp_chunks < MAX_CHUNKS) &&
+                                          (next_chunk_len != 0);
+                    end
+                    if (!pay_v_q) begin
+                        if ((issue_fragment < fragment_count) &&
+                            (chunks_issued == MAX_CHUNKS)) begin
+                            failed <= 1'b1;
+                            state <= ST_DONE;
+                        end
+                    end else if (payload_req_fire) begin
+                        cl_wr_q  <= 1'b1;
+                        cl_idx_q <= chunks_issued;
+                        cl_len_q <= pay_len_q;
                         chunks_issued <= chunks_issued + 1'b1;
                         total_chunks <= chunks_issued + 1'b1;
-                        if (current_fragment_remaining <= 16'd64) begin
+                        if (pay_lastfrag_q) begin
                             issue_fragment <= issue_fragment + 1'b1;
                             issue_offset <= 0;
                             if (issue_fragment + 1'b1 == fragment_count)
                                 state <= ST_COLLECT;
                         end else issue_offset <= issue_offset + 16'd64;
-                    end else if ((issue_fragment < fragment_count) &&
-                                 (chunks_issued == MAX_CHUNKS)) begin
-                        failed <= 1'b1;
-                        state <= ST_DONE;
                     end
                 end
                 ST_COLLECT: begin
-                    if (chunks_received == total_chunks) begin
+                    // !cl_wr_q: the last chunk's length lands in chunk_len[]
+                    // on the edge after its request fired (see cl_wr_q).
+                    if ((chunks_received == total_chunks) && !cl_wr_q) begin
                         if (failed) state <= ST_DONE;
                         else begin
                             stream_chunk <= 0;
                             stream_byte <= 0;
+                            s_len_q   <= chunk_len[0];
+                            s_lastb_q <= (chunk_len[0] == 7'd1);
+                            s_lastc_q <= (total_chunks == 6'd1);
 `ifdef SONIC_TX_MUTANT_NO_PRIME
                             stream_shift <= chunk_read_data;
                             chunk_read_addr <= 1;
@@ -334,18 +398,22 @@ module q700_sonic_tx #(
                             state <= ST_STREAM;
                 end
                 ST_STREAM: if (tx_axis_tvalid && tx_axis_tready) begin
-                    if (stream_byte + 1'b1 == chunk_len[stream_chunk]) begin
+                    if (s_lastb_q) begin
                         stream_byte <= 0;
-                        if (stream_chunk + 1'b1 == total_chunks)
+                        if (s_lastc_q)
                             state <= ST_CPL;
                         else begin
-                            stream_chunk <= stream_chunk + 1'b1;
+                            stream_chunk <= stream_chunk_nx;
                             stream_shift <= chunk_read_data;
                             chunk_read_addr <= stream_chunk + 2'd2;
+                            s_len_q   <= chunk_len_nx;
+                            s_lastb_q <= (chunk_len_nx == 7'd1);
+                            s_lastc_q <= (stream_chunk + 2'd2 == total_chunks);
                         end
                     end else begin
                         stream_byte <= stream_byte + 1'b1;
                         stream_shift <= {8'd0, stream_shift[511:8]};
+                        s_lastb_q <= (stream_byte + 2'd2 == s_len_q);
                     end
                 end
                 ST_CPL: if (tx_cpl_valid) state <= ST_STATUS_REQ;
@@ -413,6 +481,16 @@ module q700_sonic_tx #(
     end
 
 `ifndef SYNTHESIS
+    // The registered streaming flags must equal the expressions they replaced.
+    always @(posedge clk) if (!rst && state == ST_STREAM) begin
+        if ((s_len_q != chunk_len[stream_chunk]) ||
+            (s_lastb_q != (stream_byte + 1'b1 == chunk_len[stream_chunk])) ||
+            (s_lastc_q != (stream_chunk + 1'b1 == total_chunks))) begin
+            $display("Q700_SONIC_TX ASSERT: registered stream flags desynced (chunk=%0d byte=%0d len=%0d/%0d)",
+                     stream_chunk, stream_byte, s_len_q, chunk_len[stream_chunk]);
+            $fatal(1);
+        end
+    end
     initial begin
         if (MAX_CHUNKS > 63 || MAX_CHUNKS < 1)
             $error("q700_sonic_tx MAX_CHUNKS must be 1..63");

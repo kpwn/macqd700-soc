@@ -158,16 +158,56 @@ module dma_engine #(
                     swap32_strb[w*4 +: 4] = {b[w*4], b[w*4+1], b[w*4+2], b[w*4+3]};
         end
     endfunction
-    wire [DATA_WIDTH-1:0] m_rdata_g = swap32_data(m_rdata);
+    // ── AR / AW / R register slices (2026-10-06, 200 MHz FMax) ────────
+    //
+    // The AR and AW payloads were computed live from the queue heads --
+    // rq_rp/wq_aw_rp -> wq_addr/wq_len distributed RAMs -> beat-count adder
+    // and narrow test -> m_ar*/m_aw* -> the crossbar's slot FSM
+    // (u_dma_engine/wq_aw_rp -> u_xbar/ws_state/ws_len/ws_wbeats..., and
+    // rq_rp -> u_xbar/rs_*).  The R channel's way in was equally deep:
+    // MIG read FIFO -> crossbar R mux -> byte-lane select/shift/mask ->
+    // rsp_rdata_q (~400 failing endpoints in one routed run).  Each channel
+    // now passes through an axi_pipe2 (see axi_w_skid.v): full throughput,
+    // registered valid/payload toward the far side, registered ready toward
+    // the near side, beats in order.  COST: one cycle of latency on AR, on
+    // AW and on R.  PROTOCOL: the engine's issue events (r_issue/aw_issue)
+    // are now the handshakes INTO the slices, which is where the ID is
+    // allocated and the queue head retired -- the slice then carries exactly
+    // that AR/AW, unmodified, to the crossbar, and AXI valid/payload
+    // stability toward the crossbar is the slice's, independent of the
+    // engine's arbitration.  W still trails its AW: a W beat cannot enter
+    // the W slice before the cycle after its AW entered the AW slice
+    // (wq_issued_count is registered), so with equal slice latency the
+    // crossbar never sees W before AW from this master.  An AR/R or AW/B
+    // response can only follow the slice's own delivery of the request, so
+    // the id_live bookkeeping (set at r_issue/aw_issue) still precedes it.
+    wire [ID_WIDTH-1:0] i_rid; wire [DATA_WIDTH-1:0] i_rdata;
+    wire [1:0] i_rresp; wire i_rlast, i_rvalid, i_rready;
+    wire [DATA_WIDTH-1:0] m_rdata_g = swap32_data(i_rdata);
 
-    assign m_arid={{(ID_WIDTH-IW){1'b0}},free_id};
-    assign m_araddr=rq_addr[rq_rp];
-    assign m_arlen={1'b0,rq_beats}-1'b1; assign m_arsize=rq_narrow?3'd0:AXI_SIZE; assign m_arburst=2'b01;
-    assign m_arvalid=select_r;
-    assign m_awid={{(ID_WIDTH-IW){1'b0}},free_id};
-    assign m_awaddr=wq_addr[wq_aw_rp];
-    assign m_awlen={1'b0,wq_aw_beats}-1'b1; assign m_awsize=wq_aw_narrow?3'd0:AXI_SIZE; assign m_awburst=2'b01;
-    assign m_awvalid=select_w;
+    localparam integer AX_W = ID_WIDTH+ADDR_WIDTH+8+3+2;
+    wire ar_c_ready, aw_c_ready;
+    wire [AX_W-1:0] ar_c_pay = {{{(ID_WIDTH-IW){1'b0}},free_id}, rq_addr[rq_rp],
+                                {1'b0,rq_beats}-1'b1, rq_narrow?3'd0:AXI_SIZE, 2'b01};
+    wire [AX_W-1:0] aw_c_pay = {{{(ID_WIDTH-IW){1'b0}},free_id}, wq_addr[wq_aw_rp],
+                                {1'b0,wq_aw_beats}-1'b1, wq_aw_narrow?3'd0:AXI_SIZE, 2'b01};
+    axi_pipe2 #(.WIDTH(AX_W)) u_ar_slice (
+        .clk(clk), .rst(rst),
+        .s_data(ar_c_pay), .s_valid(select_r), .s_ready(ar_c_ready),
+        .m_data({m_arid, m_araddr, m_arlen, m_arsize, m_arburst}),
+        .m_valid(m_arvalid), .m_ready(m_arready)
+    );
+    axi_pipe2 #(.WIDTH(AX_W)) u_aw_slice (
+        .clk(clk), .rst(rst),
+        .s_data(aw_c_pay), .s_valid(select_w), .s_ready(aw_c_ready),
+        .m_data({m_awid, m_awaddr, m_awlen, m_awsize, m_awburst}),
+        .m_valid(m_awvalid), .m_ready(m_awready)
+    );
+    axi_pipe2 #(.WIDTH(ID_WIDTH+DATA_WIDTH+2+1)) u_r_slice (
+        .clk(clk), .rst(rst),
+        .s_data({m_rid, m_rdata, m_rresp, m_rlast}), .s_valid(m_rvalid), .s_ready(m_rready),
+        .m_data({i_rid, i_rdata, i_rresp, i_rlast}), .m_valid(i_rvalid), .m_ready(i_rready)
+    );
     // ── W-channel output register slice (2026-09-16, FMax) ────────────
     //
     // WHY.  Everything below this point is computed live from the write
@@ -221,26 +261,26 @@ module dma_engine #(
         .m_wlast (m_wlast   ), .m_wvalid(m_wvalid  ),
         .m_wready(m_wready  )
     );
-    wire [CW-1:0] b_client=id_client[m_bid[IW-1:0]], r_client=id_client[m_rid[IW-1:0]];
+    wire [CW-1:0] b_client=id_client[m_bid[IW-1:0]], r_client=id_client[i_rid[IW-1:0]];
     wire rsp_slot_ready=!rsp_valid_q||rsp_ready[rsp_client_q];
     assign m_bready=rsp_slot_ready;
-    assign m_rready=!m_rvalid||!m_rlast||
+    assign i_rready=!i_rvalid||!i_rlast||
         (rsp_slot_ready&&!(m_bvalid&&m_bready));
-    wire [511:0] r_prior=(id_rbeat[m_rid[IW-1:0]]==0) ? '0 : id_rdata[m_rid[IW-1:0]];
+    wire [511:0] r_prior=(id_rbeat[i_rid[IW-1:0]]==0) ? '0 : id_rdata[i_rid[IW-1:0]];
     wire [OFF_W-1:0] r_narrow_lane=
-        id_offset[m_rid[IW-1:0]]+id_rbeat[m_rid[IW-1:0]][OFF_W-1:0];
+        id_offset[i_rid[IW-1:0]]+id_rbeat[i_rid[IW-1:0]][OFF_W-1:0];
     wire [7:0] r_narrow_byte=m_rdata_g[r_narrow_lane*8 +: 8];
     wire [511:0] r_wide_chunk={{(512-DATA_WIDTH){1'b0}},m_rdata_g} <<
-        (id_rbeat[m_rid[IW-1:0]][WSEL_W-1:0]*DATA_WIDTH);
+        (id_rbeat[i_rid[IW-1:0]][WSEL_W-1:0]*DATA_WIDTH);
     wire [511:0] r_narrow_chunk={{504{1'b0}},r_narrow_byte} <<
-        (id_rbeat[m_rid[IW-1:0]]*8);
+        (id_rbeat[i_rid[IW-1:0]]*8);
     wire [511:0] r_current=r_prior |
-        (id_narrow[m_rid[IW-1:0]] ? r_narrow_chunk : r_wide_chunk);
+        (id_narrow[i_rid[IW-1:0]] ? r_narrow_chunk : r_wide_chunk);
     wire [511:0] r_payload;
     genvar payload_byte;
     generate for(payload_byte=0;payload_byte<64;payload_byte=payload_byte+1) begin : g_r_payload
         assign r_payload[payload_byte*8 +: 8]=
-            (payload_byte<id_len[m_rid[IW-1:0]]) ?
+            (payload_byte<id_len[i_rid[IW-1:0]]) ?
                 r_current[payload_byte*8 +: 8] : 8'b0;
     end endgenerate
     assign rsp_rdata={N_CLIENTS{rsp_rdata_q}};
@@ -251,7 +291,7 @@ module dma_engine #(
         ({{(N_CLIENTS-1){1'b0}},1'b1}<<rsp_client_q) : '0;
     assign rsp_valid=rsp_valid_q ?
         ({{(N_CLIENTS-1){1'b0}},1'b1}<<rsp_client_q) : '0;
-    wire r_issue=m_arvalid&&m_arready, aw_issue=m_awvalid&&m_awready;
+    wire r_issue=select_r&&ar_c_ready, aw_issue=select_w&&aw_c_ready;
     // The engine's own view of the W channel is the slice's INPUT side.
     wire w_done=w_wvalid_c&&w_wready_c&&w_wlast_c;
     wire picked_space=picked_write ? ((wq_count!=QUEUE_DEPTH_COUNT)||w_done) :
@@ -269,7 +309,7 @@ module dma_engine #(
     always @(posedge clk) if(!rst) begin
         if(m_bvalid&&((m_bid>>IW)!=0 || !id_live[m_bid[IW-1:0]] || !id_write[m_bid[IW-1:0]]))
             $error("dma_engine received B for an invalid/non-write ID");
-        if(m_rvalid&&((m_rid>>IW)!=0 || !id_live[m_rid[IW-1:0]] || id_write[m_rid[IW-1:0]]))
+        if(i_rvalid&&((i_rid>>IW)!=0 || !id_live[i_rid[IW-1:0]] || id_write[i_rid[IW-1:0]]))
             $error("dma_engine received R for an invalid/non-read ID");
     end
 `endif
@@ -316,16 +356,16 @@ module dma_engine #(
             case({req_fire&&picked_write,w_done}) 2'b10:wq_count<=wq_count+1'b1;2'b01:wq_count<=wq_count-1'b1;default:wq_count<=wq_count;endcase
             case({req_fire&&picked_write,aw_issue}) 2'b10:wq_aw_count<=wq_aw_count+1'b1;2'b01:wq_aw_count<=wq_aw_count-1'b1;default:wq_aw_count<=wq_aw_count;endcase
             case({aw_issue,w_done}) 2'b10:wq_issued_count<=wq_issued_count+1'b1;2'b01:wq_issued_count<=wq_issued_count-1'b1;default:wq_issued_count<=wq_issued_count;endcase
-            if(m_rvalid&&m_rready) begin
-                id_rdata[m_rid[IW-1:0]]<=r_current;
-                if(m_rresp!=0) id_rstatus[m_rid[IW-1:0]]<=m_rresp;
-                if(m_rlast) begin
-                    id_live[m_rid[IW-1:0]]<=0;rsp_valid_q<=1;rsp_write_q<=0;rsp_client_q<=r_client;
-                    rsp_tag_q<=id_tag[m_rid[IW-1:0]];
-                    rsp_len_q<=id_len[m_rid[IW-1:0]];
-                    rsp_status_q<=(m_rresp!=0)?m_rresp:id_rstatus[m_rid[IW-1:0]];
+            if(i_rvalid&&i_rready) begin
+                id_rdata[i_rid[IW-1:0]]<=r_current;
+                if(i_rresp!=0) id_rstatus[i_rid[IW-1:0]]<=i_rresp;
+                if(i_rlast) begin
+                    id_live[i_rid[IW-1:0]]<=0;rsp_valid_q<=1;rsp_write_q<=0;rsp_client_q<=r_client;
+                    rsp_tag_q<=id_tag[i_rid[IW-1:0]];
+                    rsp_len_q<=id_len[i_rid[IW-1:0]];
+                    rsp_status_q<=(i_rresp!=0)?i_rresp:id_rstatus[i_rid[IW-1:0]];
                     rsp_rdata_q<=r_payload;
-                end else id_rbeat[m_rid[IW-1:0]]<=id_rbeat[m_rid[IW-1:0]]+1'b1;
+                end else id_rbeat[i_rid[IW-1:0]]<=id_rbeat[i_rid[IW-1:0]]+1'b1;
             end
             if(m_bvalid&&m_bready) begin
                 id_live[m_bid[IW-1:0]]<=0;rsp_valid_q<=1;rsp_write_q<=1;rsp_client_q<=b_client;

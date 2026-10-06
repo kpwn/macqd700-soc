@@ -722,7 +722,10 @@ module l2c_ctrl #(
     // which makes that sound.
     wire flw_arm_c      = aw_have && aw_flw && (aw_beat[1:0] == 2'b00) &&
                           !byp_match2_hit && (&s_wstrb);
-    wire flw_gath_rdy_c = !rst_busy && aw_have &&
+    // `!rst_busy` is NOT a term here, nor of s_wready/do_accept_c/dw_wready/
+    // do_bypass_c/hot_haz_q (2026-10-06, 200 MHz FMax) -- see "RESET WALK
+    // GATES ONLY THE HEADER DOORS" below the accept logic.
+    wire flw_gath_rdy_c = aw_have &&
                           ((gst == G_GATH) || ((gst == G_IDLE) && flw_arm_c));
     wire flw_gath_c     = flw_gath_rdy_c && s_wvalid;
     // A whole line is assembled and wants the tag pipeline.
@@ -1247,14 +1250,14 @@ module l2c_ctrl #(
     // write_sel win a tie while ar_have is still 1.  Any mismatch here
     // means a W-beat handshake the front door never actually captured.
     assign s_wready = flw_gath_rdy_c ? 1'b1
-                    : (write_sel && !flw_avail_c && !rst_busy &&
+                    : (write_sel && !flw_avail_c &&
                        (is_bypass_c ? (byp_slot_c && byp_req_ready && !id_busy_c && !pipe_id_haz_c)
                                     : (accept_slot_c && !set_haz_c)));
-    wire do_accept_c = !rst_busy && any_sel && !is_bypass_c && accept_slot_c && !set_haz_c;
+    wire do_accept_c = any_sel && !is_bypass_c && accept_slot_c && !set_haz_c;
     // P6W: dw_wready is do_accept_c restricted to the hot write door --
     // written out term for term, like s_wready's cache branch, so that the
     // W handshake and the tracker advance (dw_take_c) are the same event.
-    assign dw_wready = dw_write_sel && !rst_busy && !is_bypass_c && accept_slot_c && !set_haz_c;
+    assign dw_wready = dw_write_sel && !is_bypass_c && accept_slot_c && !set_haz_c;
     assign dw_take_c = do_accept_c && dw_write_sel;
     // synthesis translate_off
     // The hot W handshake and the hot tracker's advance are ONE event.  A
@@ -1294,9 +1297,39 @@ module l2c_ctrl #(
         write_sel,     // [2]
         req_v, q_v     // [1:0] lookup-pipeline occupancy (was `st`)
     };
-    wire do_bypass_c = !rst_busy && any_sel && is_bypass_c && byp_req_ready &&
+    // ── RESET WALK GATES ONLY THE HEADER DOORS (2026-10-06, 200 MHz FMax) ──
+    //
+    // `!rst_busy` used to be ANDed into flw_gath_rdy_c, s_wready,
+    // do_accept_c, dw_wready, do_bypass_c and hot_haz_q.  Every one of those
+    // terms is LOGICALLY REDUNDANT, and in the routed 200 MHz build the
+    // walk's busy flop (fanout 107) was a hub of the front-door accept cone
+    // (u_rst/walking -> ... -> a_line/CE, s0 W slice CE: 1,189 failing
+    // paths).  Proof of redundancy:
+    //   * every source of an accept is a REGISTERED header slot --
+    //     aw_have, ar_have, fetch_ar_have, dh_ar_have, dw_aw_have -- or the
+    //     gather (gst != G_IDLE, which itself needs aw_have to leave idle);
+    //   * all of them, and their pre-latches (*_pend_v), are cleared by
+    //     `rst`, and `rst` is exactly what starts the walk (l2c_reset);
+    //   * while rst_busy is high every header ready (s_awready, s_arready,
+    //     f_arready, d_arready, dw_awready) is low, so no slot can fill.
+    // Hence rst_busy => any_sel == 0 && flw_gath_rdy_c == 0 && hot_take_c
+    // == 0, which forces every removed term's expression to 0 anyway.  The
+    // header readies keep the gate (they are plain register ANDs).  The
+    // invariant is asserted in simulation just below.
+    wire do_bypass_c = any_sel && is_bypass_c && byp_req_ready &&
                        byp_slot_c && !id_busy_c && !pipe_id_haz_c;
     wire door_take_c = do_accept_c || do_bypass_c;
+    // synthesis translate_off
+    always @(posedge clk) begin
+        if (!rst && rst_busy &&
+            (aw_have || ar_have || fetch_ar_have || dh_ar_have || dw_aw_have ||
+             aw_pend_v || ar_pend_v || fetch_ar_pend_v || dh_ar_pend_v || dw_aw_pend_v ||
+             (gst != G_IDLE) || any_sel || flw_gath_rdy_c || hot_take_c)) begin
+            $display("L2C_CTRL ASSERT: front-door state live during the reset walk -- the removed !rst_busy accept terms are no longer redundant");
+            $fatal(1);
+        end
+    end
+    // synthesis translate_on
     // Level A (task #269): scoped to lsu_read_sel, NOT the broader
     // read_sel -- ar_take_c drives the LSU-only ar_beat/ar_cur/ar_have
     // advance in the two-deep-door promotion block above (ar_act_free_c /
@@ -2371,9 +2404,23 @@ module l2c_ctrl #(
             else if (ar_cur_inc_c) ar_cur <= ar_cur_next;
             // Pre-latch: holds a header only when it could NOT go straight
             // into the active slot on this same edge.
-            if (s_arvalid && s_arready && !(ar_act_free_c && !ar_pend_v)) begin
-                ar_pend_v <= 1'b1; ar_pend_id <= s_arid; ar_pend_addr <= s_araddr;
+            //
+            // PRE-LATCH PAYLOAD ENABLES (2026-10-06, 200 MHz FMax; applies to
+            // all five pre-latches below).  The payload registers load on
+            // `!*_pend_v` -- a plain register bit -- instead of on the
+            // accept-dependent "header arrived and could not promote"
+            // condition, which dragged aw_act_free_c/aw_take_c (the whole
+            // door_take_c cone) onto ~60 CE pins.  Exact: the payload is
+            // only read while *_pend_v is set; *_pend_v rises only on an
+            // edge where it was 0, i.e. where this enable also loaded the
+            // header being handshaken; and while *_pend_v is 1 the matching
+            // *_ready is 0, so no header can arrive and the payload holds.
+            if (!ar_pend_v) begin
+                ar_pend_id <= s_arid; ar_pend_addr <= s_araddr;
                 ar_pend_len <= s_arlen; ar_pend_size <= s_arsize; ar_pend_burst <= s_arburst;
+            end
+            if (s_arvalid && s_arready && !(ar_act_free_c && !ar_pend_v)) begin
+                ar_pend_v <= 1'b1;
             end else if (ar_act_free_c && ar_pend_v) begin
                 ar_pend_v <= 1'b0;
             end
@@ -2397,11 +2444,14 @@ module l2c_ctrl #(
             end else if (aw_take_c) begin
                 aw_beat <= aw_beat + 8'd1; aw_cur <= aw_cur + aw_step;
             end
-            if (s_awvalid && s_awready && !(aw_act_free_c && !aw_pend_v)) begin
-                aw_pend_v <= 1'b1; aw_pend_id <= s_awid; aw_pend_addr <= s_awaddr;
+            if (!aw_pend_v) begin
+                aw_pend_id <= s_awid; aw_pend_addr <= s_awaddr;
                 aw_pend_len <= s_awlen; aw_pend_size <= s_awsize; aw_pend_burst <= s_awburst;
                 aw_pend_flw <= (s_awburst == 2'b01) && (s_awsize == 3'd4) &&
                                (s_awaddr[5:0] == 6'd0) && (s_awlen[1:0] == 2'b11);
+            end
+            if (s_awvalid && s_awready && !(aw_act_free_c && !aw_pend_v)) begin
+                aw_pend_v <= 1'b1;
             end else if (aw_act_free_c && aw_pend_v) begin
                 aw_pend_v <= 1'b0;
             end
@@ -2426,9 +2476,12 @@ module l2c_ctrl #(
             end
             if (dw_aw_cur_load_c)     dw_aw_cur <= dw_aw_cur_ld;
             else if (dw_aw_cur_inc_c) dw_aw_cur <= dw_aw_cur_next;
-            if (dw_awvalid && dw_awready && !(dw_aw_act_free_c && !dw_aw_pend_v)) begin
-                dw_aw_pend_v <= 1'b1; dw_aw_pend_id <= dw_awid; dw_aw_pend_addr <= dw_awaddr;
+            if (!dw_aw_pend_v) begin
+                dw_aw_pend_id <= dw_awid; dw_aw_pend_addr <= dw_awaddr;
                 dw_aw_pend_len <= dw_awlen; dw_aw_pend_size <= dw_awsize; dw_aw_pend_burst <= dw_awburst;
+            end
+            if (dw_awvalid && dw_awready && !(dw_aw_act_free_c && !dw_aw_pend_v)) begin
+                dw_aw_pend_v <= 1'b1;
             end else if (dw_aw_act_free_c && dw_aw_pend_v) begin
                 dw_aw_pend_v <= 1'b0;
             end
@@ -2456,10 +2509,13 @@ module l2c_ctrl #(
             end
             // Pre-latch: holds a header only when it could NOT go straight
             // into the active slot on this same edge.
-            if (f_arvalid && f_arready && !(fetch_ar_act_free_c && !fetch_ar_pend_v)) begin
-                fetch_ar_pend_v <= 1'b1; fetch_ar_pend_id <= f_arid;
+            if (!fetch_ar_pend_v) begin
+                fetch_ar_pend_id <= f_arid;
                 fetch_ar_pend_addr <= f_araddr; fetch_ar_pend_len <= f_arlen;
                 fetch_ar_pend_size <= f_arsize; fetch_ar_pend_burst <= f_arburst;
+            end
+            if (f_arvalid && f_arready && !(fetch_ar_act_free_c && !fetch_ar_pend_v)) begin
+                fetch_ar_pend_v <= 1'b1;
             end else if (fetch_ar_act_free_c && fetch_ar_pend_v) begin
                 fetch_ar_pend_v <= 1'b0;
             end
@@ -2482,10 +2538,13 @@ module l2c_ctrl #(
             end else if (dh_ar_take_c) begin
                 dh_ar_beat <= dh_ar_beat + 8'd1;
             end
-            if (d_arvalid && d_arready && !(dh_ar_act_free_c && !dh_ar_pend_v)) begin
-                dh_ar_pend_v <= 1'b1; dh_ar_pend_id <= d_arid;
+            if (!dh_ar_pend_v) begin
+                dh_ar_pend_id <= d_arid;
                 dh_ar_pend_addr <= d_araddr; dh_ar_pend_len <= d_arlen;
                 dh_ar_pend_size <= d_arsize; dh_ar_pend_burst <= d_arburst;
+            end
+            if (d_arvalid && d_arready && !(dh_ar_act_free_c && !dh_ar_pend_v)) begin
+                dh_ar_pend_v <= 1'b1;
             end else if (dh_ar_act_free_c && dh_ar_pend_v) begin
                 dh_ar_pend_v <= 1'b0;
             end
@@ -2552,7 +2611,7 @@ module l2c_ctrl #(
             if ((DW_PORT_EN != 0) && door_take_c && hot_take_c) begin
                 dw_favor <= !dw_write_sel;
             end
-            hot_haz_q <= (DW_PORT_EN != 0) && hot_take_c && !rst_busy && accept_slot_c &&
+            hot_haz_q <= (DW_PORT_EN != 0) && hot_take_c && accept_slot_c &&
                          !is_bypass_c && set_haz_c;
             if (D_PORT_EN != 0) begin
                 if (!cold_avail_c || (door_take_c && (lsu_read_sel || write_sel))) begin
@@ -2622,13 +2681,27 @@ module l2c_ctrl #(
                 q_v   <= a_v;
                 req_v <= q_v;
                 // ---- S0 -> A ----------------------------------------
+                // a_line (512 FF) is loaded on a SHALLOW enable,
+                // `pipe_adv_c && gst == G_FULL`, not on the accept decision
+                // (2026-10-06, 200 MHz FMax: gst -> write_sel -> set_haz_c
+                // -> do_accept_c -> a_line/CE was 293 failing endpoints).
+                // Exact: a_line is read only through `a_full` (q_line <=
+                // a_line if a_full), and a_full is set only on an edge with
+                // pipe_adv_c && do_accept_c && write_sel && gst == G_FULL,
+                // where this enable is also true and flw_data is the
+                // assembled line (flw_data is written only by the gather,
+                // i.e. never while gst == G_FULL).  On any other pipe_adv_c
+                // edge stage A receives a bubble or a non-full request
+                // (a_v == 0 or a_full == 0), so overwriting a_line is
+                // invisible; with !pipe_adv_c stage A holds and so does
+                // a_line, exactly as before.
+                if (gst == G_FULL) a_line <= flw_data;
                 if (do_accept_c) begin
                     a_addr <= cur_addr; a_set <= cur_set; a_tag <= cur_tag;
                     a_is_write <= cur_is_write_c; a_id <= cur_id; a_wdata <= cur_wdata;
                     a_wstrb <= cur_wstrb; a_qoff <= cur_qoff; a_last <= cur_last;
                     a_need <= cur_need; a_illegal <= illegal_c;
                     a_full <= write_sel && (gst == G_FULL);
-                    if (write_sel && (gst == G_FULL)) a_line <= flw_data;
                     a_cov  <= cur_is_write_c ? cur_cov_c : 4'b0000;
                     a_dty  <= cur_is_write_c ? cur_dty_c : 4'b0000;
                     a_want <= cur_want_c;
