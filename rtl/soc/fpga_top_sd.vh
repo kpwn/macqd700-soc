@@ -661,9 +661,22 @@
     // sim-only / additive: the real FPGA path and the default
     // tb-fpga-top-rom target never define FPGA_ROM_SIM_REALBOOT, so the
     // hardware-validated 200 MHz-core_clk ratios above are untouched.
+    // 2026-10-07 SILICON: the 25 MHz fast SCK that the default ratios
+    // give at a 200 MHz core_clk NO LONGER READS CLEANLY on the board's
+    // card.  Every 200 MHz image -- including lane200_p1cov, which booted
+    // the HDD 2/2 on 2026-09-29 -- now lands on the floppy-"?" screen
+    // with vio_scsi_sd latching ERR_CRC_BAD (cause 7) on a CMD18 at SD
+    // LBA 0x2000 (calc 0xE53C, card 0x377F), while every 100 MHz image
+    // (12.5 MHz fast SCK) boots.  Above 125 MHz the fast/HS dividers are
+    // therefore doubled so SCK matches the 100 MHz build's proven rate in
+    // absolute terms.  SLOW_HALF stays 250 (400 kHz init at 200 MHz).
+    localparam integer SD_HALF_SCALE = (CORE_CLK_HZ > 125_000_000) ? 2 : 1;
     sd_spi
 `ifdef FPGA_ROM_SIM_REALBOOT
         #( .SLOW_HALF(32), .FAST_HALF(2), .HS_HALF(2) )
+`else
+        #( .SLOW_HALF(250), .FAST_HALF(4 * SD_HALF_SCALE),
+           .HS_HALF(2 * SD_HALF_SCALE) )
 `endif
         u_sd_spi (
         .clk      (core_clk     ),
