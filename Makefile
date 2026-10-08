@@ -2372,7 +2372,7 @@ CPU_M68K040_IDIRS :=
 # l2c door + its window guard).  `check-cpu-dh` refuses any build whose
 # generated M68kSocketTop.v disagrees with the knob; synth/vivado.tcl does
 # the same check on its own regeneration.
-CPU_AXI_DH ?= 0
+CPU_AXI_DH ?= $(if $(filter m68k040,$(CPU)),1,0)
 export CPU_AXI_DH
 # Optional physical-build experiment; Vivado validates the prerequisite and
 # records the actual top-level generic. Defaults remain registered responses.
@@ -2382,8 +2382,8 @@ ifneq ($(L2_DH_R_FALL_THROUGH),1)
 $(error L2_DH_R_FALL_THROUGH must be 0 or 1, got '$(L2_DH_R_FALL_THROUGH)')
 endif
 endif
-CPU_DCACHE_NONBLOCKING ?= 0
-CPU_INHIBITED_FULL_BARRIER ?= 0
+CPU_DCACHE_NONBLOCKING ?= 1
+CPU_INHIBITED_FULL_BARRIER ?= 1
 export CPU_DCACHE_NONBLOCKING CPU_INHIBITED_FULL_BARRIER
 ifneq ($(filter-out 0 1,$(CPU_AXI_DH)),)
 $(error CPU_AXI_DH must be 0 or 1, got '$(CPU_AXI_DH)')
