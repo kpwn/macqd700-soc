@@ -1,0 +1,2385 @@
+{
+ "_doc": "Ground truth for board_ab.py OCR + screen classifier. Values were read by eye from each screenshot and cross-checked arithmetically (rating*sec == Quadra 605 constant, Average == mean of 10 ratings); speedo_i2.jpg additionally matches the numbers recorded for the i2 board run. crops/ are lossless PNG crops (capture x320..656, y140..420) of the original HDMI JPEGs; selftest pastes them back at paste_at on a black 1280x720 frame.",
+ "images": [
+  {
+   "file": "speedo_i2.jpg",
+   "learn": true,
+   "note": "i2 b21baf41 200 MHz, numbers recorded in memory fable-grind-goal-2026-10-08",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 120220.917,
+     "rating": 6.96,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.08,
+     "rating": 7.984,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.074,
+     "rating": 9.57,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.072,
+     "rating": 10.633,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.049,
+     "rating": 8.192,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.113,
+     "rating": 9.673,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.129,
+     "rating": 6.305,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.1,
+     "rating": 8.086,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.1,
+     "rating": 13.701,
+     "itr": 1
+    }
+   },
+   "average": 8.11,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_20.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_20.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55655.51,
+     "rating": 3.222,
+     "itr": 25
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.685,
+   "running_row": "Towers",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_12.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_12.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55647.967,
+     "rating": 3.221,
+     "itr": 16
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.685,
+   "running_row": "Dhrystones",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_frame.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/frame.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55243.186,
+     "rating": 3.198,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.188,
+     "rating": 3.391,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.494,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.655,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.105,
+     "rating": 3.83,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.229,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.714,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.203,
+     "rating": 6.753,
+     "itr": 1
+    }
+   },
+   "average": 3.683,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_btfn0_spd3.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/btfn0_spd3.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 58218.197,
+     "rating": 3.37,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.181
+    },
+    "QuickSort": {
+     "abs": 0.156
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.106
+    },
+    "Puzzle": {
+     "abs": 0.336
+    },
+    "Permutations": {
+     "abs": 0.27,
+     "rating": 3.01,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.57,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.785,
+     "itr": 1
+    }
+   },
+   "average": 3.759,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_fr_12.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/fr_12.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55312.365,
+     "rating": 3.202,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.189
+    },
+    "QuickSort": {
+     "abs": 0.159
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.106
+    },
+    "Puzzle": {
+     "abs": 0.338
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.683,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_btfn1_spd2.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/btfn1_spd2.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 58204.033,
+     "rating": 3.369,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.181
+    },
+    "QuickSort": {
+     "abs": 0.153
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.105
+    },
+    "Puzzle": {
+     "abs": 0.337
+    },
+    "Permutations": {
+     "abs": 0.27,
+     "rating": 3.011,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.573,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.203,
+     "rating": 6.775,
+     "itr": 1
+    }
+   },
+   "average": 3.768,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_fr_3.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/fr_3.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55312.365,
+     "rating": 3.202,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.655,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.105,
+     "rating": 3.83,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.229,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.714,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.203,
+     "rating": 6.753,
+     "itr": 1
+    }
+   },
+   "average": 3.683,
+   "running_row": "BubbleSort",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_4.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_4.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 56001.157,
+     "rating": 3.242,
+     "itr": 6
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.687,
+   "running_row": "Dhrystones",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_28.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_28.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55655.51,
+     "rating": 3.222,
+     "itr": 25
+    },
+    "Towers": {
+     "abs": 0.188,
+     "rating": 3.395,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.495,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.684,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.107,
+     "rating": 3.77,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.339,
+     "rating": 3.223,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.686,
+   "running_row": "Permutations",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_INVALID_btfn0_spd3.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/INVALID_btfn0_spd3.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 58147.107,
+     "rating": 3.366,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.181
+    },
+    "QuickSort": {
+     "abs": 0.156
+    },
+    "BubbleSort": {
+     "abs": 0.135
+    },
+    "Queens": {
+     "abs": 0.106
+    },
+    "Puzzle": {
+     "abs": 0.336
+    },
+    "Permutations": {
+     "abs": 0.27,
+     "rating": 3.011,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.573,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.786,
+     "itr": 1
+    }
+   },
+   "average": 3.756,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/docs_2026-10-02-ls-ooo-off-speedometer.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/m68k-core-040-ooo/.claude/worktrees/agent-a2f766aaaa2019e42/docs/evidence/2026-10-02-ls-ooo-off-speedometer.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 116073.376,
+     "rating": 6.72,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.09,
+     "rating": 7.073,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.078,
+     "rating": 9.161,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.067,
+     "rating": 11.337,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.053,
+     "rating": 7.666,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.168,
+     "rating": 6.5,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.135,
+     "rating": 6.027,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.112,
+     "rating": 7.158,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.101,
+     "rating": 13.645,
+     "itr": 1
+    }
+   },
+   "average": 7.529,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_btfn0_spd2.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/btfn0_spd2.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 57809.082,
+     "rating": 3.347,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.181
+    },
+    "QuickSort": {
+     "abs": 0.156
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.106
+    },
+    "Puzzle": {
+     "abs": 0.336
+    },
+    "Permutations": {
+     "abs": 0.27,
+     "rating": 3.01,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.573,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.785,
+     "itr": 1
+    }
+   },
+   "average": 3.757,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_btfn1_spd1.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/btfn1_spd1.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 58086.716,
+     "rating": 3.363,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.181
+    },
+    "QuickSort": {
+     "abs": 0.153
+    },
+    "BubbleSort": {
+     "abs": 0.135
+    },
+    "Queens": {
+     "abs": 0.105
+    },
+    "Puzzle": {
+     "abs": 0.337
+    },
+    "Permutations": {
+     "abs": 0.27,
+     "rating": 3.011,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.572,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.797,
+     "itr": 1
+    }
+   },
+   "average": 3.766,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_INVALID_btfn0_spd1.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/INVALID_btfn0_spd1.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 58216.502,
+     "rating": 3.37,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.181
+    },
+    "QuickSort": {
+     "abs": 0.156
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.105
+    },
+    "Puzzle": {
+     "abs": 0.337
+    },
+    "Permutations": {
+     "abs": 0.27,
+     "rating": 3.012,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.573,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.203,
+     "rating": 6.777,
+     "itr": 1
+    }
+   },
+   "average": 3.758,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_fr_6.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/fr_6.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55312.365,
+     "rating": 3.202,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.229,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.714,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.203,
+     "rating": 6.753,
+     "itr": 1
+    }
+   },
+   "average": 3.68,
+   "running_row": "Puzzle",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_fr_9.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/fr_9.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55312.365,
+     "rating": 3.202,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.203,
+     "rating": 6.753,
+     "itr": 1
+    }
+   },
+   "average": 3.68,
+   "running_row": "IntMatrix",
+   "alert": false
+  },
+  {
+   "file": "crops/docs_2026-10-05-stack4-100mhz-speedometer.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/m68k-core-040-ooo/docs/evidence/2026-10-05-stack4-100mhz-speedometer.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 58138.115,
+     "rating": 3.366,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.166,
+     "rating": 3.849,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.153,
+     "rating": 4.646,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.125,
+     "rating": 6.07,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.103,
+     "rating": 3.905,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.223,
+     "rating": 4.9,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.266,
+     "rating": 3.057,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.192,
+     "rating": 4.202,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.199,
+     "rating": 6.899,
+     "itr": 1
+    }
+   },
+   "average": 4.089,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_fr_0.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/fr_0.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55312.365,
+     "rating": 3.202,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.188,
+     "rating": 3.391,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.494,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.655,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.105,
+     "rating": 3.83,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.229,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.714,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.203,
+     "rating": 6.753,
+     "itr": 1
+    }
+   },
+   "average": 3.683,
+   "running_row": "Towers",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_40.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_40.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55655.51,
+     "rating": 3.222,
+     "itr": 25
+    },
+    "Towers": {
+     "abs": 0.188
+    },
+    "QuickSort": {
+     "abs": 0.159
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.107
+    },
+    "Puzzle": {
+     "abs": 0.339
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.716,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.571,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.781,
+     "itr": 1
+    }
+   },
+   "average": 3.686,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_off_res_b.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/off_res_b.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 109121.939,
+     "rating": 6.317,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.094,
+     "rating": 6.788,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.079,
+     "rating": 8.994,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.067,
+     "rating": 11.338,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.053,
+     "rating": 7.588,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.169,
+     "rating": 6.458,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.15,
+     "rating": 5.432,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.113,
+     "rating": 7.156,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.101,
+     "rating": 13.536,
+     "itr": 1
+    }
+   },
+   "average": 7.361,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_24.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_24.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55655.51,
+     "rating": 3.222,
+     "itr": 25
+    },
+    "Towers": {
+     "abs": 0.188,
+     "rating": 3.395,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.495,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.684,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.689,
+   "running_row": "Queens",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_16.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_16.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55693.409,
+     "rating": 3.224,
+     "itr": 21
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.686,
+   "running_row": "Dhrystones",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_off_res_a.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/off_res_a.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 112205.74,
+     "rating": 6.496,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.094,
+     "rating": 6.789,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.079,
+     "rating": 8.996,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.067,
+     "rating": 11.353,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.053,
+     "rating": 7.609,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.169,
+     "rating": 6.46,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.15,
+     "rating": 5.435,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.113,
+     "rating": 7.153,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.101,
+     "rating": 13.589,
+     "itr": 1
+    }
+   },
+   "average": 7.388,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_0.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_0.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 56079.399,
+     "rating": 3.246,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.688,
+   "running_row": "Dhrystones",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_spd_res_p1a.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/spd_res_p1a.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 116551.474,
+     "rating": 6.748,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.09
+    },
+    "QuickSort": {
+     "abs": 0.078
+    },
+    "BubbleSort": {
+     "abs": 0.067
+    },
+    "Queens": {
+     "abs": 0.053
+    },
+    "Puzzle": {
+     "abs": 0.168
+    },
+    "Permutations": {
+     "abs": 0.135,
+     "rating": 6.028,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.112,
+     "rating": 7.16,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.101,
+     "rating": 13.649,
+     "itr": 1
+    }
+   },
+   "average": 7.534,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_off_res_c.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/off_res_c.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 111925.43,
+     "rating": 6.48,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.094,
+     "rating": 6.785,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.079,
+     "rating": 9.0,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.067,
+     "rating": 11.314,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.053,
+     "rating": 7.656,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.169,
+     "rating": 6.462,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.15,
+     "rating": 5.435,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.113,
+     "rating": 7.154,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.101,
+     "rating": 13.587,
+     "itr": 1
+    }
+   },
+   "average": 7.387,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_m2.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/m2.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55312.365,
+     "rating": 3.202,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.683,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/docs_2026-10-02-ls-ooo-on-speedometer.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/m68k-core-040-ooo/.claude/worktrees/agent-a2f766aaaa2019e42/docs/evidence/2026-10-02-ls-ooo-on-speedometer.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 117711.315,
+     "rating": 6.815,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.083,
+     "rating": 7.676,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.078,
+     "rating": 9.176,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.067,
+     "rating": 11.341,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.052,
+     "rating": 7.705,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.113,
+     "rating": 9.662,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.134,
+     "rating": 6.053,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.098,
+     "rating": 8.241,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.101,
+     "rating": 13.572,
+     "itr": 1
+    }
+   },
+   "average": 8.024,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_INVALID_btfn0_spd2.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/INVALID_btfn0_spd2.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 57796.519,
+     "rating": 3.346,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.181
+    },
+    "QuickSort": {
+     "abs": 0.156
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.106
+    },
+    "Puzzle": {
+     "abs": 0.336
+    },
+    "Permutations": {
+     "abs": 0.27,
+     "rating": 3.013,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.575,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.201,
+     "rating": 6.814,
+     "itr": 1
+    }
+   },
+   "average": 3.758,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_btfn0_spd1.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/btfn0_spd1.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 58161.785,
+     "rating": 3.367,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.181
+    },
+    "QuickSort": {
+     "abs": 0.155
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.106
+    },
+    "Puzzle": {
+     "abs": 0.337
+    },
+    "Permutations": {
+     "abs": 0.27,
+     "rating": 3.01,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.571,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.784,
+     "itr": 1
+    }
+   },
+   "average": 3.76,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_32.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_32.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55655.51,
+     "rating": 3.222,
+     "itr": 25
+    },
+    "Towers": {
+     "abs": 0.188,
+     "rating": 3.395,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.495,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.684,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.107,
+     "rating": 3.77,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.339,
+     "rating": 3.223,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.716,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.571,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.687,
+   "running_row": "Sieve",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_btfn1_spd3.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/btfn1_spd3.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 58222.807,
+     "rating": 3.37,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.181
+    },
+    "QuickSort": {
+     "abs": 0.153
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.105
+    },
+    "Puzzle": {
+     "abs": 0.336
+    },
+    "Permutations": {
+     "abs": 0.27,
+     "rating": 3.01,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.225,
+     "rating": 3.571,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.801,
+     "itr": 1
+    }
+   },
+   "average": 3.773,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "crops/9c9d6e9b_gr_8.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_8.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55730.722,
+     "rating": 3.226,
+     "itr": 11
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.686,
+   "running_row": "Dhrystones",
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_spd_res_p1b.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/spd_res_p1b.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 116562.343,
+     "rating": 6.748,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.09,
+     "rating": 7.081,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.078,
+     "rating": 9.158,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.067,
+     "rating": 11.328,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.053,
+     "rating": 7.676,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.168,
+     "rating": 6.506,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.135,
+     "rating": 6.026,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.112,
+     "rating": 7.162,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.101,
+     "rating": 13.653,
+     "itr": 1
+    }
+   },
+   "average": 7.534,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "crops/9c9d6e9b_spd_res_p1c.png",
+   "paste_at": [
+    320,
+    140
+   ],
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/spd_res_p1c.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 116562.343,
+     "rating": 6.748,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.09,
+     "rating": 7.076,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.078,
+     "rating": 9.172,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.067,
+     "rating": 11.333,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.053,
+     "rating": 7.666,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.168,
+     "rating": 6.513,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.135,
+     "rating": 6.031,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.112,
+     "rating": 7.16,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.101,
+     "rating": 13.637,
+     "itr": 1
+    }
+   },
+   "average": 7.534,
+   "running_row": null,
+   "alert": false
+  },
+  {
+   "file": "screen_running.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55312.365,
+     "rating": 3.202,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.203,
+     "rating": 6.753,
+     "itr": 1
+    }
+   },
+   "average": 3.68,
+   "running_row": "IntMatrix",
+   "alert": false
+  },
+  {
+   "file": "screen_alert.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55312.365,
+     "rating": 3.202,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.189
+    },
+    "QuickSort": {
+     "abs": 0.159
+    },
+    "BubbleSort": {
+     "abs": 0.134
+    },
+    "Queens": {
+     "abs": 0.106
+    },
+    "Puzzle": {
+     "abs": 0.338
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.683,
+   "running_row": null,
+   "alert": true
+  },
+  {
+   "file": "screen_final.jpg",
+   "rows": {
+    "KWhetstones": {
+     "abs": 0.0,
+     "rating": 0.0,
+     "itr": 1
+    },
+    "Dhrystones": {
+     "abs": 55312.365,
+     "rating": 3.202,
+     "itr": 1
+    },
+    "Towers": {
+     "abs": 0.189,
+     "rating": 3.389,
+     "itr": 1
+    },
+    "QuickSort": {
+     "abs": 0.159,
+     "rating": 4.49,
+     "itr": 1
+    },
+    "BubbleSort": {
+     "abs": 0.134,
+     "rating": 5.661,
+     "itr": 1
+    },
+    "Queens": {
+     "abs": 0.106,
+     "rating": 3.793,
+     "itr": 1
+    },
+    "Puzzle": {
+     "abs": 0.338,
+     "rating": 3.228,
+     "itr": 1
+    },
+    "Permutations": {
+     "abs": 0.3,
+     "rating": 2.713,
+     "itr": 1
+    },
+    "IntMatrix": {
+     "abs": 0.226,
+     "rating": 3.566,
+     "itr": 1
+    },
+    "Sieve": {
+     "abs": 0.202,
+     "rating": 6.79,
+     "itr": 1
+    }
+   },
+   "average": 3.683,
+   "running_row": null,
+   "alert": false
+  }
+ ],
+ "screens": [
+  {
+   "file": "screen_running.jpg",
+   "state": "speedometer",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/fr_9.jpg"
+  },
+  {
+   "file": "screen_alert.jpg",
+   "state": "speedometer",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/fr_21.jpg"
+  },
+  {
+   "file": "screen_final.jpg",
+   "state": "speedometer",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/m2.jpg"
+  },
+  {
+   "file": "screen_finder.jpg",
+   "state": "finder",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/boot_shipoff.jpg"
+  },
+  {
+   "file": "screen_boot.jpg",
+   "state": "boot_grey",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/62f7a53a-0ee5-4605-a8c4-18c2c28f7e5e/scratchpad/boot_base200.jpg"
+  },
+  {
+   "file": "screen_sadmac.jpg",
+   "state": "sadmac",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/d6b13930-299a-4a94-b445-133553af8a58/scratchpad/ab_armB/p138b_c1.jpg"
+  },
+  {
+   "file": "screen_macsbug.jpg",
+   "state": "macsbug",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/macsbug.jpg"
+  },
+  {
+   "file": "screen_garbage.jpg",
+   "state": "other",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/62f7a53a-0ee5-4605-a8c4-18c2c28f7e5e/scratchpad/screen.jpg"
+  },
+  {
+   "file": "screen_shutdown_dialog.jpg",
+   "state": "shutdown_dialog",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/62f7a53a-0ee5-4605-a8c4-18c2c28f7e5e/scratchpad/i10ok.jpg"
+  },
+  {
+   "file": "screen_black_icon.jpg",
+   "state": "black",
+   "source": "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/62f7a53a-0ee5-4605-a8c4-18c2c28f7e5e/scratchpad/snap-r4-before.jpg"
+  }
+ ],
+ "dryrun": {
+  "running": "screen_running.jpg",
+  "alert": "screen_alert.jpg",
+  "final": "screen_final.jpg",
+  "finder": "screen_finder.jpg",
+  "boot": "screen_boot.jpg",
+  "sadmac": "screen_sadmac.jpg",
+  "macsbug": "screen_macsbug.jpg",
+  "garbage": "screen_garbage.jpg",
+  "shutdown_dialog": "screen_shutdown_dialog.jpg",
+  "black_icon": "screen_black_icon.jpg",
+  "speedo_i2": "speedo_i2.jpg"
+ },
+ "dropped_duplicates": [
+  "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/fr_21.jpg",
+  "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/62f7a53a-0ee5-4605-a8c4-18c2c28f7e5e/scratchpad/fable/screen.jpg",
+  "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/gr_36.jpg",
+  "~/tmp/claude-1000/-home-qwertyoruiop-m68k-core-040-ooo/9c9d6e9b-868c-4e6e-bc8a-0fc3e3ef0587/scratchpad/menu.jpg"
+ ]
+}
