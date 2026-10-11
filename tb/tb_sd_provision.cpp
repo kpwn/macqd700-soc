@@ -22,7 +22,10 @@
 //     when it batches a long range into 256-sector chunks with a short
 //     residue at the end.  See test_verify_range_independence /
 //     test_verify_partial_then_full / test_verify_corruption_positions /
-//     test_write_verify_alternation.
+//     test_write_verify_alternation;
+//   * GO_READ (CAPS v2) lands the CMD18 bytes in staging byte-exact,
+//     with the matching CRC32, and GO_VERIFY leaves staging untouched.
+//     See test_read_back_written / test_read_full_stage_and_corruption.
 //
 // Build: make tb-sd-provision
 
@@ -54,6 +57,7 @@ static const uint32_t STAGE_BASE = 0x00100000;
 
 static const uint32_t CTRL_GO_WRITE  = 0x5DB00001;
 static const uint32_t CTRL_GO_VERIFY = 0x5DB00002;
+static const uint32_t CTRL_GO_READ   = 0x5DB00003;
 static const uint32_t IDENT_VALUE    = 0x5DB70001;
 
 // ═════════════════════════════════════════════════════════════════════
@@ -599,7 +603,7 @@ static bool test_card_init_ready() {
     CHECK_TRUE("card_ready asserted", dut->card_ready);
 
     CHECK_EQ("IDENT", axi_read32(REG_IDENT), IDENT_VALUE);
-    CHECK_EQ("CAPS", axi_read32(REG_CAPS), (1u << 16) | STAGE_SECTORS);
+    CHECK_EQ("CAPS", axi_read32(REG_CAPS), (2u << 16) | STAGE_SECTORS);
     uint32_t st = axi_read32(REG_STATUS);
     CHECK_TRUE("STATUS.card_ready", (st & 0x100) != 0);
     CHECK_TRUE("STATUS.init_error clear", (st & 0x200) == 0);
@@ -986,6 +990,133 @@ static bool test_write_verify_alternation() {
     return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// GO_READ (CAPS v2): CMD18 read that lands the card bytes in staging.
+// ─────────────────────────────────────────────────────────────────────
+
+// Burst-read the first nbytes of staging (256-beat bursts, the JTAG
+// shape) and unpack to the byte stream (inverse of pack_words).
+static bool stage_dump(size_t nbytes, std::vector<uint8_t>& out) {
+    std::vector<uint32_t> w((nbytes + 3) / 4);
+    for (size_t off = 0; off < w.size(); off += 256) {
+        int n = (int)((w.size() - off) < 256 ? (w.size() - off) : 256);
+        if (!axi_read_burst(STAGE_BASE + (uint32_t)(off * 4), &w[off], n))
+            return false;
+    }
+    out.resize(nbytes);
+    for (size_t k = 0; k < nbytes; k++)
+        out[k] = (uint8_t)(w[k >> 2] >> (8 * (k & 3)));
+    return true;
+}
+
+static bool check_bytes(const char* what, const std::vector<uint8_t>& got,
+                        const std::vector<uint8_t>& exp) {
+    if (got.size() != exp.size()) {
+        printf("  FAIL %s: size %zu vs %zu\n", what, got.size(), exp.size());
+        return false;
+    }
+    for (size_t k = 0; k < got.size(); k++) {
+        if (got[k] != exp[k]) {
+            printf("  FAIL %s: byte %zu (sector %zu +%zu) got 0x%02x expected 0x%02x\n",
+                   what, k, k / 512, k % 512, got[k], exp[k]);
+            return false;
+        }
+    }
+    return true;
+}
+
+static std::vector<uint8_t> card_bytes(uint32_t lba0, uint32_t nsec) {
+    std::vector<uint8_t> v;
+    for (uint32_t s = 0; s < nsec; s++) {
+        auto& sec = sd.storage[lba0 + s];
+        v.insert(v.end(), sec.begin(), sec.end());
+    }
+    return v;
+}
+
+static bool test_read_back_written() {
+    // CMD25-write a pattern, scrub staging, GO_READ the range: staging
+    // must hold the written bytes again and CRC32 must equal CRC(P).
+    const uint32_t NSEC = 37;
+    const uint32_t LBA  = 50000;
+    std::vector<uint8_t> p(NSEC * 512), junk(NSEC * 512);
+    for (size_t i = 0; i < p.size(); i++) {
+        p[i]    = (uint8_t)((i * 53 + (i >> 9) * 7 + 3) & 0xFF);
+        junk[i] = (uint8_t)((i * 211 + 99) & 0xFF);
+    }
+    CHECK_TRUE("stage P", stage_fill(p));
+    uint32_t wcrc = 0;
+    CHECK_TRUE("write P", do_write(LBA, NSEC, &wcrc));
+    CHECK_EQ("write CRC", wcrc, crc32_of(p));
+
+    CHECK_TRUE("scrub staging", stage_fill(junk));
+    // Word just past the read range: an off-by-one write would clobber it.
+    const uint32_t past_before = axi_read32(STAGE_BASE + (uint32_t)p.size());
+    uint32_t rcrc = 0;
+    CHECK_TRUE("GO_READ", do_op(CTRL_GO_READ, LBA, NSEC, &rcrc, nullptr));
+    CHECK_EQ("read CRC == CRC(P)", rcrc, crc32_of(p));
+    std::vector<uint8_t> got;
+    CHECK_TRUE("dump staging", stage_dump(p.size(), got));
+    CHECK_TRUE("staging == P", check_bytes("read-back", got, p));
+    CHECK_EQ("no write past the range", axi_read32(STAGE_BASE + (uint32_t)p.size()),
+             past_before);
+
+    // A GO_VERIFY must NOT touch staging (bit-identical legacy op).
+    CHECK_TRUE("scrub staging 2", stage_fill(junk));
+    uint32_t vcrc = 0;
+    CHECK_TRUE("verify", do_verify(LBA, NSEC, &vcrc));
+    CHECK_EQ("verify CRC", vcrc, crc32_of(p));
+    CHECK_TRUE("dump staging 2", stage_dump(junk.size(), got));
+    CHECK_TRUE("verify leaves staging alone", check_bytes("verify-staging", got, junk));
+    CHECK_TRUE("model clean", !sd.bad);
+    return true;
+}
+
+static bool test_read_full_stage_and_corruption() {
+    // Full STAGE_SECTORS batch of preloaded card content, then a 1-sector
+    // read, then a read that sees a deliberately corrupted card byte.
+    const uint32_t LBA = 60000;
+    card_preload(LBA, STAGE_SECTORS);
+    std::vector<uint8_t> exp = card_bytes(LBA, STAGE_SECTORS);
+    uint32_t rcrc = 0;
+    CHECK_TRUE("GO_READ 256", do_op(CTRL_GO_READ, LBA, STAGE_SECTORS, &rcrc, nullptr));
+    CHECK_EQ("read CRC 256", rcrc, crc32_of(exp));
+    std::vector<uint8_t> got;
+    CHECK_TRUE("dump 256", stage_dump(exp.size(), got));
+    CHECK_TRUE("staging == card (256)", check_bytes("read-256", got, exp));
+
+    // One sector at a different LBA: lands at staging offset 0.
+    std::vector<uint8_t> e1 = card_bytes(LBA + 200, 1);
+    CHECK_TRUE("GO_READ 1", do_op(CTRL_GO_READ, LBA + 200, 1, &rcrc, nullptr));
+    CHECK_EQ("read CRC 1", rcrc, crc32_of(e1));
+    CHECK_TRUE("dump 1", stage_dump(512, got));
+    CHECK_TRUE("staging == card (1)", check_bytes("read-1", got, e1));
+    // Sector 1 of staging still holds the previous batch's sector 1.
+    CHECK_TRUE("dump 2", stage_dump(1024, got));
+    std::vector<uint8_t> s1(exp.begin() + 512, exp.begin() + 1024);
+    std::vector<uint8_t> g1(got.begin() + 512, got.end());
+    CHECK_TRUE("rest of staging untouched", check_bytes("read-1-tail", g1, s1));
+
+    // Corrupt a card byte: the read must show it, CRC included.
+    sd.storage[LBA + 77][301] ^= 0x5A;
+    exp = card_bytes(LBA, 100);
+    CHECK_TRUE("GO_READ corrupt", do_op(CTRL_GO_READ, LBA, 100, &rcrc, nullptr));
+    CHECK_EQ("read CRC corrupt", rcrc, crc32_of(exp));
+    CHECK_TRUE("dump corrupt", stage_dump(exp.size(), got));
+    CHECK_TRUE("staging shows corruption", check_bytes("read-corrupt", got, exp));
+    sd.storage[LBA + 77][301] ^= 0x5A;
+
+    // BLKCNT guard applies to GO_READ too.
+    CHECK_TRUE("set BLKCNT big", axi_write32(REG_BLKCNT, STAGE_SECTORS + 1));
+    CHECK_TRUE("GO_READ big", axi_write32(REG_CTRL, CTRL_GO_READ));
+    for (int i = 0; i < 50; i++) tick();
+    uint32_t st = axi_read32(REG_STATUS);
+    CHECK_TRUE("blkcnt>stage error", (st & 4) != 0);
+    CHECK_EQ("blkcnt>stage cause", (st >> 4) & 0xF, 0xE);
+    CHECK_TRUE("model clean", !sd.bad);
+    return true;
+}
+
 #define RUN(fn) do { \
     printf("Running " #fn "...\n"); \
     bool ok = fn(); \
@@ -1018,6 +1149,8 @@ int main(int argc, char** argv) {
     RUN(test_verify_partial_then_full);
     RUN(test_verify_corruption_positions);
     RUN(test_write_verify_alternation);
+    RUN(test_read_back_written);
+    RUN(test_read_full_stage_and_corruption);
 
     printf("\nsd_provision: %d passed, %d failed\n", n_pass, n_fail);
     dut->final();

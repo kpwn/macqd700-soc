@@ -16,6 +16,11 @@
 //   whole batch end-to-end with two register pokes instead of re-reading
 //   128 KiB over JTAG.
 //
+//   A CMD18 "read" op (CAPS version >= 2) is the verify op that ALSO
+//   lands every read byte in the staging BRAM (same layout the write op
+//   streams from), so the host can burst-read the card's contents out of
+//   the staging window — e.g. to byte-diff a card against its image.
+//
 // Address map (bit 20 of the AXI address selects the window):
 //   addr[20] == 0 — register window (byte offsets):
 //     0x00 LBA     R/W  target start sector (block address)
@@ -23,6 +28,8 @@
 //                                    from staging RAM at LBA
 //                       0x5DB00002 = bulk CMD18 CRC32 verify of BLKCNT
 //                                    sectors starting at LBA
+//                       0x5DB00003 = bulk CMD18 READ of BLKCNT sectors
+//                                    at LBA into staging RAM (+ CRC32)
 //     0x08 STATUS  R    bit0 busy, bit1 done-sticky, bit2 error,
 //                       bits[7:4] err_cause (sd_ctrl codes 0..6,
 //                       0xE = bad BLKCNT, 0xF = card not ready),
@@ -30,9 +37,11 @@
 //     0x0C BLKCNT  R/W  sectors per bulk op, 1..STAGE_SECTORS
 //     0x10 CRC32   R    zlib-final CRC32 of the last op's byte stream
 //                       (write op: bytes streamed to the card; verify
-//                       op: bytes read back from the card)
+//                       op: bytes read back from the card; read op:
+//                       bytes read from the card = bytes now in staging)
 //     0x14 IDENT   R    0x5DB70001
-//     0x18 CAPS    R    {version[15:0]=1, STAGE_SECTORS[15:0]}
+//     0x18 CAPS    R    {version[15:0], STAGE_SECTORS[15:0]}
+//                       version 1: write + verify; 2: adds GO_READ
 //   addr[20] == 1 — staging RAM window, STAGE_SECTORS*512 bytes,
 //     32-bit little-endian words (byte k of the sector stream lives in
 //     word k>>2, bits [8*(k&3) +: 8]).  Burst reads are also served
@@ -119,14 +128,16 @@ module sd_bulk_writer #(
 
     localparam [31:0] CTRL_GO_WRITE  = 32'h5DB0_0001;
     localparam [31:0] CTRL_GO_VERIFY = 32'h5DB0_0002;
+    localparam [31:0] CTRL_GO_READ   = 32'h5DB0_0003;
     localparam [31:0] IDENT_VALUE    = 32'h5DB7_0001;
     localparam [31:0] STAGE_SECTORS_W = STAGE_SECTORS;
-    localparam [31:0] CAPS_VALUE     = {16'd1, STAGE_SECTORS_W[15:0]};
+    localparam [31:0] CAPS_VALUE     = {16'd2, STAGE_SECTORS_W[15:0]};
 
     // ──────────────────────────────────────────────────────────────────
     // Staging RAM — true dual port BRAM.
     //   Port A: AXI window (byte-enable writes + sync reads).
-    //   Port B: SPI-stream byte prefetch (sync reads only).
+    //   Port B: SPI-stream byte prefetch (sync reads) for the write op;
+    //           byte-lane writes of card data for the read op.
     // No reset initialisation (BRAM contents are host-loaded).
     // ──────────────────────────────────────────────────────────────────
     (* ram_style = "block" *) reg [31:0] stage_ram [0:STAGE_WORDS-1];
@@ -148,7 +159,16 @@ module sd_bulk_writer #(
 
     reg  [STAGE_AW-1:0] b_addr;
     reg  [31:0]         b_rdata;
+    reg                 b_wen;
+    reg  [3:0]          b_be;
+    reg  [7:0]          b_wbyte;
     always @(posedge clk) begin
+        if (b_wen) begin
+            if (b_be[0]) stage_ram[b_addr][7:0]   <= b_wbyte;
+            if (b_be[1]) stage_ram[b_addr][15:8]  <= b_wbyte;
+            if (b_be[2]) stage_ram[b_addr][23:16] <= b_wbyte;
+            if (b_be[3]) stage_ram[b_addr][31:24] <= b_wbyte;
+        end
         b_rdata <= stage_ram[b_addr];
     end
 
@@ -180,7 +200,8 @@ module sd_bulk_writer #(
     reg        error_q;
     reg [3:0]  err_cause_q;
     reg [31:0] crc_q;
-    reg        mode_write_q;        // 1 = CMD25 write, 0 = CMD18 verify
+    reg        mode_write_q;        // 1 = CMD25 write, 0 = CMD18 verify/read
+    reg        mode_read_q;         // 1 = CMD18 read op (bytes -> staging)
 
     reg        start_q;
     reg        ctrl_go_q;
@@ -286,6 +307,10 @@ module sd_bulk_writer #(
             err_cause_q   <= 4'd0;
             crc_q         <= 32'hFFFF_FFFF;
             mode_write_q  <= 1'b1;
+            mode_read_q   <= 1'b0;
+            b_wen         <= 1'b0;
+            b_be          <= 4'h0;
+            b_wbyte       <= 8'h00;
             start_q       <= 1'b0;
             ctrl_go_q     <= 1'b0;
             bidx_q        <= {BIDX_W{1'b0}};
@@ -339,7 +364,8 @@ module sd_bulk_writer #(
                     end
                     REG_CTRL: begin
                         if (((s_wdata == CTRL_GO_WRITE) ||
-                             (s_wdata == CTRL_GO_VERIFY)) && idle) begin
+                             (s_wdata == CTRL_GO_VERIFY) ||
+                             (s_wdata == CTRL_GO_READ)) && idle) begin
                             if (!card_ready) begin
                                 done_sticky_q <= 1'b1;
                                 error_q       <= 1'b1;
@@ -354,6 +380,7 @@ module sd_bulk_writer #(
                                 err_cause_q   <= 4'd0;
                                 crc_q         <= 32'hFFFF_FFFF;
                                 mode_write_q  <= (s_wdata == CTRL_GO_WRITE);
+                                mode_read_q   <= (s_wdata == CTRL_GO_READ);
                                 ctrl_go_q     <= 1'b1;
                                 start_q       <= 1'b1;
                                 // Prime the byte prefetch at index 0.
@@ -420,6 +447,18 @@ module sd_bulk_writer #(
             end
             if (ctrl_rd_valid && !mode_write_q) begin
                 crc_q <= crc32_byte(crc_q, ctrl_rd_data);
+            end
+            // Read op: land each card byte in staging at the running byte
+            // index (port B write one cycle later).  bidx_q is free here —
+            // the write-op prefetch never advances it outside mode_write_q.
+            // BLKCNT <= STAGE_SECTORS (blkcnt_ok) bounds the index.
+            b_wen <= 1'b0;
+            if (ctrl_rd_valid && mode_read_q) begin
+                b_wen   <= 1'b1;
+                b_addr  <= bidx_q[STAGE_AW+1:2];
+                b_be    <= 4'b0001 << bidx_q[1:0];
+                b_wbyte <= ctrl_rd_data;
+                bidx_q  <= bidx_next;
             end
 
             if (ctrl_done) begin
