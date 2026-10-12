@@ -5177,6 +5177,20 @@ $(SCSI_SD_E2E_C96_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
 		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
 	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_C96_BUILD),+define+SCSI_E2E_C96 -CFLAGS "-DSCSI_E2E_C96")
 
+# tb-scsi-sd-e2e-c96-fifoorder -- the C96 e2e with the pseudo-DMA OUT
+# byte-order fix ON (`SCSI_PDMA_OUT_FIFO_ORDER, rtl/mac/scsi.v).  c26 is the
+# regression: it FAILS (silent reorder at the card) in tb-scsi-sd-e2e-c96 while
+# the default is 1'b0, and must PASS here.
+SCSI_SD_E2E_C96_FO_BUILD := $(BUILD_DIR)/scsi_sd_e2e_c96_fo
+.PHONY: tb-scsi-sd-e2e-c96-fifoorder
+tb-scsi-sd-e2e-c96-fifoorder: $(SCSI_SD_E2E_C96_FO_BUILD)/Vtb_scsi_sd_e2e
+	@echo "Running C96 SCSI/SD e2e with SCSI_PDMA_OUT_FIFO_ORDER=1..."
+	$(SCSI_SD_E2E_C96_FO_BUILD)/Vtb_scsi_sd_e2e
+
+$(SCSI_SD_E2E_C96_FO_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
+		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_C96_FO_BUILD),+define+SCSI_E2E_C96 "+define+SCSI_PDMA_OUT_FIFO_ORDER=1'b1" -CFLAGS "-DSCSI_E2E_C96")
+
 .PHONY: tb-scsi-sd-e2e-c96-core100
 tb-scsi-sd-e2e-c96-core100: $(SCSI_SD_E2E_C96_CORE100_BUILD)/Vtb_scsi_sd_e2e
 	@echo "Running C96 SCSI/SD e2e at production core=100 MHz, pb=50 MHz, SPI=25 MHz..."

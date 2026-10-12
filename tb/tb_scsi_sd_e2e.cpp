@@ -1285,6 +1285,7 @@ static bool c96_finish(uint8_t& status, uint8_t& msg) {
 // reaches 0 on the same beat that moves the FSM out of S_DATA_OUT, so
 // that chunk's I_BUS only arrives via the phase-change hook once the
 // whole SD write has completed.
+static bool g_blind_chunk = false;
 static bool c96_dma_out_chunk(const uint8_t* buf, int n,
                               bool wait_done,
                               int stall_at = -1, int stall_ns = 0) {
@@ -1292,7 +1293,9 @@ static bool c96_dma_out_chunk(const uint8_t* buf, int n,
     reg_w(0x1, (uint8_t)((n >> 8) & 0xFF));
     reg_w(0x3, 0x80 | CI_XFER);
     for (int i = 0; i < n; i++) {
-        if (!c96_wait_drq()) {
+        // g_blind_chunk: the Mac's shape -- ONE DRQ check per chunk, then a
+        // blind back-to-back burst (ROM/SCSI Manager pseudo-DMA loops).
+        if ((!g_blind_chunk || i == 0) && !c96_wait_drq()) {
             std::printf("  FAIL c96: DRQ never rose for out byte %d "
                         "(status=0x%02x)\n", i, reg_r(0x4));
             return false;
@@ -1427,6 +1430,12 @@ static bool c96_write10_multi(uint32_t lba, int blocks, int chunk,
         }
     }
     if (bad_bytes) {
+        auto it = sd.sectors.find(SD_LBA_BIAS + lba + first_bad_blk);
+        if (it != sd.sectors.end()) {
+            std::printf("  got :"); for (int i = 0; i < 40; i++) std::printf(" %02x", it->second[i]);
+            std::printf("\n  want:"); for (int i = 0; i < 40; i++) std::printf(" %02x", payload[first_bad_blk * 512 + i]);
+            std::printf("\n");
+        }
         std::printf("  FAIL %s: SILENT DATA CORRUPTION — %d of %d bytes wrong "
                     "at the card (first: blk%d byte%d got=0x%02x want=0x%02x), "
                     "SCSI status was GOOD\n",
@@ -1837,6 +1846,28 @@ static bool c23_c96_adaptive_coherency_and_capacity() {
 //      is full and the initiator waits.  Without it the initiator runs
 //      ~1500 bytes ahead and buf_wr_ptr (mod 512) overwrites bytes the
 //      provider has not drained — wrong payload, right LBA, GOOD status.
+// c26 — BYTE-ORDER under SD back-pressure with a Mac-shaped producer
+// (2026-10-12 silicon HFS catalog corruption).  One DRQ check per 16-byte
+// chunk then a blind burst, while the card is slow enough (write busy) that
+// the multi-block ring fills and t_req drops mid-chunk.  A byte that lands
+// while t_req is low is staged in the chip FIFO; a LATER byte must never
+// overtake it into sec_buf.  Byte-exact compare at the card pins.
+static bool c26_c96_write_order_under_backpressure() {
+    const bool saved_blind = g_blind_chunk;
+    const int  saved_busy  = card_write_busy_bytes;
+    g_blind_chunk = true;
+    bool ok = true;
+    for (int busy : {64, 600, 4096}) {
+        card_write_busy_bytes = busy;
+        char tag[64];
+        std::snprintf(tag, sizeof tag, "c26 blind busy=%d", busy);
+        if (!c96_write10_multi(400 + busy % 97, 6, 16, -1, 0, tag)) ok = false;
+    }
+    g_blind_chunk = saved_blind;
+    card_write_busy_bytes = saved_busy;
+    return ok;
+}
+
 static bool c2_c96_write10_4blocks_full_tilt() {
     return c96_write10_multi(200, 4, 16, -1, 0, "c2");
 }
@@ -2184,6 +2215,7 @@ int main(int argc, char** argv) {
     RUN(c21_c96_card_latency_profiles);
     RUN(c22_c96_small_read_workloads);
     RUN(c23_c96_adaptive_coherency_and_capacity);
+    RUN(c26_c96_write_order_under_backpressure);
     RUN(c2_c96_write10_4blocks_full_tilt);
     RUN(c3_c96_write10_4blocks_stall_mid_block2);
     RUN(c4_c96_write6_2blocks_nondma);
