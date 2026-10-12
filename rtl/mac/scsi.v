@@ -1872,9 +1872,9 @@ module scsi #(
     // dma_w() always pushes and sends from the FIFO head, so in C96 mode a
     // direct beat is only legal when the FIFO is EMPTY; otherwise the byte
     // queues behind the staged ones (tcounter still decrements once, at the
-    // push).  `SCSI_PDMA_OUT_FIFO_ORDER = 1'b1 enables it (one-token flip).
+    // push).  `SCSI_PDMA_OUT_FIFO_ORDER = 1'b1 enables it (default ON; 1'b0 restores the old bypass).
 `ifndef SCSI_PDMA_OUT_FIFO_ORDER
-`define SCSI_PDMA_OUT_FIFO_ORDER 1'b0
+`define SCSI_PDMA_OUT_FIFO_ORDER 1'b1
 `endif
     wire pdma_out_fifo_order = `SCSI_PDMA_OUT_FIFO_ORDER;
     wire pseudo_dma_out_beat = pb_wr && pb_dma_shim && (phase == S_DATA_OUT) &&

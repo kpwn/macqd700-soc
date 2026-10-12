@@ -45,6 +45,13 @@ module tb_scsi_sd_e2e (
     input  wire [7:0]  pb_wdata,
     input  wire        pb_wr,
     input  wire        pb_rd,
+    // 1 = this shim write/read is the LOW half of a split 16-bit access
+    // (peripheral_bus.v's scsi_dma16_lo_beat), driven by the C++ tb.
+    input  wire        pb_dma16_lo_beat,
+    // DAFB m_scsi_ctrl[0] mirror (bit 8 = DRQ-checked pseudo-DMA writes)
+    // and the resulting write hold-off, for the Mac-shaped c27 producer.
+    input  wire [8:0]  scsi_ctrl_tb,
+    output wire        dma_wr_ready_tb,
     output wire [7:0]  pb_rdata,
     output wire        pb_ack,
 
@@ -100,7 +107,6 @@ module tb_scsi_sd_e2e (
     wire [7:0]  spi_rsp_data;
     /* verilator lint_off UNUSEDSIGNAL */
     wire        scsi_dma_rd_ready_unused;
-    wire        scsi_dma_wr_ready_unused;
     /* verilator lint_on UNUSEDSIGNAL */
 
     // ══════════════════════════════════════════════════════════════════
@@ -166,7 +172,7 @@ module tb_scsi_sd_e2e (
         // host 16-bit pseudo-DMA access into two beats, so the low-half
         // flag is tied low (the historical behaviour of this port before
         // tb_scsi_vhdd_sd.v exposed it for the SCSI differential fuzzer).
-        .pb_dma16_lo_beat(1'b0),
+        .pb_dma16_lo_beat(pb_dma16_lo_beat),
         .pb_wdata      (pb_wdata),
         .pb_wr         (pb_wr),
         .pb_rd         (pb_rd),
@@ -180,7 +186,7 @@ module tb_scsi_sd_e2e (
         // unused here (bare-5380 path, TURBOSCSI_C96=0 keeps them
         // constant 1); connected explicitly to satisfy PINMISSING lint.
         .dma_rd_ready  (scsi_dma_rd_ready_unused),
-        .dma_wr_ready  (scsi_dma_wr_ready_unused),
+        .dma_wr_ready  (dma_wr_ready_tb),
 
         .sd_cmd_type    (pb_sd_cmd_type),
         .sd_lba         (pb_sd_lba),
@@ -198,7 +204,7 @@ module tb_scsi_sd_e2e (
         .sd_wr_avail    (pb_sd_wr_avail),
         // TurboSCSI DAFB shim ctrl register — only consumed when
         // TURBOSCSI_C96=1; the bare-5380 path ignores it.  Tie low.
-        .scsi_ctrl_in   (9'd0)
+        .scsi_ctrl_in   (scsi_ctrl_tb)
     );
 
     // ══════════════════════════════════════════════════════════════════
