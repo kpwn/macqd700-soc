@@ -5173,9 +5173,11 @@ tb-scsi-sd-e2e-c96: $(SCSI_SD_E2E_C96_BUILD)/Vtb_scsi_sd_e2e
 	@echo "Running scsi ↔ SD end-to-end tb through the 53C96 pseudo-DMA front end..."
 	$(SCSI_SD_E2E_C96_BUILD)/Vtb_scsi_sd_e2e
 
-$(SCSI_SD_E2E_C96_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
+$(SCSI_SD_E2E_C96_BUILD)/Vtb_scsi_sd_e2e: Makefile $(SCSI_SD_E2E_RTL) \
 		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
-	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_C96_BUILD),+define+SCSI_E2E_C96 -CFLAGS "-DSCSI_E2E_C96")
+	# c21 models a card with a 4096-byte command gap (>1 ms at 25 MHz).
+	# Use the hardware's 160 ms supply watchdog, not the shortened sim bound.
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_C96_BUILD),+define+SCSI_E2E_C96 +define+SCSI_REAL_TIMEOUTS -CFLAGS "-DSCSI_E2E_C96")
 
 # tb-scsi-sd-e2e-c96-noorder -- POSITIVE CONTROL for the pseudo-DMA OUT byte-
 # order fix (`SCSI_PDMA_OUT_FIFO_ORDER, rtl/mac/scsi.v, default ON).  Builds the
@@ -5190,9 +5192,9 @@ tb-scsi-sd-e2e-c96-noorder: $(SCSI_SD_E2E_C96_NO_BUILD)/Vtb_scsi_sd_e2e
 		echo "  [OK] c26 fails with the fix off (rig sees the reorder)"; \
 	else echo "  [BAD] c26 passed with the fix OFF -- regression measures nothing"; exit 1; fi
 
-$(SCSI_SD_E2E_C96_NO_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
+$(SCSI_SD_E2E_C96_NO_BUILD)/Vtb_scsi_sd_e2e: Makefile $(SCSI_SD_E2E_RTL) \
 		$(RTL_DIR)/soc/vhdd_mux.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
-	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_C96_NO_BUILD),+define+SCSI_E2E_C96 "+define+SCSI_PDMA_OUT_FIFO_ORDER=1'b0" -CFLAGS "-DSCSI_E2E_C96")
+	$(call SCSI_SD_E2E_BUILD_RULE,$(SCSI_SD_E2E_C96_NO_BUILD),+define+SCSI_E2E_C96 +define+SCSI_REAL_TIMEOUTS "+define+SCSI_PDMA_OUT_FIFO_ORDER=1'b0" -CFLAGS "-DSCSI_E2E_C96")
 
 .PHONY: tb-scsi-sd-e2e-c96-core100
 tb-scsi-sd-e2e-c96-core100: $(SCSI_SD_E2E_C96_CORE100_BUILD)/Vtb_scsi_sd_e2e
