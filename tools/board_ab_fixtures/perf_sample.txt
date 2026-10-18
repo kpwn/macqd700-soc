@@ -1,0 +1,25 @@
+> perf: OFF_PERF_CTL=0x001F1202 counters=18 run=1 producers={rob:1 dcache:1 icache:1 dtlb:1 itlb:1}
+>       (counters were FROZEN for this read and resumed -- the read pass itself is not in the window)
+>   window cycles              38,351,506,215   core_clk, counted while RUN=1
+>   retired macro-insts         5,128,236,571   0/1/2 per cycle
+>   branch mispredicts            510,023,597   commit-time redirects (OFF_MISPRED_COUNT)
+>   pipeline flushes              564,656,177   every whole-ROB squash (OFF_FLUSH_COUNT)
+>   retired branches            1,203,978,937   BTB-eligible only -- see note below
+>   D-cache load misses           408,197,934   
+>   I-cache demand misses         260,035,460   prefetch fills NOT counted
+>   DTLB table walks               72,339,071   
+>   ITLB table walks               83,252,944   
+>   stall cycles: retire        4,239,886,718   ROB non-empty, nothing retired
+>   stall cycles: dcache        1,236,562,926   D-cache busy
+>   stall cycles: walk          3,254,695,374   either walker out of IDLE
+>   derived: IPC = 0.1337   (5,128,236,571 inst / 38,351,506,215 cycles)
+>   derived: per-kilo-instruction:  mispred=99.454  flush=110.107  dc-miss=79.598  ic-miss=50.707  dtlb-walk=14.106  itlb-walk=16.234
+>   derived: mispredict rate = 42.36% of retired BTB-eligible branches
+>   derived: retire-stall = 11.06% of window cycles
+>   free-running (NOT windowed, never cleared): cycles=38,355,304,283 macros=5,128,633,108
+>   NOTE 'retired branches' counts the BTB-UPDATE flow, i.e. BTB-eligible
+>        branches only, so it is a LOWER BOUND on all retired branches.
+>        'branch mispredicts' has no such filter -- it is the commit-time
+>        redirect itself -- so the rate above is an UPPER bound.  Both are
+>        real measurements; neither is the other's exact denominator.
+> READY
