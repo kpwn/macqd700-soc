@@ -1285,6 +1285,12 @@ static bool c96_finish(uint8_t& status, uint8_t& msg) {
 // reaches 0 on the same beat that moves the FSM out of S_DATA_OUT, so
 // that chunk's I_BUS only arrives via the phase-change hook once the
 // whole SD write has completed.
+static bool g_blind_chunk = false;
+static bool g_word_mode = false;
+static int  g_word_gap_ns = 0;   // CPU+xbar+PB cost per 16-bit write
+#ifndef SCSI_C27_CTRL
+#define SCSI_C27_CTRL 0x180
+#endif
 static bool c96_dma_out_chunk(const uint8_t* buf, int n,
                               bool wait_done,
                               int stall_at = -1, int stall_ns = 0) {
@@ -1292,7 +1298,28 @@ static bool c96_dma_out_chunk(const uint8_t* buf, int n,
     reg_w(0x1, (uint8_t)((n >> 8) & 0xFF));
     reg_w(0x3, 0x80 | CI_XFER);
     for (int i = 0; i < n; i++) {
-        if (!c96_wait_drq()) {
+        // g_blind_chunk: the Mac's shape -- ONE DRQ check per chunk, then a
+        // blind back-to-back burst (ROM/SCSI Manager pseudo-DMA loops).
+        if (g_word_mode) {
+            // 7.5.3 SCSI Manager shape (MAME iolog, 0x9DD30-0x9DD4E):
+            // `move.w (a2)+,(a1)` to the pseudo-DMA port, unrolled 16x per
+            // dbf -- one DRQ check per 16 WORDS, then a blind burst.  Each
+            // word reaches scsi.v as the fabric's two byte beats: HIGH
+            // (even) byte, then LOW (odd) byte flagged pb_dma16_lo_beat.
+            if ((i % 32) == 0 && !c96_wait_drq()) {
+                std::printf("  FAIL c96: DRQ never rose for out word at %d\n", i);
+                return false;
+            }
+            // peripheral_bus.v's pulse gate: a beat fires only while
+            // dma_wr_ready (DAFB DRQ-checked write hold-off) reads 1.
+            for (int t = 0; t < 4000000 && !dut->dma_wr_ready_tb; t++) tick_1ns();
+            shim_w(buf[i]);
+            if (i + 1 < n) { dut->pb_dma16_lo_beat = 1; shim_w(buf[i + 1]); dut->pb_dma16_lo_beat = 0; }
+            if (g_word_gap_ns) run_ns(g_word_gap_ns);
+            i++;
+            continue;
+        }
+        if ((!g_blind_chunk || i == 0) && !c96_wait_drq()) {
             std::printf("  FAIL c96: DRQ never rose for out byte %d "
                         "(status=0x%02x)\n", i, reg_r(0x4));
             return false;
@@ -1427,6 +1454,12 @@ static bool c96_write10_multi(uint32_t lba, int blocks, int chunk,
         }
     }
     if (bad_bytes) {
+        auto it = sd.sectors.find(SD_LBA_BIAS + lba + first_bad_blk);
+        if (it != sd.sectors.end()) {
+            std::printf("  got :"); for (int i = 0; i < 40; i++) std::printf(" %02x", it->second[i]);
+            std::printf("\n  want:"); for (int i = 0; i < 40; i++) std::printf(" %02x", payload[first_bad_blk * 512 + i]);
+            std::printf("\n");
+        }
         std::printf("  FAIL %s: SILENT DATA CORRUPTION — %d of %d bytes wrong "
                     "at the card (first: blk%d byte%d got=0x%02x want=0x%02x), "
                     "SCSI status was GOOD\n",
@@ -1837,6 +1870,67 @@ static bool c23_c96_adaptive_coherency_and_capacity() {
 //      is full and the initiator waits.  Without it the initiator runs
 //      ~1500 bytes ahead and buf_wr_ptr (mod 512) overwrites bytes the
 //      provider has not drained — wrong payload, right LBA, GOOD status.
+// c26 — BYTE-ORDER under SD back-pressure with a Mac-shaped producer
+// (2026-10-12 silicon HFS catalog corruption).  One DRQ check per 16-byte
+// chunk then a blind burst, while the card is slow enough (write busy) that
+// the multi-block ring fills and t_req drops mid-chunk.  A byte that lands
+// while t_req is low is staged in the chip FIFO; a LATER byte must never
+// overtake it into sec_buf.  Byte-exact compare at the card pins.
+static bool c26_c96_write_order_under_backpressure() {
+    const bool saved_blind = g_blind_chunk;
+    const int  saved_busy  = card_write_busy_bytes;
+    g_blind_chunk = true;
+    bool ok = true;
+    for (int busy : {64, 600, 4096}) {
+        card_write_busy_bytes = busy;
+        char tag[64];
+        std::snprintf(tag, sizeof tag, "c26 blind busy=%d", busy);
+        if (!c96_write10_multi(400 + busy % 97, 6, 16, -1, 0, tag)) ok = false;
+    }
+    g_blind_chunk = saved_blind;
+    card_write_busy_bytes = saved_busy;
+    return ok;
+}
+
+// c27 -- the 7.5.3 SCSI Manager DATA-OUT shape (MAME iolog, 0x9DD30-0x9DD4E):
+// one DMA|CI_XFER of 512 bytes per block (tcount 0x0200), data as 16-bit
+// `move.w (a2)+,(a1)` pseudo-DMA writes -- each a HIGH beat then a LOW beat
+// flagged pb_dma16_lo_beat -- one DRQ check per 16 words then a blind burst,
+// gated per beat on dma_wr_ready with the DAFB DRQ-checked-write bit set.
+// Byte-exact at the card.  NOTE: in this rig the word shape does NOT
+// reproduce the reorder with the fix off (c26's byte-beat shape does); with
+// DAFB bit 8 CLEAR a blind 16-word burst overruns the 16-byte FIFO whenever
+// the ring is full (lost byte, chunk never completes) on BOTH arms, and
+// passes on both when the producer is slower than the card.  c27 therefore
+// guards the 16-bit lo-beat path under the fix, not the reorder itself.
+static bool c27_c96_word_burst_write_order() {
+    const bool saved_word = g_word_mode;
+    const int  saved_busy = card_write_busy_bytes;
+    g_word_mode = true;
+    // scsi_ctrl bit 8 CLEAR: the DAFB does not hold writes off, so every
+    // beat of the blind burst lands whenever it arrives (with bit 8 set the
+    // hold-off keeps writes out while REQ is down and nothing reorders).
+    dut->scsi_ctrl_tb = SCSI_C27_CTRL;
+    bool ok = true;
+    const int saved_gap = card_interblock_gap_bytes;
+    for (int wgap : {0, 120})
+    for (int busy : {4, 600, 4096}) {
+        const int gap = 0;
+        card_write_busy_bytes = busy;
+        card_interblock_gap_bytes = gap;
+        g_word_gap_ns = wgap;
+        char tag[64];
+        std::snprintf(tag, sizeof tag, "c27 word-burst busy=%d wgap=%dns", busy, wgap);
+        if (!c96_write10_multi(500 + busy % 89 + wgap % 7, 6, 512, -1, 0, tag)) ok = false;
+    }
+    card_interblock_gap_bytes = saved_gap;
+    g_word_gap_ns = 0;
+    g_word_mode = saved_word;
+    dut->scsi_ctrl_tb = 0;
+    card_write_busy_bytes = saved_busy;
+    return ok;
+}
+
 static bool c2_c96_write10_4blocks_full_tilt() {
     return c96_write10_multi(200, 4, 16, -1, 0, "c2");
 }
@@ -2184,6 +2278,8 @@ int main(int argc, char** argv) {
     RUN(c21_c96_card_latency_profiles);
     RUN(c22_c96_small_read_workloads);
     RUN(c23_c96_adaptive_coherency_and_capacity);
+    RUN(c26_c96_write_order_under_backpressure);
+    RUN(c27_c96_word_burst_write_order);
     RUN(c2_c96_write10_4blocks_full_tilt);
     RUN(c3_c96_write10_4blocks_stall_mid_block2);
     RUN(c4_c96_write6_2blocks_nondma);

@@ -1861,8 +1861,26 @@ module scsi #(
                                (TURBOSCSI_C96_EN
                                 ? (c96_fifo_pos != 5'd0)
                                 : t_req);
+    // ── PDMA OUT BYTE ORDER (2026-10-12, silicon HFS catalog corruption) ──
+    // A shim write that arrives while t_req is LOW (multi-block ring full,
+    // SD back-pressure) is staged in c96_fifo (the `!pseudo_dma_out_beat`
+    // push below).  Without this gate the NEXT shim write that finds t_req
+    // HIGH goes straight into sec_buf and OVERTAKES the staged bytes, which
+    // drain later through c96_out_send_beat -- a silent byte reorder at the
+    // card (board: the even/odd bytes of a node desynchronised by 15
+    // positions; tb c26: byte 8 of a chunk lands at byte 1).  MAME's
+    // dma_w() always pushes and sends from the FIFO head, so in C96 mode a
+    // direct beat is only legal when the FIFO is EMPTY; otherwise the byte
+    // queues behind the staged ones (tcounter still decrements once, at the
+    // push).  `SCSI_PDMA_OUT_FIFO_ORDER = 1'b1 enables it (default ON; 1'b0 restores the old bypass).
+`ifndef SCSI_PDMA_OUT_FIFO_ORDER
+`define SCSI_PDMA_OUT_FIFO_ORDER 1'b1
+`endif
+    wire pdma_out_fifo_order = `SCSI_PDMA_OUT_FIFO_ORDER;
     wire pseudo_dma_out_beat = pb_wr && pb_dma_shim && (phase == S_DATA_OUT) &&
-                               !c96_dma16_lo_swallow && t_req;
+                               !c96_dma16_lo_swallow && t_req &&
+                               !(pdma_out_fifo_order && TURBOSCSI_C96_EN &&
+                                 (c96_fifo_pos != 5'd0));
     // Non-DMA CI_XFER (0x10) in DATA IN: the chip itself REQ/ACKs data-in
     // bytes into the 16-byte FIFO for the CPU to pop at offset 2 (MAME
     // INIT_XFR non-DMA receive path).
