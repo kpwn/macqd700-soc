@@ -488,6 +488,15 @@
 ##                                    (CMD18 read-back) unless "noverify".
 ##                                    ~10 MiB in minutes vs many hours for
 ##                                    sd-write.  Tip: JTAG_TCK_HZ=30000000.
+##   sd-read <lba> <nsectors> <outfile> [noreread]
+##                                  — READ the card to a host file (needs
+##                                    the provisioning bitstream, CAPS v2).
+##                                    Per 256-sector batch: CMD18 into
+##                                    staging, burst-dump over JTAG, the
+##                                    dump must match the hardware CRC32
+##                                    (retried on mismatch), and a second
+##                                    CMD18 pass must reproduce the CRC
+##                                    unless "noreread".  Never writes.
 ##   sd-fast-status                 — decode the provisioning bitstream's
 ##                                    bulk-writer STATUS/IDENT/CAPS regs.
 ##   eth-status                     — decode the optional SONIC/Taxi telemetry
@@ -749,6 +758,7 @@ set SDP_OFF_IDENT     0x014
 set SDP_OFF_CAPS      0x018
 set SDP_CTRL_GO_WRITE  0x5DB00001
 set SDP_CTRL_GO_VERIFY 0x5DB00002
+set SDP_CTRL_GO_READ   0x5DB00003
 set SDP_IDENT          0x5DB70001
 # Burst word-order calibration result: "" (unknown), fwd (first word in the
 # -data hex string lands at the lowest address) or rev (last word does).
@@ -2145,6 +2155,187 @@ proc sd_verify_file {start_lba path {max_sectors 0}} {
     }
     close $fh
     return [list $done $bad]
+}
+
+# ── sd-read — READ the card out over JTAG (CAPS v2 GO_READ) ─────────────────
+# Forensics companion to sd-verify: instead of only a per-batch CRC, it dumps
+# the card's actual bytes to a host file so a corrupted card can be byte-diffed
+# against its golden image (cmp -l / sd_disk_diff.sh).
+#
+# Per batch (up to CAPS.stage_sectors sectors):
+#   1. CTRL=GO_READ → hardware CMD18-reads the range INTO the staging BRAM
+#      and latches the CRC32 of the bytes it received from the card;
+#   2. burst-read staging over JTAG-AXI (INCR, order calibrated once);
+#   3. the host CRC32 of the dumped bytes must equal the hardware CRC32 —
+#      a mismatch is JTAG-AXI corruption: re-dump (shorter bursts), then
+#      re-read the card, then reprogram-recover, before giving up;
+#   4. (default, "noreread" disables) CTRL=GO_VERIFY of the same range must
+#      reproduce the CRC — a second, independent pass over the SD wire, so a
+#      transient SPI read glitch is not mistaken for on-card corruption.
+# Never issues GO_WRITE: the card is not modified.
+
+set ::sdp_rd_order ""
+
+# One INCR burst read of $n (<= 256) words at $addr; returns INTEGERS in
+# ascending address order (per the calibrated ::sdp_rd_order).
+proc sdp_rdburst {addr n} {
+    create_hw_axi_txn -quiet -force _sdrb $::axi -type READ \
+        -address [format %08X $addr] -len $n -burst INCR
+    run_hw_axi -quiet _sdrb
+    set hex [get_property DATA [get_hw_axi_txns _sdrb]]
+    if {[string length $hex] != 8 * $n || ![string is xdigit -strict $hex]} {
+        error "sd-read: burst read at [format 0x%08X $addr] returned [string length $hex] hex chars, expected [expr {8 * $n}]"
+    }
+    binary scan [binary format H* $hex] I* ints
+    set out {}
+    foreach v $ints { lappend out [expr {$v & 0xFFFFFFFF}] }
+    if {$::sdp_rd_order eq "rev"} { set out [lreverse $out] }
+    return $out
+}
+
+# Measure (once) which end of a burst's DATA string is the lowest address,
+# using a 64-word index-identifying probe written ONE WORD AT A TIME (the
+# single-word path is not under test) and checking EVERY beat, so an interior
+# permutation or a non-incrementing burst fails calibration loudly.
+# Staging-local: clobbers staging words 0..63 only.
+proc sdp_calibrate_rd_order {} {
+    if {$::sdp_rd_order ne ""} { return }
+    set n 64
+    set probe {}
+    for {set i 0} {$i < $n} {incr i} {
+        set v [expr {0xA5D00000 | ($i << 8) | ((~$i) & 0xFF)}]
+        lappend probe $v
+        wr [expr {$::SDP_STG_BASE + 4 * $i}] $v
+    }
+    foreach ord {fwd rev} {
+        set ::sdp_rd_order $ord
+        if {[sdp_rdburst $::SDP_STG_BASE $n] eq $probe} {
+            puts "> sd-read: burst READ word order = $ord (all $n beats verified)"
+            return
+        }
+    }
+    set ::sdp_rd_order ""
+    error "sd-read: burst-read calibration FAILED — neither word order reproduced a $n-beat INCR probe of staging"
+}
+
+# Dump the first $nbytes of staging as a binary string (byte k of the stream
+# = byte lane k&3 of word k>>2, i.e. little-endian words).
+proc sdp_dump_staging {nbytes burst_words} {
+    set nwords [expr {($nbytes + 3) / 4}]
+    set words {}
+    for {set off 0} {$off < $nwords} {incr off $burst_words} {
+        set n [expr {min($burst_words, $nwords - $off)}]
+        lappend words {*}[sdp_rdburst [expr {$::SDP_STG_BASE + 4 * $off}] $n]
+    }
+    return [string range [binary format i* $words] 0 [expr {$nbytes - 1}]]
+}
+
+# Run one GO op on (lba, nsec) and return the hardware CRC32.
+proc sdp_go_crc {ctrl what lba nsec} {
+    wr [sdp_addr $::SDP_OFF_LBA]    $lba
+    wr [sdp_addr $::SDP_OFF_BLKCNT] $nsec
+    wr [sdp_addr $::SDP_OFF_CTRL]   $ctrl
+    sdp_poll_done "$what (lba=$lba n=$nsec)" 30000
+    return [sdp_rd $::SDP_OFF_CRC32]
+}
+
+# Read one batch; returns the verified bytes or errors after bounded retries.
+proc sdp_read_batch {lba nsec reread} {
+    set nbytes [expr {$nsec * 512}]
+    set why "unknown failure"
+    for {set recov 0} {$recov <= 3} {incr recov} {
+        if {$recov > 0} {
+            puts "> sd-read: batch lba=$lba still bad — JTAG-AXI recovery $recov/3 ($why)"
+            flush stdout
+            sdp_reprogram_current
+            set ::sdp_rd_order ""
+            sdp_calibrate_rd_order
+        }
+        for {set card_try 1} {$card_try <= 3} {incr card_try} {
+            if {[catch {sdp_go_crc $::SDP_CTRL_GO_READ "CMD18 read" $lba $nsec} hw]} {
+                set why "read op error: $hw"
+                puts "> sd-read: WARNING $why — retrying ($card_try/3)"
+                flush stdout
+                continue
+            }
+            # Re-dump with shorter bursts on CRC mismatch (staging is stable
+            # until the next GO op).  Re-read the HW CRC too: it is itself a
+            # single JTAG transaction.
+            for {set dump_try 1} {$dump_try <= 3} {incr dump_try} {
+                set bw [expr {256 >> ($dump_try - 1)}]
+                if {[catch {sdp_dump_staging $nbytes $bw} data]} {
+                    set why "staging dump error: $data"
+                    puts "> sd-read: WARNING $why — re-dumping ($dump_try/3)"
+                    flush stdout
+                    continue
+                }
+                set host [expr {[zlib crc32 $data] & 0xFFFFFFFF}]
+                if {$dump_try > 1} { set hw [sdp_rd $::SDP_OFF_CRC32] }
+                if {$host != $hw} {
+                    set why [format "dump CRC mismatch (hw=0x%08X host=0x%08X, %d-beat bursts)" $hw $host $bw]
+                    puts "> sd-read: WARNING $why at lba=$lba — re-dumping ($dump_try/3)"
+                    flush stdout
+                    continue
+                }
+                if {$reread} {
+                    if {[catch {sdp_go_crc $::SDP_CTRL_GO_VERIFY "CMD18 re-read" $lba $nsec} hw2]} {
+                        set why "re-read op error: $hw2"
+                        puts "> sd-read: WARNING $why — re-reading card ($card_try/3)"
+                        flush stdout
+                        break
+                    }
+                    if {$hw2 != $hw} {
+                        set why [format "card re-read CRC differs (1st=0x%08X 2nd=0x%08X) — unstable SD read" $hw $hw2]
+                        puts "> sd-read: WARNING $why at lba=$lba — re-reading card ($card_try/3)"
+                        flush stdout
+                        break
+                    }
+                }
+                return $data
+            }
+        }
+    }
+    error "sd-read: batch lba=$lba n=$nsec failed after retries and 3 recoveries — $why"
+}
+
+proc sd_read_file {start_lba nsectors path {reread 1}} {
+    if {$nsectors <= 0} { error "sd-read: nsectors must be > 0" }
+    if {[catch {zlib crc32 ""}]} {
+        error "sd-read: this Tcl has no zlib crc32 — cannot verify the dump"
+    }
+    set stage_sectors [sdp_probe]
+    set ver [expr {([sdp_rd $::SDP_OFF_CAPS] >> 16) & 0xFFFF}]
+    if {$ver < 2} {
+        error "sd-read: provisioning bitstream is CAPS v$ver — GO_READ needs v2.  Rebuild/load build/sd_provision/sd_provision_top.bit from a tree with GO_READ"
+    }
+    sdp_wait_card_ready
+    sdp_calibrate_rd_order
+
+    set fh [open $path "wb"]
+    fconfigure $fh -translation binary -encoding binary
+    set lba $start_lba
+    set done 0
+    set t0 [clock milliseconds]
+    if {[catch {
+        while {$done < $nsectors} {
+            set nsec [expr {min($stage_sectors, $nsectors - $done)}]
+            puts -nonewline $fh [sdp_read_batch $lba $nsec $reread]
+            incr done $nsec
+            incr lba  $nsec
+            set dt [expr {[clock milliseconds] - $t0}]
+            if {$dt > 0} {
+                puts [format "> sd-read: %d/%d sectors (%.0f KiB/s)" $done $nsectors \
+                          [expr {double($done) * 512.0 / 1024.0 / ($dt / 1000.0)}]]
+                flush stdout
+            }
+        }
+    } err opts]} {
+        close $fh
+        puts "> sd-read: ABORTED after $done sectors ($path holds lba $start_lba..[expr {$start_lba + $done - 1}])"
+        return -options $opts $err
+    }
+    close $fh
+    return $done
 }
 
 proc sd_fast_status {} {
@@ -5671,6 +5862,26 @@ while {1} {
             }
             sd-fast-status {
                 puts "> [sd_fast_status]"
+            }
+            sd-read {
+                if {[llength $tokens] < 4 || [llength $tokens] > 5} {
+                    error "usage: sd-read <lba> <nsectors> <outfile> \[noreread\]"
+                }
+                set lba  [expr {[lindex $tokens 1]}]
+                set nsec [expr {[lindex $tokens 2]}]
+                set path [lindex $tokens 3]
+                set reread 1
+                if {[llength $tokens] == 5} {
+                    if {[lindex $tokens 4] ne "noreread"} {
+                        error "usage: sd-read <lba> <nsectors> <outfile> \[noreread\]"
+                    }
+                    set reread 0
+                }
+                set t0 [clock milliseconds]
+                set got [sd_read_file $lba $nsec $path $reread]
+                set dt [expr {([clock milliseconds] - $t0) / 1000.0}]
+                puts [format "> sd-read done: %d sectors from lba=%d to %s in %.1f s (re-read check=%s)" \
+                          $got $lba $path $dt [expr {$reread ? "on" : "off"}]]
             }
             eth-status {
                 if {[llength $tokens] != 1} { error "usage: eth-status" }

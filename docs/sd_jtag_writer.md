@@ -43,6 +43,14 @@ image, stages batches in BRAM, writes them with CMD25, and reads them back
 with CMD18 for CRC32 verification. Leave verification enabled. The dedicated
 provisioning engine is distinct from the Mac's runtime CMD24 storage path.
 
+`sd-read <card-lba> <nsectors> <outfile> [noreread]` dumps the card to a host
+file for byte-diffing against an image (needs CAPS version 2, i.e. the
+`GO_READ` op, CTRL `0x5DB00003`). Each 256-sector batch is CMD18-read into the
+staging BRAM, burst-dumped over JTAG and checked against the hardware CRC32
+(re-dumped, then re-read, on mismatch); unless `noreread`, a second CMD18
+pass must reproduce the same CRC so an unstable SD read is not mistaken for
+on-card corruption. It never writes the card.
+
 Use the JTAG lease and FIFO lock for the entire transfer. Do not interleave
 debug commands or reset the board during a write. On failure, leave the
 provisioning image loaded and investigate before booting a partly written
