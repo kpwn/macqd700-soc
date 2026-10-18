@@ -5,10 +5,10 @@
 >   branch mispredicts            510,023,597   commit-time redirects (OFF_MISPRED_COUNT)
 >   pipeline flushes              564,656,177   every whole-ROB squash (OFF_FLUSH_COUNT)
 >   retired branches            1,203,978,937   BTB-eligible only -- see note below
->   D-cache load misses           408,197,934   
+>   D-cache load misses           408,197,934
 >   I-cache demand misses         260,035,460   prefetch fills NOT counted
->   DTLB table walks               72,339,071   
->   ITLB table walks               83,252,944   
+>   DTLB table walks               72,339,071
+>   ITLB table walks               83,252,944
 >   stall cycles: retire        4,239,886,718   ROB non-empty, nothing retired
 >   stall cycles: dcache        1,236,562,926   D-cache busy
 >   stall cycles: walk          3,254,695,374   either walker out of IDLE
