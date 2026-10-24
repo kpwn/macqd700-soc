@@ -15,6 +15,11 @@ timing requirement. Until then the working RK default remains usable.
 RK video parity is a later hardware task: carry TMDS through its QSFP port.
 That path needs its own electrical and timing validation.
 
+Maximum reliable SD performance is also a TQTT completion requirement:
+measure the current Mac disk, use the board's native four-bit interface,
+validate the fastest stable clock with CRC and host-side sector comparisons,
+and report end-to-end Mac throughput. See [TQTT SD performance plan](tqtt_sd_performance_plan.md).
+
 ## First peripheral: SD card
 
 Build with `make BOARD=tqtt fpga-sdmin-bitstream`. This uses the TQTT 100 MHz
