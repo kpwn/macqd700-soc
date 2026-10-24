@@ -65,7 +65,8 @@ proc sample {vio flags diag crc16 crc32} {
 set reference_crc ""
 foreach {mode cfg} {25 0 50 4} {
     for {set i 1} {$i <= $runs} {incr i} {
-        # Bit 0 is soft reset; bit 2 permits the negotiated CMD6 HS clock.
+        # Bit 0 is soft reset; bit 2 requests CMD6 MODE=1 and enables the
+        # 50 MHz clock only if the card reports HS function selected.
         ctrl_write $ctrl [expr {$cfg | 1}]
         after 100
         ctrl_write $ctrl $cfg

@@ -63,7 +63,8 @@ an isolated write-path reproduction and HFS consistency check.
    current contents. The old 100 MHz image remains the 25 MHz reference.
    `tools/tqtt_sd_25_50_integrity.tcl` automates repeated read-only 25/50 MHz
    loads of the 2048-sector boot window on the 200 MHz probe. It requires the
-   matching `.bit` and `.ltx`, checks that CMD6 actually enabled HS, rejects
+   matching `.bit` and `.ltx`, checks that CMD6 MODE=1 actually selected the
+   High Speed function in the card's 64-byte status, rejects
    whole-run retries, and compares CRC32 across runs. Passing this first
    window does not qualify the full card or writes; extend the probe to long
    and randomized LBAs before changing the Mac's SD clock.

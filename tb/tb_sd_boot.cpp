@@ -333,13 +333,12 @@ struct SdCard {
     bool corrupt_once    = false;
     bool corrupt_forever = false;
 
-    // When true, CMD6 (SWITCH_FUNC / HS-mode request) is accepted
-    // (R1=0x00) instead of the default "illegal command" rejection —
-    // exercises the real-HW finding that boot_fsm.v must NOT engage
-    // spi_hs_mode even when the card would allow it (see boot_fsm.v's
-    // ST_CMD6_CRC_WAIT comment).
+    // CMD6 can report support and, in switch mode, a selected HS function.
     bool csd_v1 = false;   // false = CSD v2.0 (SDHC), true = CSD v1.0 (SDSC)
     bool accept_cmd6 = false;
+    bool switch_success = true;
+    uint8_t last_cmd6_mode = 0xff;
+    uint8_t last_cmd6_crc = 0;
 
     void push_response(const std::vector<uint8_t>& v) {
         for (auto b : v) miso_fifo.push_back(b);
@@ -467,16 +466,18 @@ struct SdCard {
                 break;
             }
             case 6: {   // CMD6 — SWITCH_FUNC
+                last_cmd6_mode = mosi_frame[1];
+                last_cmd6_crc = mosi_frame[5];
                 if (accept_cmd6) {
-                    // R1=0x00 (accepted) then the 64-byte status block
-                    // (token + 64 dummy bytes + 2 dummy CRC — boot_fsm
-                    // only counts these bytes, never validates their
-                    // CRC). Real-HW finding 2026-07-23: even when a card
-                    // DOES accept CMD6, boot_fsm.v now deliberately never
-                    // engages spi_hs_mode (see its ST_CMD6_CRC_WAIT
-                    // comment) — this scenario proves that in sim.
+                    // Status group-1 support is bit 1 of byte 13; its
+                    // selected function is the low nibble of byte 16.
                     std::vector<uint8_t> resp = {0xFF, 0x00, 0xFF, 0xFE};
-                    for (int k = 0; k < 64; k++) resp.push_back(0x00);
+                    for (int k = 0; k < 64; k++) {
+                        uint8_t b = k == 13 ? 0x02 : 0x00;
+                        if (k == 16 && (mosi_frame[1] & 0x80) && switch_success)
+                            b = 0x01;
+                        resp.push_back(b);
+                    }
                     resp.push_back(0x00);
                     resp.push_back(0x00);
                     push_response(resp);
@@ -646,6 +647,7 @@ static void tick() {
 
 static void reset() {
     dut->rst       = 1;
+    dut->cfg_force_hs = 0;
     // Existing scenarios assume the pre-zero pass runs whenever ZERO_BYTES
     // is non-zero, i.e. the historical always-on behaviour.  The skip path
     // is covered explicitly by test_zero_en_low_skips_pre_zero().
@@ -958,6 +960,35 @@ static bool test_cmd6_accepted_never_engages_hs() {
     }
     if (!dut->spi_fast_mode) {
         printf("  FAIL cmd6-accept: spi_fast_mode not set (should stay at 25 MHz)\n");
+        return false;
+    }
+    if (sd.last_cmd6_mode != 0x00 || sd.last_cmd6_crc != 0x1f) {
+        printf("  FAIL cmd6-accept: check-only frame mode=%02x crc=%02x\n",
+               sd.last_cmd6_mode, sd.last_cmd6_crc);
+        return false;
+    }
+    return true;
+}
+
+static bool test_cmd6_real_switch_requires_status() {
+    reset_world_for_flaky();
+    sd.accept_cmd6 = true;
+    dut->cfg_force_hs = 1;
+    if (!boot_to_completion(3000000, "cmd6-switch")) return false;
+    if (!dut->spi_hs_mode || sd.last_cmd6_mode != 0x80 ||
+        sd.last_cmd6_crc != 0x29) {
+        printf("  FAIL cmd6-switch: hs=%d mode=%02x crc=%02x\n",
+               dut->spi_hs_mode, sd.last_cmd6_mode, sd.last_cmd6_crc);
+        return false;
+    }
+
+    reset_world_for_flaky();
+    sd.accept_cmd6 = true;
+    sd.switch_success = false;
+    dut->cfg_force_hs = 1;
+    if (!boot_to_completion(3000000, "cmd6-switch-refused")) return false;
+    if (dut->spi_hs_mode) {
+        printf("  FAIL cmd6-switch-refused: host sped up without card status\n");
         return false;
     }
     return true;
@@ -1566,6 +1597,7 @@ int main(int argc, char** argv) {
     RUN(test_cmd18_crc_retry_recovers);
     RUN(test_cmd18_crc_retry_exhausts);
     RUN(test_cmd6_accepted_never_engages_hs);
+    RUN(test_cmd6_real_switch_requires_status);
     RUN(test_csd_capacity_decoded);
     RUN(test_csd_v1_capacity_decoded);
 

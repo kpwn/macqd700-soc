@@ -219,7 +219,8 @@ module fpga_top_sdmin (
 `ifdef TQTT_BOARD
 `ifdef TQTT_SD_50MHZ_PROBE
         // 200 MHz core: init 400 kHz, ordinary fast 25 MHz, HS 50 MHz.
-        // Set VIO cfg_force_hs only after confirming CMD6 was accepted.
+        // VIO cfg_force_hs sends CMD6 in switch mode; the boot FSM only
+        // raises hs_mode when status reports group-1 function 1 selected.
         .SLOW_HALF (250),
         .FAST_HALF (4),
         .HS_HALF   (2)
