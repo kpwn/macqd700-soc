@@ -338,17 +338,20 @@ on 2026-10-24 was 32.4 °C. This is die temperature, not the fan's airflow or
 the hottest board component.
 
 The desired automatic-control ceiling is 50 °C FPGA die temperature. Increase
-duty before that ceiling and command full speed at or above 50 °C. The present
-loaded image is manual. An opt-in automatic image can be built with
-`make TQTT_FAN_AUTO=1 tqtt-full` in `build/vivado_tqtt_fan_auto`. It reads
+duty before that ceiling and command full speed at or above 50 °C. An opt-in
+automatic image can be built with `TQTT_FAN_AUTO=1`. It reads
 the on-chip SYSMON temperature through the fabric DRP. KU5P's SYSMONE4 ADC
 codes 600 to 664 (approximately 18–50 °C with the internal reference) map to
 0–100% duty in steps of four PWM counts. Missing or implausible readings and a
-tach stall command full speed. The board has not run this automatic image yet.
-Its sensor conversion, tach fault behavior, and acoustic curve require hardware
-validation before making it the default. In that image, `fan-duty 100` forces
-full speed and `fan-duty auto` releases the override; the manual image keeps
-its 25–100% JTAG range. `make test-tqtt-fan-thermal` checks the curve, stale
+tach stall command full speed. On 2026-10-25 the 100 MHz full-Mac image at
+`build/vivado_tqtt_100_hdmi_audio_fan_auto/fpga_top.local.bit` passed route
+timing (WNS +0.051 ns, WHS +0.010 ns), booted Mac OS to Finder, and reported
+31.9 °C, ADC code 626, no sensor fault, duty 104/255, and about 2,880 RPM.
+`fan-duty 100` set duty 255/255 and tach rose to about 6,270 RPM; `fan-duty
+auto` restored automatic selection. The manual image keeps its 25–100% JTAG
+range. Sensor-fault behavior and the acoustic curve across sustained workloads
+still need hardware validation before making this the default.
+`make test-tqtt-fan-thermal` checks the curve, stale
 and invalid readings, and tach-stall fallback without loading a bitstream.
 Validate RPM and temperature across idle and sustained Mac workloads before
 calling the fan bring-up complete.
