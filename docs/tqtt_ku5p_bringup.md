@@ -143,8 +143,11 @@ patching in the local ADB firmware, it was programmed on 2026-10-25 and
 captured the boot icon, Mac OS improper-shutdown dialog, and Finder desktop
 with `FPGA HD` mounted. JTAG Return dismissed the dialog. The SD volume was
 enabled at 4,194,240 blocks, with no error or framebuffer fetch miss.
-The capture card recorded silence at the idle Finder desktop; a Mac sound
-event is still needed to verify ASC playback through the full image.
+The capture card recorded silence at the idle Finder desktop. The classic
+`Sound` control panel opened and showed its alert list, but injected mouse
+clicks did not visibly change the selected alert; recordings during these
+attempts were also silent. A confirmed Mac sound event is still needed to
+verify ASC playback through the full image.
 
 Build the matching-clock control with
 `make TQTT_HDMI_INTEGRATION_PROBE_FABRIC=1 fpga-tqtt-hdmi-integration-probe-bitstream`. Add
