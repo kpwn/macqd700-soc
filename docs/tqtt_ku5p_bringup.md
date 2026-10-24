@@ -178,15 +178,28 @@ dirty-bank register through 19 logic levels. Of the 5.302 ns data delay,
 3.831 ns is routing. This is a CPU core path rather than an SD or HDMI pad
 path.
 
-The second image was programmed on the KU5P via JTAG on 2026-10-24. VIO
+The second **blank** image was programmed on the KU5P via JTAG on 2026-10-24. VIO
 reported DDR calibration complete, ROM load complete, core reset released,
 no AXI error, and matching final-sector CRC16 `0x1270 == 0x1270` after
 2048 sectors. JTAG CPU debug showed the core running without an exception,
 but repeatedly visiting the ROM ADB manager wait loop at `0x4080A8E6`.
-The capture card showed a gray rectangle on black instead of the Mac desktop.
-This is an incomplete boot, not a validated machine. The loop is also
-documented in `tb/models/rom_patch_sets.h`; a 100 MHz build is underway to
-check whether the same behavior persists without the 200 MHz setup miss.
+The capture card showed a gray rectangle on black. This was caused by
+programming the blank bitstream: the ADB PIC BRAM had no firmware. Full Mac
+images must be patched with the local Apple ADB ROM before programming, as
+described in [ADB firmware setup](adb_firmware_bitstream.md).
+
+Patch the matching TQTT bundle with `tools/patch_adb_bitstream.py patch`
+using the build's `.blank.bit`, `.blank.adb.mmi`, and `.blank.adb.json`, plus
+your own `342s0440-b.bin`; program the resulting `.local.bit` with the build's
+`.ltx`. The local firmware and patched image stay outside version control.
+With the patched 200 MHz image programmed, the Mac reached the OS improper-
+shutdown dialog. A Return key sent through the web UI dismissed it, and the
+capture card showed the Mac desktop with mounted `FPGA HD` and the
+Speedometer folder. JTAG `vhdd-status` reported the SD volume enabled at
+4,194,240 blocks (about 2 GiB), with no RAM-disk watchdog or error. This
+establishes a working full Mac boot and basic ADB input despite the remaining
+-0.304 ns core setup miss. A 100 MHz comparison build is underway; the
+200 MHz patched image remains the active board image.
 `tools/tqtt_full_status.tcl` reads all live VIO probes without reprogramming.
 
 Before loading the full image, check the TQTT +ADJ rail that supplies bank 67
@@ -197,9 +210,9 @@ the earlier DDR, SD, HDMI, or GMII probes, which used T24/U24 instead.
 AMD's [DS922 recommended operating conditions](https://docs.amd.com/r/en-US/ds922-kintex-ultrascale-plus/Recommended-Operating-Conditions)
 limit HP-bank VCCO to 1.9 V and input voltage to VCCO + 0.2 V.
 
-Complete the 100 MHz comparison and diagnose the ADB wait, then close the
-200 MHz core timing, confirm the 720p60 Mac screen, and verify full-SoC
-DDR/SD and GMII RX/TX. HDMI audio and physical USB/ADB/serial follow.
+Close the 200 MHz core timing, run full Mac benchmarks and storage integrity
+checks, and verify full-SoC GMII RX/TX. HDMI audio and physical USB/ADB/serial
+follow.
 RK remains selectable as `BOARD=rk` until the TQTT full image passes these
 checks.
 
