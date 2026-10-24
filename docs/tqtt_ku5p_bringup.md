@@ -205,7 +205,15 @@ were generated, then patched locally with the user's ADB firmware to
 `build/vivado_tqtt_100/fpga_top.local.bit`. This 100 MHz image has not been
 loaded or functionally tested; the 200 MHz patched image remains active on the
 board. A second 200 MHz placement from the original synthesis checkpoint is
-underway.
+implemented with `ExtraPostPlacementOpt` placement and `AggressiveExplore`
+physical optimization/routing. Its final routed report has WNS -0.189 ns,
+WHS +0.007 ns, 538 failing setup endpoints, zero failing hold endpoints, and
+zero DRC errors. The new worst setup path is from a Dcache load-valid flop to
+a Dcache valid-bank register through 22 logic levels. This improves the
+earlier 200 MHz WNS by 0.115 ns but still does not close timing. Its blank
+bitstream was generated and locally patched with the user's ADB firmware to
+`build/vivado_tqtt_extra/fpga_top.local.bit`; it has not been loaded or
+functionally tested. The original patched image remains active.
 
 The full-SoC GMII link also passed a Mac OS TCP/IP check on 2026-10-24. A
 host USB Ethernet adapter connected directly to the KU5P negotiated 1000

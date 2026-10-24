@@ -22,6 +22,16 @@ reference for the PMOD pinout and power budget.
 Board reference: <https://github.com/joshheyse/tqtt-ku5p/blob/main/pins.xdc>.
 Host PMOD: <https://github.com/nand2mario/usb_host_pmod>.
 
+For a temporary single-port bench setup on PMOD0/J1, reserve header pin 1
+(D10) as USB D+ and pin 3 (D9) as USB D-. Put approximately 22 ohms in
+series with each data wire and 15 kohm from each USB-side data line to
+ground. Supply the USB-A socket's VBUS from a current-limited 5 V source and
+tie its ground to the PMOD ground on pin 9 or 11. The PMOD's pins 10 and 12
+carry 3.3 V and must not be wired to USB VBUS. Use short data wires; the
+standalone probe will confirm attach, enumeration, and reports before any
+full-SoC build depends on this wiring. The second port can use PMOD0 signal
+indices 2 and 3 after the first works.
+
 ## First useful feature: two direct HID ports
 
 Use two instances of the m1nl full/low-speed HID host, one per USB-A socket.
