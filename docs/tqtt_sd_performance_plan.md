@@ -9,6 +9,8 @@ sustained throughput, CRC/data-integrity results, and the exact card/image.
 
 The board schematic (page 4, J8) wires CLK, CMD, and DAT0-DAT3 to FPGA bank
 84. J8 VDD, the line pull-ups, and bank 84 VCCO are fixed at 3.3 V. Native
+SD pins are CLK AE15, CMD AD15, DAT0 AF13, DAT1 AE13, DAT2 AF15, and
+DAT3 AF14; J8 has 4.7 kOhm pull-ups on CMD and every data line.
 four-bit SD High Speed at 50 MHz has a 25 MB/s raw bus ceiling; actual card
 throughput will be lower. UHS-I signaling requires a 1.8 V I/O switch that
 this board does not provide. UHS-II's additional contacts and SD Express's
@@ -87,8 +89,8 @@ an isolated write-path reproduction and HFS consistency check.
    plus CRC handling. An isolated generator run produced a 246 KB core and
    CSR map.
    Integration still needs a block-command bridge for the existing boot and
-   SCSI consumers, direct TQTT IO constraints, and the board's DAT1/DAT2
-   package pins. The generated core has not been integrated or tested here.
+   SCSI consumers and direct TQTT IO constraints. The generated core has not
+   been integrated or tested here.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest
