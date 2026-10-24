@@ -61,6 +61,20 @@ an isolated write-path reproduction and HFS consistency check.
    whole-image CRC. Compare the latter against a fresh 25 MHz run on the
    same card, rather than assuming a host ROM file matches the card's
    current contents. The old 100 MHz image remains the 25 MHz reference.
+   `tools/tqtt_sd_25_50_integrity.tcl` automates repeated read-only 25/50 MHz
+   loads of the 2048-sector boot window on the 200 MHz probe. It requires the
+   matching `.bit` and `.ltx`, checks that CMD6 actually enabled HS, rejects
+   whole-run retries, and compares CRC32 across runs. Passing this first
+   window does not qualify the full card or writes; extend the probe to long
+   and randomized LBAs before changing the Mac's SD clock.
+
+   ```sh
+   make fpga-tqtt-sdmin-50mhz-bitstream
+   vivado -nojournal -nolog -mode batch \
+     -source tools/tqtt_sd_25_50_integrity.tcl -tclargs \
+     build/vivado_sdmin_tqtt_50/fpga_top_sdmin.bit \
+     build/vivado_sdmin_tqtt_50/fpga_top_sdmin.ltx 5
+   ```
 3. Implement native four-bit SD initialization and transport for the same
    block-level boot and SCSI consumers. Native mode must start at boot:
    a card initialized into SPI mode cannot switch to native mode without
