@@ -29,11 +29,17 @@ The current full image has a two-way, 32-block adaptive read-ahead cache,
 but its actual TQTT Mac-visible throughput has not been measured. Do not use
 the cache's simulated projections as a hardware result.
 
+MacBench's disk suite has historically failed on this system, including
+before TQTT. Its error 5050 is not a TQTT regression signal. Use a separately
+validated Mac-visible disk workload for throughput and integrity. A Finder
+file duplication on the current TQTT image also reported a disk error; read
+the card back and check the volume before assigning a cause to that failure.
+
 ## Work sequence
 
 1. Establish a reproducible baseline on the current TQTT 200 MHz image:
    raw sequential and random SD read/write throughput, command latency,
-   read-ahead hit/miss behavior, and Mac-visible disk benchmarks. Include
+   read-ahead hit/miss behavior, and a validated Mac-visible disk workload. Include
    SD error/retry counters and a host-side sector comparison after writes.
 2. Build a standalone TQTT 200 MHz SPI probe at 25 and 50 MHz. Use long
    sequential and randomized reads, CRC16 on every block, and repeated
