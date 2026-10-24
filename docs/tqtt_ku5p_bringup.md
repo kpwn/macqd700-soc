@@ -113,14 +113,14 @@ uses `build/vivado_tqtt_hdmi_audio`. Set `TQTT_HDMI_AUDIO=0` for the
 DVI-compatible 720p output. The HDMI audio path uses the ASC's stereo PCM
 stream, repeats samples to make a
 48 kHz HDMI stream, and uses the standalone probe's HDMI packet components.
-The 100 MHz full-Mac HDMI audio build in
+The first 100 MHz full-Mac HDMI audio build in
 `build/vivado_tqtt_100_hdmi_audio` completed routing on 2026-10-24 with
 WNS +0.001 ns, WHS +0.009 ns, WPWS +0.181 ns, and no failing timing
 endpoints. Its bitstream passed DRC, was patched with the local ADB firmware,
 and was programmed on the KU5P. JTAG confirmed a running CPU, matching ROM
 load CRC16 values, and the SD volume enabled at 4,194,240 blocks without a
-volume error or watchdog fire. The HDMI audio packets from the Mac's ASC
-and a visible Mac desktop have not yet been confirmed on this image.
+volume error or watchdog fire. Its captured HDMI frame was black because
+the packetizer coordinates were five pixel clocks ahead of RGB and DE.
 
 On 2026-10-25 the capture path returned the same uniform black JPEG after
 two loads of that full HDMI image, although JTAG sampled nonblack Mac
@@ -136,8 +136,15 @@ produced the **byte-identical black JPEG** seen from the full image.
 `video_top`'s debug coordinates are only two output clocks behind the VTG,
 while RGB/DE/HS/VS pass through the compositor's four-stage control pipe,
 its output register, and those same two output clocks. The full-Mac HDMI
-connection now delays coordinates by five additional clocks; a new full
-100 MHz route and hardware validation are pending.
+connection now delays coordinates by five additional clocks. The corrected
+100 MHz image in `build/vivado_tqtt_100_hdmi_audio_align5` routed with
+WNS +0.096 ns, WHS +0.010 ns, WPWS +0.219 ns, and zero DRC errors. After
+patching in the local ADB firmware, it was programmed on 2026-10-25 and
+captured the boot icon, Mac OS improper-shutdown dialog, and Finder desktop
+with `FPGA HD` mounted. JTAG Return dismissed the dialog. The SD volume was
+enabled at 4,194,240 blocks, with no error or framebuffer fetch miss.
+The capture card recorded silence at the idle Finder desktop; a Mac sound
+event is still needed to verify ASC playback through the full image.
 
 Build the matching-clock control with
 `make TQTT_HDMI_INTEGRATION_PROBE_FABRIC=1 fpga-tqtt-hdmi-integration-probe-bitstream`. Add
@@ -186,9 +193,10 @@ drives one fabric MMCM that produces a 200 MHz core clock, 50 MHz peripheral
 clock, 100 MHz video reference, and 125 MHz GMII transmit clock. The 100 MHz
 T24/U24 differential clock remains dedicated to MIG. The existing Mac scanout
 runs at 720p60 and feeds the ASC-to-HDMI transmitter by default. The
-full-image HDMI audio path has routed and been programmed at 100 MHz; its
-sound and video output still need a live capture or monitor check. The
-standalone 48 kHz audio probe remains available.
+full-image HDMI audio path has routed and been programmed at 100 MHz, and
+its video output has been captured through Mac OS boot to Finder. ASC audio
+playback remains to be checked with an audible Mac sound event. The standalone
+48 kHz audio probe remains available.
 
 The RK physical DDR layout reserves its ROM and framebuffer above the first
 1 GiB. That would wrap on TQTT's 30-bit MIG AXI address bus and corrupt RAM.
