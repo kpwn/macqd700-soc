@@ -71,3 +71,15 @@ retries. The known-good main image was restored afterward. Logs and hashes
 are under `/var/tmp/codex-p4-storage-readcheck/`. This establishes stable
 reads for those regions; it does not assert that the mutable filesystem
 matches a host image or that every card sector was checked.
+
+The promoted SoC source also passed `make tb-scsi-sd-e2e-c96` on 2026-10-24:
+27 passed, zero failed, including C96 write ordering under SD back pressure
+and the System 7.5.3 word-burst shape. Its positive control,
+`make tb-scsi-sd-e2e-c96-noorder`, confirmed that c26 fails when
+`SCSI_PDMA_OUT_FIFO_ORDER` is disabled. Logs are
+`/var/tmp/codex-p4-200/scsi-sd-e2e-c96{,-noorder}.log`. The P4 integration
+does not alter SoC RTL relative to the tested `8284a403` source; the existing
+FIFO-order fix and 200 MHz SD divider remain in that source, and
+`SD_SAFE_CMD25=0` matches the established 200 MHz profile. These checks cover
+the simulated SCSI-to-SD write path and sampled physical-card reads; they do
+not claim a new physical-card write test of the P4 image.
