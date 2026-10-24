@@ -29,8 +29,9 @@ foreach vio [get_hw_vios -of_objects $dev -quiet] {
             scan $raw_rpm %x rpm
             puts "TQTT_FAN_RPM=$rpm"
         }
-        if {[string match *vio_fan_duty* [get_property NAME $p]]} {
-            puts "TQTT_FAN_DUTY_RAW=[get_property OUTPUT_VALUE $p]"
+        if {[string match *vio_fan_duty* [get_property NAME $p]] &&
+            ![catch {set fan_duty_raw [get_property OUTPUT_VALUE $p]}]} {
+            puts "TQTT_FAN_DUTY_RAW=$fan_duty_raw"
         }
         if {[string match *vio_fan_state* [get_property NAME $p]]} {
             scan [get_property INPUT_VALUE $p] %x fan_state
