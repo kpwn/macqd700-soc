@@ -71,6 +71,15 @@ an isolated write-path reproduction and HFS consistency check.
    window does not qualify the full card or writes; extend the probe to long
    and randomized LBAs before changing the Mac's SD clock.
 
+   On 2026-10-25 the TQTT card passed two complete runs per mode: 2048 sectors,
+   zero whole-run retries, matching final block CRC16, and the same full-window
+   CRC32 `0xFF52A648` at 25 MHz and at negotiated 50 MHz. The High Speed mode
+   flag was set only in the 50 MHz runs. Each run took about 12.4–12.9 seconds
+   including card initialization and JTAG polling, so that elapsed value is
+   not a data-transfer throughput measurement. VIO readback gave inconsistent
+   intermediate snapshots during active transfer; the script accepts only
+   two matching completed snapshots and times out stalled runs.
+
    ```sh
    make fpga-tqtt-sdmin-50mhz-bitstream
    vivado -nojournal -nolog -mode batch \
