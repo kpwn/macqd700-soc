@@ -208,8 +208,10 @@ server bound only to that interface, the Mac's SONIC address
 `00:05:02:00:00:00` completed Discover/Offer/Request/ACK and received
 `192.168.42.11`. Five host ICMP echo requests received five replies, with
 0% loss and 0.236 ms average round trip. This exercises full-SoC receive,
-DMA, driver, and transmit paths; an application-level TCP transfer remains
-to be checked.
+DMA, driver, and transmit paths. The Mac's Netscape browser then fetched
+`http://192.168.42.1:8000/` over that direct link; the host server logged
+`GET / HTTP/1.0` from `192.168.42.11` with status 200. This validates a
+real TCP and HTTP application path through the full SoC as well.
 
 For the current 640x480 Mac mode, run the MJPEG server with
 `FPGA_VIDEO_WIDTH=1280 FPGA_VIDEO_HEIGHT=720 FPGA_VIDEO_FPS=60
