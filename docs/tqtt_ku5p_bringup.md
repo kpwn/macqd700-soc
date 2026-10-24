@@ -216,7 +216,11 @@ bitstream was generated and locally patched with the user's ADB firmware to
 functionally tested. A guarded `AggressiveExplore` post-route physical pass
 from that route checkpoint improved WNS to -0.092 ns with WHS 0.000 ns but
 still missed 200 MHz setup; the pass saved a separate checkpoint and did
-not generate a bitstream. The original patched image remains active.
+not generate a bitstream. A following `AlternateReplication` pass improved
+WNS to -0.076 ns with WHS 0.000 ns and 395 failing setup endpoints, again
+without timing closure or a bitstream. Its worst path is from the CPU fetch
+alignment PC register to the gshare retained-repair suffix register. The
+original patched image remains active.
 
 The full-SoC GMII link also passed a Mac OS TCP/IP check on 2026-10-24. A
 host USB Ethernet adapter connected directly to the KU5P negotiated 1000
