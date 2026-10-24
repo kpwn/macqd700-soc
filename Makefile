@@ -3760,6 +3760,15 @@ fpga-sdmin-bitstream:
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
 .PHONY: fpga-tqtt-eth-probe-bitstream
+.PHONY: fpga-tqtt-ddr4-probe-bitstream
+TQTT_DDR4_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_ddr4_probe
+fpga-tqtt-ddr4-probe-bitstream:
+	$(MAKE) tqtt-ddr4-mig
+	@mkdir -p $(TQTT_DDR4_PROBE_BUILD_DIR)
+	@touch $(VIVADO_LOCK)
+	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_ddr4_probe.tcl -tclargs $(TQTT_DDR4_PROBE_BUILD_DIR)' \
+	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — TQTT DDR4 probe pending"; fi; exit $$status; }
+
 TQTT_ETH_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_eth_probe
 fpga-tqtt-eth-probe-bitstream:
 	@mkdir -p $(TQTT_ETH_PROBE_BUILD_DIR)

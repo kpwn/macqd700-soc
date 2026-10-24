@@ -6,6 +6,15 @@ default. `BOARD=tqtt` currently selects the **standalone, read-only SD/CRC
 image**; the full SoC build rejects this board until its other interfaces are
 qualified. A successful SD image is not a Mac boot image.
 
+## Board direction
+
+TQTT is the primary target for the full Mac and for new physical USB, ADB,
+and serial interfaces. RK remains a supported board. The default build can
+move to `BOARD=tqtt` after a full TQTT image boots and meets the 200 MHz core
+timing requirement. Until then the working RK default remains usable.
+RK video parity is a later hardware task: carry TMDS through its QSFP port.
+That path needs its own electrical and timing validation.
+
 ## First peripheral: SD card
 
 Build with `make BOARD=tqtt fpga-sdmin-bitstream`. This uses the TQTT 100 MHz
@@ -97,24 +106,43 @@ AXI address ports; the checked-in RK stub has 31-bit ports, so the TQTT shell
 must select its own stub when the full SoC is integrated. Out-of-context MIG
 synthesis completed with no errors and produced the TQTT DCP.
 
+Build the standalone hardware exercise with
+`make fpga-tqtt-ddr4-probe-bitstream`. It stitches the TQTT MIG DCP into
+`rtl/soc/tqtt_ddr4_probe.v`, using `synth_design -no_iobuf` so the MIG owns
+the DDR pins and an explicit input buffer for the external reset switch.
+The probe writes 4096 contiguous 256-bit words, then 4096 more at 256 KiB
+spacing across the 1 GiB range, with distinct patterns. It reads all 8192
+locations back and reports calibration, phase, count, and first error through
+JTAG VIO. `tools/tqtt_ddr4_probe_status.tcl` programs the image and checks
+for calibration, pass phase, all 8192 reads, and no AXI/data error.
+
+On 2026-10-24 the expanded probe routed with zero DRC errors, setup slack
++0.078 ns and hold slack +0.013 ns. Hardware VIO reported `cal_done=1`,
+`phase=5` (pass), `verified=0x2000` (8192), and `error_code=0`. This checks
+the sampled addresses and all 256 data bits at each address; it does not
+exercise every byte of DRAM. The HDMI audio bitstream was restored after the
+test, and the capture feed resumed.
+
 ## Remaining gates before the full SoC
 
-1. **HDMI:** verify the standalone pattern and tone on the capture card,
-   then adapt the existing 720p60 pixel scanout to the TMDS transmitter.
+1. **HDMI:** adapt the existing 720p60 pixel scanout and Mac ASC sound to the
+   proven standalone TMDS video and audio transmitter.
    The connector's four pairs are on bank 65 at 1.2 V. The vendor example
    calls them `LVDS`, but AMD UG571 specifies 1.8 V VCCO for LVDS output;
    the probe instead uses legal `DIFF_SSTL12`. Electrical margin and DDC/HPD
    behavior still need hardware validation.
 2. **Ethernet:** this board's RTL8211EG exposes GMII (8-bit), whereas the RK
-   board's RTL8211F uses RGMII (4-bit). It needs a GMII PHY adapter and its
-   own pin/timing constraints; changing only the pins would miswire data.
-3. **DDR4 and clocks:** prove calibration and AXI memory tests with the
-   TQTT-specific MIG and pin map, then
-   retime the SoC's core/peripheral/video domains. Do not reuse the RK MIG
-   DCP or its XDC.
+   board's RTL8211F uses RGMII (4-bit). The receive probe passed; the SoC
+   needs a GMII PHY adapter, transmit path, and pin/timing constraints.
+3. **DDR4 and clocks:** integrate the calibrated TQTT MIG and pin map into
+   the full SoC, then retime its core/peripheral/video domains. Do not reuse
+   the RK MIG DCP or its XDC.
 4. **Full Mac:** select the TQTT shell with `BOARD=tqtt`, boot from the SD
    image, verify video and Ethernet, then close timing at the required
    200 MHz core clock. Keep the RK shell as `BOARD=rk`.
+5. **Physical I/O:** bring up real USB, ADB, and serial on the TQTT headers.
+   RK support for those physical interfaces is deferred until its own
+   hardware path exists.
 
 Board pin facts were checked against the TQTT XCKU5P schematic and example
 constraints at <https://github.com/joshheyse/tqtt-ku5p>. No vendor example
