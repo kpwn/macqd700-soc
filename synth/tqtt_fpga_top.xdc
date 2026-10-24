@@ -106,6 +106,7 @@ set_property -dict {PACKAGE_PIN E17 IOSTANDARD LVCMOS18} [get_ports {led[1]}]
 set_property -dict {PACKAGE_PIN F15 IOSTANDARD LVCMOS18} [get_ports {led[2]}]
 set_property -dict {PACKAGE_PIN D15 IOSTANDARD LVCMOS18} [get_ports {led[3]}]
 set_property -dict {PACKAGE_PIN E15 IOSTANDARD LVCMOS18} [get_ports fan_pwm]
+set_property -dict {PACKAGE_PIN G17 IOSTANDARD LVCMOS18} [get_ports fan_fb]
 # SD SPI: J8 DAT3 is active-low chip select.
 set_property -dict {PACKAGE_PIN AE15 IOSTANDARD LVCMOS33} [get_ports sd_clk]
 set_property -dict {PACKAGE_PIN AD15 IOSTANDARD LVCMOS33} [get_ports sd_mosi]

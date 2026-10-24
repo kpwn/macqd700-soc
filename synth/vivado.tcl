@@ -740,6 +740,7 @@ proc read_all_rtl {rtl_dir} {
     read_verilog $rtl_dir/board/video_phy/linebuf_scanout.v
     read_verilog $rtl_dir/board/video_phy/video_top.v
     if {$board eq "tqtt"} {
+        read_verilog $rtl_dir/board/tqtt_fan_ctrl.v
         read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/tmds_channel.sv
         read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/serializer.sv
         read_verilog -sv $rtl_dir/board/video_phy/tqtt_tmds_video.sv
@@ -932,20 +933,28 @@ proc gen_debug_vio_ip {output_dir part} {
     set ip_dir $output_dir/ip
     set ip_xci $ip_dir/debug_vio/debug_vio.xci
     set ip_dcp $ip_dir/debug_vio/debug_vio.dcp
-    # Compact map v28 (v28: probe_in15 = vio_guard_faults). Exact configuration is the cache key, including
+    # Compact map v29 adds TQTT fan RPM input and live duty output.
     # all probe widths and the disabled activity-detector setting.
     set widths {32 6 10 8 16 32 32 32 32 68 187 48 96 160 84 32}
+    if {$::board eq "tqtt"} { lappend widths 16 }
     set config [list CONFIG.C_NUM_PROBE_IN [llength $widths] \
         CONFIG.C_NUM_PROBE_OUT 2 CONFIG.C_PROBE_OUT0_WIDTH 5 \
         CONFIG.C_PROBE_OUT0_INIT_VAL 0x0 CONFIG.C_PROBE_OUT1_WIDTH 1 \
         CONFIG.C_PROBE_OUT1_INIT_VAL 0x0 CONFIG.C_EN_PROBE_IN_ACTIVITY 0]
+    if {$::board eq "tqtt"} {
+        set config [list CONFIG.C_NUM_PROBE_IN [llength $widths] \
+            CONFIG.C_NUM_PROBE_OUT 3 CONFIG.C_PROBE_OUT0_WIDTH 5 \
+            CONFIG.C_PROBE_OUT0_INIT_VAL 0x0 CONFIG.C_PROBE_OUT1_WIDTH 1 \
+            CONFIG.C_PROBE_OUT1_INIT_VAL 0x0 CONFIG.C_PROBE_OUT2_WIDTH 8 \
+            CONFIG.C_PROBE_OUT2_INIT_VAL 0x80 CONFIG.C_EN_PROBE_IN_ACTIVITY 0]
+    }
     set n 0
     foreach width $widths {
         lappend config CONFIG.C_PROBE_IN${n}_WIDTH $width
         incr n
     }
     set ip_marker $ip_dir/debug_vio/probe_config.txt
-    set signature [list probe_map=v28 part=$part config=$config]
+    set signature [list probe_map=v29 part=$part config=$config]
     file mkdir $ip_dir
     set marker_ok 0
     if {[file exists $ip_marker]} {

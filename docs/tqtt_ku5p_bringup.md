@@ -213,7 +213,10 @@ a Dcache valid-bank register through 22 logic levels. This improves the
 earlier 200 MHz WNS by 0.115 ns but still does not close timing. Its blank
 bitstream was generated and locally patched with the user's ADB firmware to
 `build/vivado_tqtt_extra/fpga_top.local.bit`; it has not been loaded or
-functionally tested. The original patched image remains active.
+functionally tested. A guarded `AggressiveExplore` post-route physical pass
+from that route checkpoint improved WNS to -0.092 ns with WHS 0.000 ns but
+still missed 200 MHz setup; the pass saved a separate checkpoint and did
+not generate a bitstream. The original patched image remains active.
 
 The full-SoC GMII link also passed a Mac OS TCP/IP check on 2026-10-24. A
 host USB Ethernet adapter connected directly to the KU5P negotiated 1000
@@ -236,6 +239,27 @@ window into a square. The full-resolution capture plus crop restores its
 window at native size within the 1280x720 raster. Change the crop dimensions
 if the Mac switches video mode.
 `tools/tqtt_full_status.tcl` reads all live VIO probes without reprogramming.
+
+### J10 four-wire fan control
+
+Schematic page 4 shows a 12 V four-wire fan header. Q9 is an open-drain
+inverter from FPGA E15 (`fan_pwm`) to the fan's PWM pin; FPGA low releases
+the line and runs the fan at full speed. G17 (`fan_fb`) senses tach through
+the board's 1.8 V pull-up. The previous full image tied E15 low, explaining
+the constant full-speed noise. The new TQTT controller uses approximately
+25 kHz PWM, runs at full speed for the first second after clock lock, then
+defaults to 50% duty. JTAG VIO `probe_out2` can change duty live via
+`fan-duty 50` in the JTAG REPL (25-100%; 100 releases the line). The
+`vio_fan_rpm` input reports tach-derived RPM once per second, assuming two
+tach pulses per revolution. Until temperature sensing and thermal testing
+are in place, the RTL clamps duty to at least 25%; MMCM clock loss releases
+the fan control line for full speed. These changes need a new full Mac build
+and hardware RPM/temperature validation before use; the currently loaded
+bitstream still drives full speed.
+`tools/tqtt_fan_status.tcl` reads the FPGA die temperature and, when present,
+the VIO RPM and duty probes without reprogramming. The full-speed baseline
+on 2026-10-24 was 32.4 °C. This is die temperature, not the fan's airflow or
+the hottest board component.
 
 Before loading the full image, check the TQTT +ADJ rail that supplies bank 67
 and the E18 oscillator input. The board reference warns that +ADJ should be

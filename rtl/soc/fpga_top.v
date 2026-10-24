@@ -283,7 +283,8 @@ module fpga_top #(
     output wire        pwm_audio_l,
     output wire        pwm_audio_r
 `else
-    output wire        fan_pwm
+    output wire        fan_pwm,
+    input  wire        fan_fb
 `endif
 
 `ifdef ETH_ENABLE
@@ -345,9 +346,17 @@ module fpga_top #(
     // TQTT switch P19 is active high. The other RK buttons are absent.
     wire cpu_resetn = ~tqtt_reset;
     wire [3:0] btn = 4'b1111;
-    // The board's fan driver is inverting: high keeps the fan off.
-    // Keep airflow active until temperature control is integrated.
-    assign fan_pwm = 1'b0;
+    // J10 uses a four-wire fan; Q9 inverts this control and leaves the fan
+    // at full speed when the MMCM is unlocked. VIO changes duty live.
+    wire [7:0] vio_fan_duty;
+    wire [15:0] vio_fan_rpm;
+`ifndef VIO_ENABLE
+    assign vio_fan_duty = 8'h80;
+`endif
+    tqtt_fan_ctrl #(.CLK_HZ(CORE_CLK_HZ)) u_tqtt_fan (
+        .clk(core_clk), .locked(core_mmcm_locked), .fan_fb(fan_fb),
+        .duty(vio_fan_duty), .fan_pwm(fan_pwm), .rpm(vio_fan_rpm)
+    );
     wire al9134_scl, al9134_sda;
     wire [23:0] al9134_d;
     wire al9134_hs, al9134_vs, al9134_de, al9134_clk, al9134_resetn;

@@ -640,6 +640,7 @@
 ##                                    is a different (much smaller) population.
 ##   vio-set <hex>                 — direct VIO probe write (power user)
 ##   vio-read [filter]             — dump VIO INPUT probes (live signal values)
+##   fan-duty <25..100>            — TQTT J10 fan PWM duty percent
 ##   video-status                  — decode the coherent scan-out snapshot
 ##                                   (task #243): committed hres/vres/base/
 ##                                   stride, dafb_live (boot-splash
@@ -1348,6 +1349,27 @@ proc vio_set {hex_val} {
     scan $digits %x v
     set_property OUTPUT_VALUE [vio_fmt_value $p $v] $p
     commit_hw_vio [list $p]
+}
+
+proc tqtt_fan_duty {percent} {
+    if {![string is integer -strict $percent] || $percent < 25 || $percent > 100} {
+        error "fan-duty: enter an integer percentage from 25 to 100"
+    }
+    set p ""
+    foreach v [get_hw_vios -quiet] {
+        foreach candidate [get_hw_probes -quiet -of_objects $v] {
+            if {[string match *vio_fan_duty* [get_property NAME $candidate]]} {
+                set p $candidate
+                break
+            }
+        }
+    }
+    if {$p eq ""} { error "fan-duty: TQTT fan VIO absent; load a fan-enabled bitstream and matching LTX" }
+    catch {set_property RADIX HEX $p}
+    set duty [expr {($percent * 255 + 50) / 100}]
+    set_property OUTPUT_VALUE [vio_fmt_value $p $duty] $p
+    commit_hw_vio [list $p]
+    puts "> fan duty: ${percent}% (raw $duty); tach: vio-read vio_fan_rpm"
 }
 
 # VIO probe_out1 — dedicated hard-reset control (2026-07-24), a VIO
@@ -6464,6 +6486,9 @@ while {1} {
                 set hv [lindex $tokens 1]
                 vio_set $hv
                 puts "> vio_set probe_out0 = 0x$hv"
+            }
+            fan-duty {
+                tqtt_fan_duty [lindex $tokens 1]
             }
             vio-read {
                 # Dump VIO *input* probes (live signal values).  Optional

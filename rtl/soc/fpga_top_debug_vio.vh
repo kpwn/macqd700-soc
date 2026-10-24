@@ -508,17 +508,19 @@
         .probe_in13(video_dbg_place),
         .probe_in14(vio_scsi_c96),
         .probe_in15(vio_guard_faults),
+`ifdef TQTT_BOARD
+        .probe_in16(vio_fan_rpm),
+`endif
         // 5 bits as of the battery-backed-PRAM change (was 4).  Width is
         // set by CONFIG.C_PROBE_OUT0_WIDTH in gen_debug_vio_ip
         // (synth/vivado.tcl) — bump both together or the IP/RTL widths
         // disagree.  bit4 = pram_clear; see fpga_top_clocks.vh bit-map.
         .probe_out0(vio_boot_ctrl),
-        .probe_out1(vio_hard_reset)      // VIO equivalent of a btn[3] press
-                                          // (platform_reset_req/platform_resetn
-                                          // only -- see fpga_top_clocks.vh's
-                                          // btn3_resetn_db comment for why this
-                                          // deliberately does NOT touch the raw
-                                          // fabric_gt_clr / BUFG_GT .CLR path)
+        // VIO equivalent of btn[3], touching platform reset only.
+        .probe_out1(vio_hard_reset)
+`ifdef TQTT_BOARD
+        ,.probe_out2(vio_fan_duty)
+`endif
     );
 `endif
 
