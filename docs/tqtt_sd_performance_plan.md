@@ -35,6 +35,15 @@ validated Mac-visible disk workload for throughput and integrity. A Finder
 file duplication on the current TQTT image also reported a disk error; read
 the card back and check the volume before assigning a cause to that failure.
 
+On 2026-10-24, the TQTT provisioning image read the card with repeated CRC32
+checks. The card's Apple partition map describes a 2,252,896-block image,
+matching `/home/qwertyoruiop/shd.hda`, rather than the 500 MB 7.5.3 reference.
+A read-only comparison of disk blocks 0..95410 against `shd.hda` found 10
+changed 256-block batches; sector dumps narrowed those to 102 changed blocks.
+The card re-booted Mac OS afterward. Those changes may be normal filesystem
+updates and do not establish corruption. The Finder copy failure still needs
+an isolated write-path reproduction and HFS consistency check.
+
 ## Work sequence
 
 1. Establish a reproducible baseline on the current TQTT 200 MHz image:
