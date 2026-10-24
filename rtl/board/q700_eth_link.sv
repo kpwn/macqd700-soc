@@ -428,6 +428,10 @@ module q700_eth_link #(
     // 100 MHz fabric MGT-reference BUFG output; SIM_MODEL supplies 200 MHz.
     // The DDR sys_clk pins belong exclusively to the MIG black box.
     input  wire       clk_ref,
+`ifdef TQTT_GMII
+    input  wire       clk_125mhz_ext,
+    input  wire       clk_125mhz_ext_locked,
+`endif
     input  wire       phy_rx_clk,
 `ifdef TQTT_GMII
     input  wire [7:0] phy_rxd,
@@ -492,9 +496,19 @@ module q700_eth_link #(
     input  wire       blk_rx_tready,
     output wire       blk_rx_tlast
 );
+    wire clk_125mhz;
+    wire rst_125mhz;
+
+`ifdef TQTT_GMII
+    // The board's 50 MHz oscillator already produces a phase-coherent
+    // 125 MHz clock. Avoid a second MMCM cascade in this CMT column.
+    assign clk_125mhz = clk_125mhz_ext;
+    taxi_sync_reset #(.N(4)) rst_125_inst (
+        .clk(clk_125mhz), .rst(~clk_125mhz_ext_locked), .out(rst_125mhz));
+`else
     wire clk_125mhz_mmcm, clk90_125mhz_mmcm;
-    wire clk_312mhz_mmcm, clk_125mhz, clk90_125mhz, clk_312mhz;
-    wire mmcm_clkfb, mmcm_locked, rst_125mhz, rst_312mhz;
+    wire clk_312mhz_mmcm, clk90_125mhz, clk_312mhz;
+    wire mmcm_clkfb, mmcm_locked, rst_312mhz;
 
     MMCME4_BASE #(
         .CLKIN1_PERIOD((REF_CLK_MHZ == 200) ? 5.0 : 10.0),
@@ -514,7 +528,6 @@ module q700_eth_link #(
     taxi_sync_reset #(.N(4)) rst_125_inst (.clk(clk_125mhz), .rst(~mmcm_locked), .out(rst_125mhz));
     taxi_sync_reset #(.N(4)) rst_312_inst (.clk(clk_312mhz), .rst(~mmcm_locked), .out(rst_312mhz));
 
-`ifndef TQTT_GMII
     wire [3:0] phy_rxd_delayed;
     wire phy_rx_ctl_delayed;
     IDELAYCTRL #(.SIM_DEVICE("ULTRASCALE")) idelayctrl_inst (

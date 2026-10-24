@@ -508,8 +508,8 @@ if {[info exists ::env(CORE_CLK_HZ)]} {
 # and every Mac peripheral timebase in this SoC (VIA phi2, SCC BRG, ADB,
 # audio PWM, peripheral-bus timeouts) is derived from PB_CLK_HZ.
 set core_mmcm [expr {$board eq "tqtt" ? 1 : [parse_bool_env CORE_MMCM 0]}]
-if {$board eq "tqtt" && $core_clk_hz != 200000000} {
-    error "TQTT board shell currently supports CORE_CLK_HZ=200000000 only"
+if {$board eq "tqtt" && $core_clk_hz ni {100000000 200000000}} {
+    error "TQTT board shell supports CORE_CLK_HZ=100000000 or 200000000"
 }
 if {$board eq "tqtt" && $enable_pcie_xdma} {
     error "TQTT board has no RK PCIe XDMA pin mapping"
@@ -525,7 +525,8 @@ if {$core_mmcm} {
         puts stderr "       the MMCM replaces the BUFG_GT divider entirely.  Leave CORE_CLK_DIVIDE unset."
         exit 1
     }
-    puts "=== CORE_MMCM=1: core clock from MMCM (VCO 1200 MHz), CORE_CLK_HZ=$core_clk_hz, pb fixed at 50.000 MHz ==="
+    set core_vco_mhz [expr {$board eq "tqtt" ? 1000 : 1200}]
+    puts "=== CORE_MMCM=1: core clock from MMCM (VCO $core_vco_mhz MHz), CORE_CLK_HZ=$core_clk_hz, pb fixed at 50.000 MHz ==="
     # The -verilog_define itself is appended where synth_def_args is built
     # (it is created further down, so a lappend here would be discarded).
 } else {
@@ -601,8 +602,8 @@ if {$enable_pcie_xdma &&
 # on the active core clock so Vivado judges core-internal timing against the
 # requested budget without inventing a different board oscillator.
 set target_freq_mhz [expr {[info exists ::env(TARGET_FREQ_MHZ)] ? double($::env(TARGET_FREQ_MHZ)) : 200.0}]
-if {$board eq "tqtt" && $target_freq_mhz != 200.0} {
-    error "TQTT full Mac build requires TARGET_FREQ_MHZ=200"
+if {$board eq "tqtt" && $target_freq_mhz != $core_clk_hz / 1000000.0} {
+    error "TQTT TARGET_FREQ_MHZ must match the physical CORE_CLK_HZ"
 }
 set target_period_ns [expr {1000.0 / $target_freq_mhz}]
 
@@ -1522,6 +1523,18 @@ synth_design \
     -flatten_hierarchy rebuilt \
     {*}$synth_def_args
 
+if {$board eq "tqtt"} {
+    # The TMDS serializer observes the pixel clock as data through a
+    # two-flop control synchronizer in the x5 clock domain. The standalone
+    # HDMI image uses the same exception; the 10-bit symbol bus remains
+    # timed between the related pixel and x5 clocks.
+    set pixel_sync_input [get_pins -hier -filter {NAME =~ */pixel_meta_reg/D}]
+    if {[llength $pixel_sync_input] != 1} {
+        error "TQTT TMDS pixel-clock synchronizer not found: $pixel_sync_input"
+    }
+    set_false_path -to $pixel_sync_input
+}
+
 # Taxi's constraint Tcl files operate on elaborated cells, so source them
 # only after synthesis has created the hierarchy they query.  They are kept
 # verbatim from the pinned physical-link baseline.
@@ -1713,7 +1726,7 @@ if {!$use_sim_model} {
 # period, and it uses a plain `set_max_delay` so that hold analysis and clock
 # skew/uncertainty accounting both survive.
 if {$target_freq_mhz != 200.0} {
-    set core_budget_clks [get_clocks -quiet core_clk]
+    set core_budget_clks [expr {$board eq "tqtt" ? [get_clocks -quiet tqtt_core_unbuf] : [get_clocks -quiet core_clk]}]
     if {[llength $core_budget_clks] == 0} {
         if {$use_sim_model} {
             set core_budget_clks [get_clocks -quiet sysclk200]
@@ -2362,6 +2375,40 @@ proc apply_real_mig_cdc_constraints {} {
     apply_async_fifo_gray_cdc_bus_skew_bound
 }
 apply_real_mig_cdc_constraints
+
+if {$board eq "tqtt" && $eth_enable} {
+    # D14 is fixed on the PCB and cannot reach the selected GMII RX BUFG
+    # over a dedicated clock track. Allow fabric routing for this input;
+    # the routed RX clock and receive data paths must still meet timing.
+    set tqtt_rx_ibuf_net [get_nets -quiet phy_rx_clk_IBUF_inst/O]
+    if {[llength $tqtt_rx_ibuf_net] != 1} {
+        error "TQTT GMII RX IBUF net unresolved: $tqtt_rx_ibuf_net"
+    }
+    set_property CLOCK_DEDICATED_ROUTE FALSE $tqtt_rx_ibuf_net
+
+    # The RTL8211EG receive clock is recovered from the cable and has no
+    # phase relation to the board oscillator. Taxi crosses RX into the MAC
+    # logic domain through its asynchronous FIFO.
+    set tqtt_rx_clk [get_clocks -quiet tqtt_gmii_rxclk125]
+    set tqtt_fabric_clk [get_clocks -quiet tqtt_fabric_50]
+    if {[llength $tqtt_rx_clk] != 1 || [llength $tqtt_fabric_clk] != 1} {
+        error "TQTT GMII/fabric clocks unresolved: rx=$tqtt_rx_clk fabric=$tqtt_fabric_clk"
+    }
+    set_clock_groups -asynchronous \
+        -group $tqtt_rx_clk -group [_clock_family $tqtt_fabric_clk]
+
+    # The 125 MHz MAC domain exchanges packets with the 200 MHz CPU domain
+    # through Taxi async FIFOs and synchronized status fields. Their Gray
+    # pointers and reset synchronizers are intentionally asynchronous even
+    # though both clocks come from one MMCM (the 8/5 phase relationship
+    # otherwise invents a 1 ns setup requirement on a synchronizer stage).
+    set tqtt_eth_clk [get_clocks -quiet tqtt_eth_unbuf]
+    set tqtt_core_clk [get_clocks -quiet tqtt_core_unbuf]
+    if {[llength $tqtt_eth_clk] != 1 || [llength $tqtt_core_clk] != 1} {
+        error "TQTT GMII/core clocks unresolved: eth=$tqtt_eth_clk core=$tqtt_core_clk"
+    }
+    set_clock_groups -asynchronous -group $tqtt_eth_clk -group $tqtt_core_clk
+}
 
 # PCIe/XDMA CDC — the XDMA IP's AXI clock (`pcie_axi_aclk`, 250 MHz) and
 # PIPE clock are GT TXOUTCLK-derived and trace back to the same 100 MHz

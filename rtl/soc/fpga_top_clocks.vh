@@ -31,17 +31,20 @@
     assign core_mmcm_locked = 1'b1;
 `elsif TQTT_BOARD
     // TQTT's DDR 100 MHz pair belongs to MIG. The separate 50 MHz board
-    // oscillator supplies all fabric clocks from one 1200 MHz MMCM VCO.
+    // oscillator supplies all fabric clocks from one 1000 MHz MMCM VCO.
     wire tqtt_fabric_clk;
-    wire tqtt_core_unbuf, tqtt_pb_unbuf, tqtt_video_unbuf;
+    wire tqtt_core_unbuf, tqtt_pb_unbuf, tqtt_video_unbuf, tqtt_eth_unbuf;
+    wire eth_ref_clk125;
     wire tqtt_clkfb;
     IBUF u_tqtt_fabric_ibuf (.I(fabric_clk_50), .O(tqtt_fabric_clk));
     MMCME4_BASE #(
         .BANDWIDTH("OPTIMIZED"), .CLKIN1_PERIOD(20.000),
-        .DIVCLK_DIVIDE(1), .CLKFBOUT_MULT_F(24.000),
-        .CLKOUT0_DIVIDE_F(6.000),   // 200 MHz core
-        .CLKOUT1_DIVIDE(24),        // 50 MHz peripheral bus
-        .CLKOUT2_DIVIDE(12),        // 100 MHz video / GMII reference
+        .DIVCLK_DIVIDE(1), .CLKFBOUT_MULT_F(20.000),
+        .CLKOUT0_DIVIDE_F((CORE_CLK_HZ == 100_000_000) ? 10.000 : 5.000),
+                                     // 100 MHz bring-up or 200 MHz target
+        .CLKOUT1_DIVIDE(20),        // 50 MHz peripheral bus
+        .CLKOUT2_DIVIDE(10),        // 100 MHz video reference
+        .CLKOUT3_DIVIDE(8),         // 125 MHz GMII transmit / MAC
         .STARTUP_WAIT("FALSE")
     ) u_tqtt_fabric_mmcm (
         .CLKIN1(tqtt_fabric_clk), .CLKFBIN(tqtt_clkfb),
@@ -49,12 +52,14 @@
         .CLKOUT0(tqtt_core_unbuf), .CLKOUT0B(),
         .CLKOUT1(tqtt_pb_unbuf), .CLKOUT1B(),
         .CLKOUT2(tqtt_video_unbuf), .CLKOUT2B(),
-        .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
+        .CLKOUT3(tqtt_eth_unbuf), .CLKOUT3B(),
+        .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
         .LOCKED(core_mmcm_locked), .PWRDWN(1'b0), .RST(tqtt_reset)
     );
     BUFG u_tqtt_core_bufg (.I(tqtt_core_unbuf), .O(sys_clk));
     BUFG u_tqtt_pb_bufg (.I(tqtt_pb_unbuf), .O(pb_clk_src));
     BUFG u_tqtt_video_bufg (.I(tqtt_video_unbuf), .O(video_ref_clk));
+    BUFG u_tqtt_eth_bufg (.I(tqtt_eth_unbuf), .O(eth_ref_clk125));
 `else
     // AB7/AB6 are MGTREFCLK pins.  Match the known-good pcie_test
     // util_ds_buf input path, then enter fabric through BUFG_GT.  Routing

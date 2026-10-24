@@ -13,6 +13,18 @@ set_property IOSTANDARD POD12_DCI [get_ports {ddr4_dq[*] ddr4_dm_dbi_n[*]}]
 set_property IOSTANDARD DIFF_POD12_DCI [get_ports {ddr4_dqs_t[*] ddr4_dqs_c[*]}]
 set_property IOSTANDARD DIFF_SSTL12_DCI [get_ports {ddr4_ck_t[*] ddr4_ck_c[*]}]
 set_property IOSTANDARD LVCMOS12 [get_ports ddr4_reset_n]
+set _tqtt_mig_phys_ports [get_ports {
+    sys_clk_p sys_clk_n
+    ddr4_act_n ddr4_reset_n
+    ddr4_adr[*] ddr4_ba[*] ddr4_bg[*]
+    ddr4_cke[*] ddr4_odt[*] ddr4_cs_n[*]
+    ddr4_ck_t[*] ddr4_ck_c[*]
+    ddr4_dq[*] ddr4_dqs_t[*] ddr4_dqs_c[*] ddr4_dm_dbi_n[*]
+}]
+# The stitched MIG DCP owns its physical IO buffers. Match the RK full-SoC
+# contract; standalone TQTT DDR4 probe used synth_design -no_iobuf instead.
+set_property IO_BUFFER_TYPE NONE $_tqtt_mig_phys_ports
+set_property CLOCK_BUFFER_TYPE NONE $_tqtt_mig_phys_ports
 #########################################################################################
 set_property PACKAGE_PIN ad24 [get_ports {ddr4_dq[0]}]
 set_property PACKAGE_PIN af24 [get_ports {ddr4_dq[1]}]
@@ -99,6 +111,11 @@ set_property -dict {PACKAGE_PIN AE15 IOSTANDARD LVCMOS33} [get_ports sd_clk]
 set_property -dict {PACKAGE_PIN AD15 IOSTANDARD LVCMOS33} [get_ports sd_mosi]
 set_property -dict {PACKAGE_PIN AF13 IOSTANDARD LVCMOS33 PULLUP TRUE} [get_ports sd_miso]
 set_property -dict {PACKAGE_PIN AF14 IOSTANDARD LVCMOS33 PULLUP TRUE} [get_ports sd_cs_n]
+# Keep the physical SPI pads in timing analysis, as on the RK board.
+# These are FPGA latency allocations; card round-trip timing is separate.
+set sd_spi_tx_q [get_pins -hier -filter {NAME =~ */spi_clk_reg/Q || NAME =~ */spi_mosi_reg/Q || NAME =~ */spi_cs_n_reg/Q}]
+set_max_delay -datapath_only 4.000 -from $sd_spi_tx_q -to [get_ports {sd_clk sd_mosi sd_cs_n}]
+set_max_delay -datapath_only 3.000 -from [get_ports sd_miso]
 # Direct TMDS, qualified by the standalone HDMI probe.
 set_property PACKAGE_PIN T25 [get_ports tmds_clk_p]
 set_property PACKAGE_PIN U25 [get_ports tmds_clk_n]
@@ -135,4 +152,7 @@ set_property PACKAGE_PIN H12 [get_ports phy_rx_dv]
 set_property PACKAGE_PIN J12 [get_ports phy_rx_er]
 set_property PACKAGE_PIN D13 [get_ports phy_reset_n]
 set_property IOSTANDARD LVCMOS33 [get_ports {phy_rx_clk phy_rxd[*] phy_rx_dv phy_rx_er phy_tx_clk phy_txd[*] phy_tx_en phy_tx_er phy_reset_n}]
+set_property DRIVE 8 [get_ports {phy_tx_clk phy_txd[*] phy_tx_en phy_tx_er phy_reset_n}]
+set_property SLEW FAST [get_ports phy_tx_clk]
+set_property SLEW SLOW [get_ports {phy_txd[*] phy_tx_en phy_tx_er phy_reset_n}]
 create_clock -period 8.000 -name tqtt_gmii_rxclk125 [get_ports phy_rx_clk]

@@ -94,6 +94,8 @@
     ) u_q700_eth_link (
         .clk_ref(video_ref_clk),
 `ifdef TQTT_BOARD
+        .clk_125mhz_ext(eth_ref_clk125),
+        .clk_125mhz_ext_locked(core_mmcm_locked),
         .phy_rx_clk(phy_rx_clk), .phy_rxd(phy_rxd),
         .phy_rx_dv(phy_rx_dv), .phy_rx_er(phy_rx_er),
         .phy_tx_clk(phy_tx_clk), .phy_txd(phy_txd),

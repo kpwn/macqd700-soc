@@ -2,9 +2,9 @@
 
 This board uses the same `xcku5p-ffvb676-2-i` FPGA as the RK target, but its
 clock, DDR4, SD, Ethernet, and video wiring differ. `BOARD=rk` remains the
-default. `BOARD=tqtt` currently selects the **standalone, read-only SD/CRC
-image**; the full SoC build rejects this board until its other interfaces are
-qualified. A successful SD image is not a Mac boot image.
+default. `BOARD=tqtt` now selects the full Mac SoC integration; its hardware
+boot and 200 MHz timing closure remain in progress. The standalone SD/CRC
+image is still available for board diagnostics.
 
 ## Board direction
 
@@ -142,10 +142,10 @@ test, and the capture feed resumed.
 `BOARD=tqtt` now selects the TQTT 1 GiB DDR4 MIG, 8-bit GMII Taxi MAC,
 direct TMDS pins, SD SPI, UART2, LEDs, and fan. The 50 MHz E18 oscillator
 drives one fabric MMCM that produces a 200 MHz core clock, 50 MHz peripheral
-clock, and 100 MHz video/GMII reference. The 100 MHz T24/U24 differential
-clock remains dedicated to MIG. The existing Mac scanout runs at 720p60 and
-feeds a DVI-compatible TMDS encoder. HDMI audio from the Mac ASC is still to
-be connected; the standalone 48 kHz audio probe remains available.
+clock, 100 MHz video reference, and 125 MHz GMII transmit clock. The 100 MHz
+T24/U24 differential clock remains dedicated to MIG. The existing Mac scanout
+runs at 720p60 and feeds a DVI-compatible TMDS encoder. HDMI audio from the Mac
+ASC is still to be connected; the standalone 48 kHz audio probe remains available.
 
 The RK physical DDR layout reserves its ROM and framebuffer above the first
 1 GiB. That would wrap on TQTT's 30-bit MIG AXI address bus and corrupt RAM.
@@ -161,16 +161,43 @@ SoC with zero errors and zero critical warnings. `make tqtt-full` is the
 separate TQTT output directory. A successful elaboration does not establish
 timing closure or a Mac boot; those are the next hardware gates.
 
+`make tqtt-full-100` builds a separate 100 MHz functional bring-up image. Its
+MMCM physically generates 100 MHz for the core, with a matching timing budget.
+The 200 MHz target remains `make tqtt-full`.
+
+The first full route passed synthesis, placement, DDR MIG stitching, and
+routing, but missed the 200 MHz core budget by 0.682 ns. It also exposed
+missing SD pad constraints. The second route, using `PLACE_DIRECTIVE=Explore`,
+generated `build/vivado_tqtt/fpga_top.blank.bit` with zero DRC errors,
+WNS -0.304 ns and WHS +0.002 ns after six post-route passes. The true core
+clock is 5 ns. SD pad paths now close: CLK +0.104 ns, MOSI +0.284 ns,
+CS +0.228 ns, and MISO +0.416 ns. The core image remains below the requested
+200 MHz timing margin.
+
+The second image was programmed on the KU5P via JTAG on 2026-10-24. VIO
+reported DDR calibration complete, ROM load complete, core reset released,
+no AXI error, and matching final-sector CRC16 `0x1270 == 0x1270` after
+2048 sectors. JTAG CPU debug showed the core running without an exception,
+but repeatedly visiting the ROM ADB manager wait loop at `0x4080A8E6`.
+The capture card showed a gray rectangle on black instead of the Mac desktop.
+This is an incomplete boot, not a validated machine. The loop is also
+documented in `tb/models/rom_patch_sets.h`; a 100 MHz build is underway to
+check whether the same behavior persists without the 200 MHz setup miss.
+`tools/tqtt_full_status.tcl` reads all live VIO probes without reprogramming.
+
 Before loading the full image, check the TQTT +ADJ rail that supplies bank 67
 and the E18 oscillator input. The board reference warns that +ADJ should be
 1.71-1.89 V, while its power page specifies 1.9 V. The 50 MHz oscillator is
 connected through a 43 ohm series resistor. This clock path was not used by
 the earlier DDR, SD, HDMI, or GMII probes, which used T24/U24 instead.
+AMD's [DS922 recommended operating conditions](https://docs.amd.com/r/en-US/ds922-kintex-ultrascale-plus/Recommended-Operating-Conditions)
+limit HP-bank VCCO to 1.9 V and input voltage to VCCO + 0.2 V.
 
-After timing closure, boot the existing SD image, confirm the 720p60 Mac
-screen on the monitor and capture card, verify DDR/SD behavior and GMII RX/TX,
-then integrate HDMI audio and physical USB/ADB/serial. RK remains selectable
-as `BOARD=rk` until the TQTT full image passes these checks.
+Complete the 100 MHz comparison and diagnose the ADB wait, then close the
+200 MHz core timing, confirm the 720p60 Mac screen, and verify full-SoC
+DDR/SD and GMII RX/TX. HDMI audio and physical USB/ADB/serial follow.
+RK remains selectable as `BOARD=rk` until the TQTT full image passes these
+checks.
 
 Board pin facts were checked against the TQTT XCKU5P schematic and example
 constraints at <https://github.com/joshheyse/tqtt-ku5p>. No vendor example

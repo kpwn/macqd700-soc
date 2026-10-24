@@ -3795,7 +3795,7 @@ fpga-tqtt-hdmi-probe-bitstream:
 
 # Board-selectable full Mac build. Keep RK as the default until this image
 # passes boot, storage, video, and network checks on the TQTT board.
-.PHONY: check-tqtt-ddr-map tqtt-full
+.PHONY: check-tqtt-ddr-map tqtt-full tqtt-full-100
 check-tqtt-ddr-map:
 	@mkdir -p $(BUILD_DIR)/tb_tqtt_ddr_map
 	verilator --binary --top-module tb_tqtt_ddr_map -DTQTT_BOARD \
@@ -3808,6 +3808,14 @@ tqtt-full: check-tqtt-ddr-map
 	$(MAKE) BOARD=tqtt TARGET_FREQ_MHZ=200 CORE_CLK_HZ=200000000 CORE_MMCM=1 \
 	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced \
 	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt impl-split
+
+# Functional bring-up image with a physically generated 100 MHz core clock.
+# The 200 MHz target remains the normal tqtt-full build.
+tqtt-full-100: check-tqtt-ddr-map
+	$(MAKE) tqtt-ddr4-mig
+	$(MAKE) BOARD=tqtt TARGET_FREQ_MHZ=100 CORE_CLK_HZ=100000000 CORE_MMCM=1 \
+	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced \
+	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt_100 impl-split
 
 .PHONY: fpga-100mhz-jtag-bitstream
 fpga-100mhz-jtag-bitstream:
