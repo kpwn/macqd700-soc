@@ -33,6 +33,8 @@ set proj_root [file normalize [file dirname [info script]]/..]
 set rtl_dir   $proj_root/rtl
 set synth_dir $proj_root/synth
 set part      "xcku5p-ffvb676-2-i"
+set board     [expr {[info exists ::env(BOARD)] ? $::env(BOARD) : "rk"}]
+if {$board ni {rk tqtt}} {error "BOARD must be rk or tqtt"}
 
 file mkdir $output_dir
 file mkdir $output_dir/reports
@@ -110,15 +112,20 @@ read_verilog [list \
     $rtl_dir/soc/sd_provision_top.v \
 ]
 
-read_xdc $synth_dir/sd_provision.xdc
+if {$board eq "tqtt"} {
+    read_xdc $synth_dir/tqtt_sd_provision.xdc
+} else {
+    read_xdc $synth_dir/sd_provision.xdc
+}
 
 # ──────────────────────────────────────────────────────────────────────
 # Synthesis
 # ──────────────────────────────────────────────────────────────────────
 puts "=== SYNTHESIS (sd_provision_top) ==="
+set defines [list PROV_JTAG_AXI]
+if {$board eq "tqtt"} {lappend defines TQTT_BOARD}
 synth_design -top sd_provision_top -part $part \
-    -verilog_define PROV_JTAG_AXI \
-    -flatten_hierarchy rebuilt
+    -verilog_define $defines -flatten_hierarchy rebuilt
 
 write_checkpoint -force $output_dir/post_synth.dcp
 report_utilization -file $output_dir/reports/utilization_synth.rpt

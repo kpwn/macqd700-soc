@@ -20,7 +20,9 @@ here: it is [inserted into the FPGA bitstream](adb_firmware_bitstream.md).
 
 ## Tools
 
-Build the provisioning image with `make sd-provision-impl`. Its top level
+Build the provisioning image with `make sd-provision-impl` for RK or
+`make BOARD=tqtt sd-provision-impl` for TQTT. The TQTT image is written to
+`build/sd_provision_tqtt/sd_provision_top.bit`. Its top level
 is [sd_provision_top.v](../rtl/soc/sd_provision_top.v), separate from the
 normal Mac build. The implementation gate and board access must be scheduled
 exclusively, just as for a normal hardware build.

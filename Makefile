@@ -1279,20 +1279,20 @@ lint-sd-provision:
 
 # Dedicated provisioning bitstream (synth-only sanity / full impl).
 # Output: $(BUILD_DIR)/sd_provision/sd_provision_top.bit
-SDPROV_VIVADO_DIR := $(BUILD_DIR)/sd_provision
+SDPROV_VIVADO_DIR := $(BUILD_DIR)/sd_provision$(if $(filter tqtt,$(BOARD)),_tqtt,)
 
 .PHONY: sd-provision-synth
 sd-provision-synth:
 	@mkdir -p $(SDPROV_VIVADO_DIR)
 	@touch $(VIVADO_LOCK)
-	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/sd_provision.tcl -tclargs synth_only $(SDPROV_VIVADO_DIR)' \
+	flock -n -E 75 $(VIVADO_LOCK) -c 'BOARD=$(BOARD) $(VIVADO) -mode batch -source $(SYNTH_DIR)/sd_provision.tcl -tclargs synth_only $(SDPROV_VIVADO_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
 .PHONY: sd-provision-impl
 sd-provision-impl:
 	@mkdir -p $(SDPROV_VIVADO_DIR)
 	@touch $(VIVADO_LOCK)
-	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/sd_provision.tcl -tclargs full_impl $(SDPROV_VIVADO_DIR)' \
+	flock -n -E 75 $(VIVADO_LOCK) -c 'BOARD=$(BOARD) $(VIVADO) -mode batch -source $(SYNTH_DIR)/sd_provision.tcl -tclargs full_impl $(SDPROV_VIVADO_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
 # tb-scaler removed: rtl/board/video_phy/scaler.v was deleted (superseded
