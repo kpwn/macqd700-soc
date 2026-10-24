@@ -3793,6 +3793,14 @@ fpga-tqtt-hdmi-probe-bitstream:
 	flock -n -E 75 $(VIVADO_LOCK) -c 'TQTT_HDMI_AUDIO=$(TQTT_HDMI_AUDIO) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_hdmi_probe.tcl -tclargs $(TQTT_HDMI_PROBE_BUILD_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
+.PHONY: fpga-tqtt-usb-host-probe-bitstream
+TQTT_USB_HOST_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_usb_host_probe
+fpga-tqtt-usb-host-probe-bitstream:
+	@mkdir -p $(TQTT_USB_HOST_PROBE_BUILD_DIR)
+	@touch $(VIVADO_LOCK)
+	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_usb_host_probe.tcl -tclargs $(TQTT_USB_HOST_PROBE_BUILD_DIR)' \
+	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — TQTT USB host probe pending"; fi; exit $$status; }
+
 # Board-selectable full Mac build. Keep RK as the default until this image
 # passes boot, storage, video, and network checks on the TQTT board.
 .PHONY: check-tqtt-ddr-map tqtt-full tqtt-full-100

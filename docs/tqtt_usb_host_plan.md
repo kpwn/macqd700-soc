@@ -64,6 +64,29 @@ Validation order:
 4. Route and boot the full TQTT image, then check 200 MHz timing and SD/DDR
    integrity with the USB logic enabled.
 
+The first single-port probe is `make fpga-tqtt-usb-host-probe-bitstream`.
+It uses PMOD0/J1 pin 1 for D+ and pin 3 for D-, derives 60 MHz from the
+board's 100 MHz differential reference, and exposes five VIO inputs:
+
+| Probe | Width | Contents |
+| --- | ---: | --- |
+| 0 | 32 | report count [31:16], type [7:6], error [5], busy [4], report toggle [3], D+ [2], D- [1], output enable [0] |
+| 1 | 64 | last raw HID report |
+| 2 | 32 | last modifier byte and first three keyboard usages |
+| 3 | 32 | last mouse buttons and signed X/Y deltas |
+| 4 | 64 | host diagnostic registers |
+
+The probe bitstream is separate from the full Mac image. Do not program it
+while preserving the running Mac session matters; FPGA reconfiguration resets
+that session. When bench wiring is ready, program the probe with its matching
+`.ltx` file, inspect attach/enum data with `tools/tqtt_usb_probe_status.tcl`,
+then return to the patched full Mac image. The 2026-10-24 standalone build
+produced `build/tqtt_usb_host_probe/tqtt_usb_host_probe.bit` and matching
+`.ltx`; it routed with WNS +12.686 ns, WHS +0.016 ns, WPWS +2.000 ns,
+zero failing endpoints, and zero DRC errors. Vivado loaded the 1024x4
+host microcode ROM into a RAMB18E2. Physical USB wiring and HID enumeration
+remain untested.
+
 ## Hub and general USB stack
 
 Two independent sockets are useful immediately, but they do not implement a
