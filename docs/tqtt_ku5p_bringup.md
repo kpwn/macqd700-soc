@@ -270,10 +270,11 @@ the VIO RPM and duty probes without reprogramming. The full-speed baseline
 on 2026-10-24 was 32.4 °C. This is die temperature, not the fan's airflow or
 the hottest board component.
 
-The desired automatic-control target is a maximum FPGA die temperature of
-50 °C. The present controller is manual, so reaching that target requires
-hardware temperature sampling, a tested duty-control loop, and a fail-safe
-full-speed response if readings stop or the temperature exceeds the limit.
+The desired automatic-control ceiling is 50 °C FPGA die temperature. Increase
+duty before that ceiling and command full speed at or above 50 °C. The present
+controller is manual, so reaching that target requires hardware temperature
+sampling, a tested duty-control loop, and a fail-safe full-speed response if
+readings stop.
 Validate RPM and temperature across idle and sustained Mac workloads before
 calling the fan bring-up complete.
 
