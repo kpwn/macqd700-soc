@@ -198,8 +198,14 @@ capture card showed the Mac desktop with mounted `FPGA HD` and the
 Speedometer folder. JTAG `vhdd-status` reported the SD volume enabled at
 4,194,240 blocks (about 2 GiB), with no RAM-disk watchdog or error. This
 establishes a working full Mac boot and basic ADB input despite the remaining
--0.304 ns core setup miss. A 100 MHz comparison build is underway; the
-200 MHz patched image remains the active board image.
+-0.304 ns core setup miss. The separate 100 MHz build routed with WNS
++0.035 ns, WHS +0.010 ns, and WPWS +0.235 ns, with zero failing endpoints and
+all user timing constraints met. Its blank bitstream and matching ADB metadata
+were generated, then patched locally with the user's ADB firmware to
+`build/vivado_tqtt_100/fpga_top.local.bit`. This 100 MHz image has not been
+loaded or functionally tested; the 200 MHz patched image remains active on the
+board. A second 200 MHz placement from the original synthesis checkpoint is
+underway.
 
 The full-SoC GMII link also passed a Mac OS TCP/IP check on 2026-10-24. A
 host USB Ethernet adapter connected directly to the KU5P negotiated 1000
@@ -231,9 +237,8 @@ the earlier DDR, SD, HDMI, or GMII probes, which used T24/U24 instead.
 AMD's [DS922 recommended operating conditions](https://docs.amd.com/r/en-US/ds922-kintex-ultrascale-plus/Recommended-Operating-Conditions)
 limit HP-bank VCCO to 1.9 V and input voltage to VCCO + 0.2 V.
 
-Close the 200 MHz core timing, run full Mac benchmarks and storage integrity
-checks, and verify full-SoC GMII RX/TX. HDMI audio and physical USB/ADB/serial
-follow.
+Close the 200 MHz core timing and run full Mac benchmarks and storage integrity
+checks. HDMI audio and physical USB/ADB/serial follow.
 RK remains selectable as `BOARD=rk` until the TQTT full image passes these
 checks.
 
