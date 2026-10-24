@@ -1,7 +1,8 @@
 // TQTT J10 four-wire fan. Q9 pulls the fan's PWM input low when fan_pwm=1.
 // The fan's own pull-up makes fan_pwm=0 the full-speed, fail-safe state.
 module tqtt_fan_ctrl #(
-    parameter integer CLK_HZ = 200_000_000
+    parameter integer CLK_HZ = 200_000_000,
+    parameter integer MIN_DUTY = 64
 ) (
     input  wire       clk,
     input  wire       locked,
@@ -23,9 +24,9 @@ module tqtt_fan_ctrl #(
     reg fb_meta = 1, fb_sync = 1, fb_last = 1;
     reg [10:0] tach_pulses = 0;
 
-    // Do not let a debug setting stop the fan while temperature control is
-    // absent. 64/256 is the minimum until speed and temperature are proven.
-    wire [7:0] safe_duty = duty < 8'd64 ? 8'd64 : duty;
+    // Manual control retains a 25% floor. Temperature control can use zero;
+    // its sensor watchdog and fault logic provide the full-speed fallback.
+    wire [7:0] safe_duty = duty < MIN_DUTY[7:0] ? MIN_DUTY[7:0] : duty;
     assign fan_pwm = !locked || !startup_done ||
                      safe_duty == 8'hff || phase < safe_duty ? 1'b0 : 1'b1;
 

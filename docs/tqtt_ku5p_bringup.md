@@ -285,9 +285,17 @@ the hottest board component.
 
 The desired automatic-control ceiling is 50 °C FPGA die temperature. Increase
 duty before that ceiling and command full speed at or above 50 °C. The present
-controller is manual, so reaching that target requires hardware temperature
-sampling, a tested duty-control loop, and a fail-safe full-speed response if
-readings stop.
+loaded image is manual. An opt-in automatic image can be built with
+`make TQTT_FAN_AUTO=1 tqtt-full` in `build/vivado_tqtt_fan_auto`. It reads
+the on-chip SYSMON temperature through the fabric DRP. KU5P's SYSMONE4 ADC
+codes 600 to 664 (approximately 18–50 °C with the internal reference) map to
+0–100% duty in steps of four PWM counts. Missing or implausible readings and a
+tach stall command full speed. The board has not run this automatic image yet.
+Its sensor conversion, tach fault behavior, and acoustic curve require hardware
+validation before making it the default. In that image, `fan-duty 100` forces
+full speed and `fan-duty auto` releases the override; the manual image keeps
+its 25–100% JTAG range. `make test-tqtt-fan-thermal` checks the curve, stale
+and invalid readings, and tach-stall fallback without loading a bitstream.
 Validate RPM and temperature across idle and sustained Mac workloads before
 calling the fan bring-up complete.
 

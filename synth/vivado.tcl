@@ -552,6 +552,9 @@ if {$sd_safe_cmd25 ni {0 1}} {error "SD_SAFE_CMD25 must be 0 or 1"}
 set tqtt_hdmi_audio [parse_int_env TQTT_HDMI_AUDIO 0]
 if {$tqtt_hdmi_audio ni {0 1}} {error "TQTT_HDMI_AUDIO must be 0 or 1"}
 if {$tqtt_hdmi_audio && $board ne "tqtt"} {error "TQTT_HDMI_AUDIO requires BOARD=tqtt"}
+set tqtt_fan_auto [parse_int_env TQTT_FAN_AUTO 0]
+if {$tqtt_fan_auto ni {0 1}} {error "TQTT_FAN_AUTO must be 0 or 1"}
+if {$tqtt_fan_auto && $board ne "tqtt"} {error "TQTT_FAN_AUTO requires BOARD=tqtt"}
 if {$sd_safe_cmd25 && [info exists ::env(ENABLE_SD_JTAG_WRITER)]} {
     error "SD_SAFE_CMD25 requires the preemptive provisioning writer to be disabled"
 }
@@ -744,6 +747,8 @@ proc read_all_rtl {rtl_dir} {
     read_verilog $rtl_dir/board/video_phy/video_top.v
     if {$board eq "tqtt"} {
         read_verilog $rtl_dir/board/tqtt_fan_ctrl.v
+        read_verilog $rtl_dir/board/tqtt_die_temp.v
+        read_verilog $rtl_dir/board/tqtt_fan_thermal.v
         read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/audio_clock_regeneration_packet.sv
         read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/audio_info_frame.sv
         read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/audio_sample_packet.sv
@@ -917,6 +922,7 @@ set top_generic_list [list \
     BOOT_ROM_SECTORS=$boot_rom_sectors \
     SD_SAFE_CMD25=$sd_safe_cmd25 \
     TQTT_HDMI_AUDIO=$tqtt_hdmi_audio \
+    TQTT_FAN_AUTO=$tqtt_fan_auto \
     BUILD_ID=$build_id_generic
 ]
 set_property generic [join $top_generic_list " "] [current_fileset]
@@ -945,10 +951,10 @@ proc gen_debug_vio_ip {output_dir part} {
     set ip_dir $output_dir/ip
     set ip_xci $ip_dir/debug_vio/debug_vio.xci
     set ip_dcp $ip_dir/debug_vio/debug_vio.dcp
-    # Compact map v29 adds TQTT fan RPM input and live duty output.
+    # Compact map v30 adds TQTT fan mode/fault/temperature/duty input.
     # all probe widths and the disabled activity-detector setting.
     set widths {32 6 10 8 16 32 32 32 32 68 187 48 96 160 84 32}
-    if {$::board eq "tqtt"} { lappend widths 16 }
+    if {$::board eq "tqtt"} { lappend widths 16 20 }
     set config [list CONFIG.C_NUM_PROBE_IN [llength $widths] \
         CONFIG.C_NUM_PROBE_OUT 2 CONFIG.C_PROBE_OUT0_WIDTH 5 \
         CONFIG.C_PROBE_OUT0_INIT_VAL 0x0 CONFIG.C_PROBE_OUT1_WIDTH 1 \
@@ -958,7 +964,8 @@ proc gen_debug_vio_ip {output_dir part} {
             CONFIG.C_NUM_PROBE_OUT 3 CONFIG.C_PROBE_OUT0_WIDTH 5 \
             CONFIG.C_PROBE_OUT0_INIT_VAL 0x0 CONFIG.C_PROBE_OUT1_WIDTH 1 \
             CONFIG.C_PROBE_OUT1_INIT_VAL 0x0 CONFIG.C_PROBE_OUT2_WIDTH 8 \
-            CONFIG.C_PROBE_OUT2_INIT_VAL 0x80 CONFIG.C_EN_PROBE_IN_ACTIVITY 0]
+            CONFIG.C_PROBE_OUT2_INIT_VAL [expr {$::tqtt_fan_auto ? "0x00" : "0x80"}] \
+            CONFIG.C_EN_PROBE_IN_ACTIVITY 0]
     }
     set n 0
     foreach width $widths {
@@ -1519,7 +1526,7 @@ foreach key [lsort [array names ::env]] {
     if {$key in {CORE_BUDGET_NS NO_INCREMENTAL INCREMENTAL_REF_DCP
                  DDR4_MIG_DCP USE_REAL_MIG REAL_FPGA_BUILD CORE_MMCM
                  ENABLE_VIO ENABLE_JTAG_AXI ENABLE_ILA ENABLE_PCIE_XDMA
-                 ETH_ENABLE ETH_DEBUG_ENABLE}} {
+                 ETH_ENABLE ETH_DEBUG_ENABLE TQTT_HDMI_AUDIO TQTT_FAN_AUTO}} {
         dict set synth_selection physical_environment $key $::env($key)
     }
 }
@@ -3408,6 +3415,9 @@ if {$enable_pcie_xdma} {
 set buildinfo_file [file join $output_dir fpga_top.buildinfo]
 set buildinfo_fh [open $buildinfo_file w]
 puts $buildinfo_fh "part=$part"
+puts $buildinfo_fh "board=$board"
+puts $buildinfo_fh "tqtt_hdmi_audio=$tqtt_hdmi_audio"
+puts $buildinfo_fh "tqtt_fan_auto=$tqtt_fan_auto"
 puts $buildinfo_fh "mode=$mode"
 puts $buildinfo_fh "real_fpga_build=$real_fpga_build"
 puts $buildinfo_fh "ddr_path=[expr {$use_sim_model ? {sim_model} : {real_mig}}]"

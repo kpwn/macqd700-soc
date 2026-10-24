@@ -32,5 +32,12 @@ foreach vio [get_hw_vios -of_objects $dev -quiet] {
         if {[string match *vio_fan_duty* [get_property NAME $p]]} {
             puts "TQTT_FAN_DUTY_RAW=[get_property OUTPUT_VALUE $p]"
         }
+        if {[string match *vio_fan_state* [get_property NAME $p]]} {
+            scan [get_property INPUT_VALUE $p] %x fan_state
+            puts "TQTT_FAN_AUTO=[expr {($fan_state >> 19) & 1}]"
+            puts "TQTT_FAN_FAULT=[expr {($fan_state >> 18) & 1}]"
+            puts "TQTT_FAN_ADC_CODE=[expr {($fan_state >> 8) & 1023}]"
+            puts "TQTT_FAN_APPLIED_DUTY=[expr {$fan_state & 255}]"
+        }
     }
 }

@@ -640,7 +640,7 @@
 ##                                    is a different (much smaller) population.
 ##   vio-set <hex>                 — direct VIO probe write (power user)
 ##   vio-read [filter]             — dump VIO INPUT probes (live signal values)
-##   fan-duty <25..100>            — TQTT J10 fan PWM duty percent
+##   fan-duty <25..100|auto>       — manual duty; auto image accepts 100/auto
 ##   video-status                  — decode the coherent scan-out snapshot
 ##                                   (task #243): committed hres/vres/base/
 ##                                   stride, dafb_live (boot-splash
@@ -1352,24 +1352,45 @@ proc vio_set {hex_val} {
 }
 
 proc tqtt_fan_duty {percent} {
-    if {![string is integer -strict $percent] || $percent < 25 || $percent > 100} {
-        error "fan-duty: enter an integer percentage from 25 to 100"
-    }
     set p ""
+    set state_probe ""
+    set state_vio ""
     foreach v [get_hw_vios -quiet] {
         foreach candidate [get_hw_probes -quiet -of_objects $v] {
             if {[string match *vio_fan_duty* [get_property NAME $candidate]]} {
                 set p $candidate
-                break
+            }
+            if {[string match *vio_fan_state* [get_property NAME $candidate]]} {
+                set state_probe $candidate
+                set state_vio $v
             }
         }
     }
     if {$p eq ""} { error "fan-duty: TQTT fan VIO absent; load a fan-enabled bitstream and matching LTX" }
+    set auto_mode 0
+    if {$state_probe ne ""} {
+        refresh_hw_vio $state_vio
+        scan [get_property INPUT_VALUE $state_probe] %x state_value
+        set auto_mode [expr {($state_value & 0x80000) != 0}]
+    }
+    if {$auto_mode} {
+        if {$percent eq "auto"} {
+            set duty 0
+        } elseif {$percent eq "100"} {
+            set duty 255
+        } else {
+            error "fan-duty: automatic image accepts 'auto' or '100' (full-speed override)"
+        }
+    } else {
+        if {![string is integer -strict $percent] || $percent < 25 || $percent > 100} {
+            error "fan-duty: manual image requires 25..100 percent"
+        }
+        set duty [expr {($percent * 255 + 50) / 100}]
+    }
     catch {set_property RADIX HEX $p}
-    set duty [expr {($percent * 255 + 50) / 100}]
     set_property OUTPUT_VALUE [vio_fmt_value $p $duty] $p
     commit_hw_vio [list $p]
-    puts "> fan duty: ${percent}% (raw $duty); tach: vio-read vio_fan_rpm"
+    puts "> fan duty: $percent (raw $duty); tach: vio-read vio_fan_rpm"
 }
 
 # VIO probe_out1 — dedicated hard-reset control (2026-07-24), a VIO

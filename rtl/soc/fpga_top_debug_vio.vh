@@ -510,6 +510,7 @@
         .probe_in15(vio_guard_faults),
 `ifdef TQTT_BOARD
         .probe_in16(vio_fan_rpm),
+        .probe_in17(vio_fan_state),
 `endif
         // 5 bits as of the battery-backed-PRAM change (was 4).  Width is
         // set by CONFIG.C_PROBE_OUT0_WIDTH in gen_debug_vio_ip

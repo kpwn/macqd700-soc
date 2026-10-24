@@ -202,6 +202,9 @@ module fpga_top #(
     // TQTT defaults to the validated DVI-compatible video output.  Opt-in
     // HDMI inserts 48 kHz audio packets sourced from the Mac ASC.
     parameter integer TQTT_HDMI_AUDIO = 0,
+    // Optional fabric SYSMON fan curve. Manual VIO control remains the
+    // default until the automatic image has been exercised on hardware.
+    parameter integer TQTT_FAN_AUTO = 0,
     // MAME's Quadra 700 model derives VIA clocks from C7M/10:
     // 31.3344 MHz / 4 / 10 = 783.36 kHz.
     parameter integer VIA_PHI2_HZ = 783_360,
@@ -350,16 +353,39 @@ module fpga_top #(
     wire cpu_resetn = ~tqtt_reset;
     wire [3:0] btn = 4'b1111;
     // J10 uses a four-wire fan; Q9 inverts this control and leaves the fan
-    // at full speed when the MMCM is unlocked. VIO changes duty live.
+    // at full speed when the MMCM is unlocked.
     wire [7:0] vio_fan_duty;
     wire [15:0] vio_fan_rpm;
+    wire [19:0] vio_fan_state;
 `ifndef VIO_ENABLE
-    assign vio_fan_duty = 8'h80;
+    assign vio_fan_duty = TQTT_FAN_AUTO ? 8'h00 : 8'h80;
 `endif
-    tqtt_fan_ctrl #(.CLK_HZ(CORE_CLK_HZ)) u_tqtt_fan (
-        .clk(core_clk), .locked(core_mmcm_locked), .fan_fb(fan_fb),
-        .duty(vio_fan_duty), .fan_pwm(fan_pwm), .rpm(vio_fan_rpm)
-    );
+    if (TQTT_FAN_AUTO) begin : gen_tqtt_fan_auto
+        wire [9:0] adc_code;
+        wire adc_valid, sensor_fault;
+        wire [7:0] thermal_duty;
+        wire [7:0] selected_duty = vio_fan_duty == 8'hff ? 8'hff : thermal_duty;
+        tqtt_die_temp u_die_temp (
+            .clk(pb_clk), .locked(core_mmcm_locked),
+            .adc_code(adc_code), .valid(adc_valid)
+        );
+        tqtt_fan_thermal #(.CLK_HZ(PB_CLK_HZ)) u_thermal (
+            .clk(pb_clk), .locked(core_mmcm_locked),
+            .adc_code(adc_code), .adc_valid(adc_valid), .rpm(vio_fan_rpm),
+            .duty(thermal_duty), .fault(sensor_fault)
+        );
+        tqtt_fan_ctrl #(.CLK_HZ(PB_CLK_HZ), .MIN_DUTY(0)) u_tqtt_fan (
+            .clk(pb_clk), .locked(core_mmcm_locked), .fan_fb(fan_fb),
+            .duty(selected_duty), .fan_pwm(fan_pwm), .rpm(vio_fan_rpm)
+        );
+        assign vio_fan_state = {1'b1, sensor_fault, adc_code, selected_duty};
+    end else begin : gen_tqtt_fan_manual
+        tqtt_fan_ctrl #(.CLK_HZ(CORE_CLK_HZ)) u_tqtt_fan (
+            .clk(core_clk), .locked(core_mmcm_locked), .fan_fb(fan_fb),
+            .duty(vio_fan_duty), .fan_pwm(fan_pwm), .rpm(vio_fan_rpm)
+        );
+        assign vio_fan_state = {1'b0, 1'b0, 10'd0, vio_fan_duty};
+    end
     wire al9134_scl, al9134_sda;
     wire [23:0] al9134_d;
     wire al9134_hs, al9134_vs, al9134_de, al9134_clk, al9134_resetn;
