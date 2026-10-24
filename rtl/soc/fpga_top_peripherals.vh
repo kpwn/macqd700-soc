@@ -2744,7 +2744,13 @@
     // pwm-audio-design.md for the full rationale and the off-board
     // class-D speaker amp it drives.  I2S and HDMI bridges remain in
     // the tree, tied off, for future board revisions.
+`ifdef TQTT_BOARD
+    // TQTT drives the ASC PCM stream into the optional HDMI transmitter.
+    // Its off-board RK PWM pins are not available on this board.
+    localparam integer AUDIO_PATH = AUDIO_PATH_OFF;
+`else
     localparam integer AUDIO_PATH = AUDIO_PATH_PWM;
+`endif
 
     // I2S outputs (tied off unless AUDIO_PATH=I2S is selected).  Dangling
     // until the XDC exposes the three codec pins; a follow-up task adds

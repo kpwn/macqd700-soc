@@ -3265,11 +3265,13 @@ ETH_DEBUG_ENABLE      ?= 0
 CPU_IPC_PROFILE ?= throughput-v2
 CPU_DEBUG_PROFILE ?= full
 BOARD ?= rk
+TQTT_HDMI_AUDIO ?= 0
 ifneq ($(filter $(BOARD),rk tqtt),$(BOARD))
 $(error BOARD must be rk or tqtt, got '$(BOARD)')
 endif
 VIVADO_RUN_ENV := PCIE_TEST_DIR=$(PCIE_TEST_DIR) INCREMENTAL_REF_DCP=$(INCREMENTAL_REF_DCP) CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE)
 VIVADO_RUN_ENV += BOARD=$(BOARD)
+VIVADO_RUN_ENV += TQTT_HDMI_AUDIO=$(TQTT_HDMI_AUDIO)
 # CPU socket select for synth/impl — same CPU=stub|m68k knob as the
 # Verilator flow (see "CPU build select" above); consumed by vivado.tcl.
 VIVADO_RUN_ENV += CPU=$(CPU)
@@ -3791,7 +3793,6 @@ fpga-tqtt-eth-tx-probe-bitstream:
 	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_eth_tx_probe.tcl -tclargs $(TQTT_ETH_TX_PROBE_BUILD_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — TQTT GMII TX probe pending"; fi; exit $$status; }
 
-TQTT_HDMI_AUDIO ?= 0
 TQTT_HDMI_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_hdmi_probe$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_audio,)
 fpga-tqtt-hdmi-probe-bitstream:
 	@mkdir -p $(TQTT_HDMI_PROBE_BUILD_DIR)
@@ -3821,7 +3822,7 @@ tqtt-full: check-tqtt-ddr-map
 	$(MAKE) tqtt-ddr4-mig
 	$(MAKE) BOARD=tqtt TARGET_FREQ_MHZ=200 CORE_CLK_HZ=200000000 CORE_MMCM=1 \
 	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced \
-	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt impl-split
+	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,) impl-split
 
 # Functional bring-up image with a physically generated 100 MHz core clock.
 # The 200 MHz target remains the normal tqtt-full build.
@@ -3829,7 +3830,7 @@ tqtt-full-100: check-tqtt-ddr-map
 	$(MAKE) tqtt-ddr4-mig
 	$(MAKE) BOARD=tqtt TARGET_FREQ_MHZ=100 CORE_CLK_HZ=100000000 CORE_MMCM=1 \
 	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced \
-	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt_100 impl-split
+	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt_100$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,) impl-split
 
 .PHONY: fpga-100mhz-jtag-bitstream
 fpga-100mhz-jtag-bitstream:

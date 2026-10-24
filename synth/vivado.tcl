@@ -549,6 +549,9 @@ if {$video_smoke != 0 && $video_smoke != 1} {
 set boot_rom_sectors [parse_int_env BOOT_ROM_SECTORS 2048]
 set sd_safe_cmd25 [parse_int_env SD_SAFE_CMD25 0]
 if {$sd_safe_cmd25 ni {0 1}} {error "SD_SAFE_CMD25 must be 0 or 1"}
+set tqtt_hdmi_audio [parse_int_env TQTT_HDMI_AUDIO 0]
+if {$tqtt_hdmi_audio ni {0 1}} {error "TQTT_HDMI_AUDIO must be 0 or 1"}
+if {$tqtt_hdmi_audio && $board ne "tqtt"} {error "TQTT_HDMI_AUDIO requires BOARD=tqtt"}
 if {$sd_safe_cmd25 && [info exists ::env(ENABLE_SD_JTAG_WRITER)]} {
     error "SD_SAFE_CMD25 requires the preemptive provisioning writer to be disabled"
 }
@@ -741,9 +744,17 @@ proc read_all_rtl {rtl_dir} {
     read_verilog $rtl_dir/board/video_phy/video_top.v
     if {$board eq "tqtt"} {
         read_verilog $rtl_dir/board/tqtt_fan_ctrl.v
-        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/tmds_channel.sv
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/audio_clock_regeneration_packet.sv
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/audio_info_frame.sv
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/audio_sample_packet.sv
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/auxiliary_video_information_info_frame.sv
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/packet_assembler.sv
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/packet_picker.sv
         read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/serializer.sv
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/source_product_description_info_frame.sv
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/tmds_channel.sv
         read_verilog -sv $rtl_dir/board/video_phy/tqtt_tmds_video.sv
+        read_verilog -sv $rtl_dir/board/video_phy/tqtt_hdmi_audio_video.sv
     }
     read_verilog $rtl_dir/board/video_phy/vram_smoke.v
 
@@ -905,6 +916,7 @@ set top_generic_list [list \
     ETH_ICMP_RESPONDER=$eth_icmp_responder \
     BOOT_ROM_SECTORS=$boot_rom_sectors \
     SD_SAFE_CMD25=$sd_safe_cmd25 \
+    TQTT_HDMI_AUDIO=$tqtt_hdmi_audio \
     BUILD_ID=$build_id_generic
 ]
 set_property generic [join $top_generic_list " "] [current_fileset]
@@ -1542,6 +1554,30 @@ if {$board eq "tqtt"} {
         error "TQTT TMDS pixel-clock synchronizer not found: $pixel_sync_input"
     }
     set_false_path -to $pixel_sync_input
+    if {$tqtt_hdmi_audio} {
+        set audio_clk_reg [get_pins -hier -filter {NAME =~ *audio_clk_div_reg/C}]
+        set audio_clk_bufg [get_pins -hier -filter {NAME =~ *u_audio_bufg/O}]
+        if {[llength $audio_clk_reg] != 1 || [llength $audio_clk_bufg] != 1} {
+            error "TQTT HDMI audio generated clock not found (reg=$audio_clk_reg bufg=$audio_clk_bufg)"
+        }
+        # The half-period pattern averages 50 MHz / 1041.6667.  A full
+        # period is never shorter than 1041 pb cycles; constrain that
+        # conservative minimum and treat packet CDC as async.
+        create_generated_clock -name tqtt_audio_48k \
+            -source $audio_clk_reg -divide_by 1041 $audio_clk_bufg
+        set audio_clk [get_clocks tqtt_audio_48k]
+        set pixel_clks [get_clocks -quiet -of_objects \
+            [get_pins -quiet {u_video/u_mmcm/u_bufg_pclk/O u_video/u_mmcm/u_bufg_pclk_x5/O}]]
+        set pb_clks [get_clocks -quiet tqtt_pb_unbuf]
+        if {[llength $pixel_clks] == 0 || [llength $pb_clks] != 1} {
+            error "TQTT HDMI source clocks not found for audio CDC (pixel=$pixel_clks pb=$pb_clks)"
+        }
+        # The ASC samples enter through an async FIFO.  The fractional
+        # divider jitters by one pb cycle, so its crossings cannot be
+        # treated as phase-related to pb or pixel clocks for STA.
+        set_clock_groups -asynchronous -group $audio_clk -group [concat $pixel_clks $pb_clks]
+        puts "=== TQTT HDMI AUDIO: 48 kHz clock constrained; packet CDC async to $pixel_clks $pb_clks ==="
+    }
 }
 
 # Taxi's constraint Tcl files operate on elaborated cells, so source them

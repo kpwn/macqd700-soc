@@ -24,9 +24,10 @@ foreach vio [get_hw_vios -of_objects $dev -quiet] {
     refresh_hw_vio $vio
     foreach p [get_hw_probes -of_objects $vio -quiet] {
         if {[string match *vio_fan_rpm* [get_property NAME $p]]} {
-            set_property RADIX UNSIGNED $p
             refresh_hw_vio $vio
-            puts "TQTT_FAN_RPM=[get_property INPUT_VALUE $p]"
+            set raw_rpm [get_property INPUT_VALUE $p]
+            scan $raw_rpm %x rpm
+            puts "TQTT_FAN_RPM=$rpm"
         }
         if {[string match *vio_fan_duty* [get_property NAME $p]]} {
             puts "TQTT_FAN_DUTY_RAW=[get_property OUTPUT_VALUE $p]"

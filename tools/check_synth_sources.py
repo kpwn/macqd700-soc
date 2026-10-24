@@ -50,14 +50,7 @@ ALLOWLIST = {
     "rtl/soc/tqtt_usb_host_probe.v": "standalone TQTT USB host probe",
     "rtl/third_party/m1nl_usb_hid_host/usb_hid_host.v": "standalone TQTT USB host probe core",
     "rtl/third_party/m1nl_usb_hid_host/usb_hid_host_rom.v": "standalone TQTT USB host probe ROM",
-    "rtl/third_party/hdl_util_hdmi/audio_clock_regeneration_packet.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
-    "rtl/third_party/hdl_util_hdmi/audio_info_frame.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
-    "rtl/third_party/hdl_util_hdmi/audio_sample_packet.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
-    "rtl/third_party/hdl_util_hdmi/auxiliary_video_information_info_frame.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
     "rtl/third_party/hdl_util_hdmi/hdmi.sv": "standalone HDMI probe packetizer",
-    "rtl/third_party/hdl_util_hdmi/packet_assembler.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
-    "rtl/third_party/hdl_util_hdmi/packet_picker.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
-    "rtl/third_party/hdl_util_hdmi/source_product_description_info_frame.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
 }
 
 

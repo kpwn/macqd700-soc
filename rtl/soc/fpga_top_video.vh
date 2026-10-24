@@ -864,16 +864,29 @@
     );
 
 `ifdef TQTT_BOARD
-    // The existing 720p scanout feeds three TMDS lanes directly. HDMI audio
-    // will be connected after the full Mac video path is verified.
-    tqtt_tmds_video u_tqtt_tmds_video (
-        .pclk(pclk), .pclk_x5(tqtt_pclk_x5),
-        .reset(!hdmi_mmcm_locked),
-        .rgb(al9134_d), .de(al9134_de),
-        .hs(al9134_hs), .vs(al9134_vs),
-        .tmds_clk_p(tmds_clk_p), .tmds_clk_n(tmds_clk_n),
-        .tmds_p(tmds_p), .tmds_n(tmds_n)
-    );
+    if (TQTT_HDMI_AUDIO) begin : gen_tqtt_hdmi_audio
+        tqtt_hdmi_audio_video u_tqtt_hdmi_audio_video (
+            .pclk(pclk), .pclk_x5(tqtt_pclk_x5),
+            .video_locked(hdmi_mmcm_locked),
+            .rgb(al9134_d), .de(al9134_de),
+            .hs(al9134_hs), .vs(al9134_vs),
+            .x(video_debug_hcount), .y(video_debug_vcount),
+            .pb_clk(pb_clk), .pb_rst(pb_full_rst_bank[3]),
+            .sample_valid(asc_audio_sample_valid_w),
+            .sample_l(asc_audio_pcm_l_w), .sample_r(asc_audio_pcm_r_w),
+            .tmds_clk_p(tmds_clk_p), .tmds_clk_n(tmds_clk_n),
+            .tmds_p(tmds_p), .tmds_n(tmds_n)
+        );
+    end else begin : gen_tqtt_dvi
+        tqtt_tmds_video u_tqtt_tmds_video (
+            .pclk(pclk), .pclk_x5(tqtt_pclk_x5),
+            .reset(!hdmi_mmcm_locked),
+            .rgb(al9134_d), .de(al9134_de),
+            .hs(al9134_hs), .vs(al9134_vs),
+            .tmds_clk_p(tmds_clk_p), .tmds_clk_n(tmds_clk_n),
+            .tmds_p(tmds_p), .tmds_n(tmds_n)
+        );
+    end
     assign hdmi_out_en = 1'b1;
 `endif
 

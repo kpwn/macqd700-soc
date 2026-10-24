@@ -38,7 +38,7 @@ foreach {name value dh expected} {
                 if {$property ne "generic" || $object ne "sources_1"} {error "Wrong generic target"}
                 set ::applied_generics $value
             }
-            foreach v {core_clk_hz core_clk_divide pb_clk_hz video_smoke eth_icmp_responder boot_rom_sectors sd_safe_cmd25 build_id_generic} {set $v 0}
+            foreach v {core_clk_hz core_clk_divide pb_clk_hz video_smoke eth_icmp_responder boot_rom_sectors sd_safe_cmd25 tqtt_hdmi_audio build_id_generic} {set $v 0}
             set buildinfo_fh buildinfo
         }
         set failed [catch {interp eval $i $config} result]

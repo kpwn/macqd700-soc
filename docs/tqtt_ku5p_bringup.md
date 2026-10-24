@@ -80,9 +80,9 @@ after testing.
 ## HDMI sound
 
 HDMI audio is carried in data islands on the same three TMDS pairs as video;
-it consumes no expansion-header pins. `rtl/board/audio_hdmi_bridge.v` is only
-a formatter skeleton, and its outputs are currently disconnected from the
-video scanout. The native ASC sample stream is around 22 kHz, while an HDMI
+it consumes no expansion-header pins. `rtl/board/audio_hdmi_bridge.v` is a
+formatter skeleton and is not the packet source for the full Mac build. The
+native ASC sample stream is around 22 kHz, while an HDMI
 source should supply a supported audio rate such as 48 kHz.
 
 The standalone HDMI probe uses the MIT-licensed `hdl-util/hdmi` packetizer
@@ -104,10 +104,20 @@ and hold slack (+3.161 ns and +0.042 ns). Its generated 48 kHz clock is
 explicitly constrained. A 2-second 48 kHz stereo recording from the capture
 card had sample values from -4096 to +4096 and rising edges every 48 samples,
 confirming the 1 kHz tone in both matching channels. The same capture path
-recorded all zeros with the video-only image. This test source does not yet
-carry Mac ASC sound. That integration needs rate
-conversion or sample holding and a clock-domain crossing into the HDMI
-packetizer. The attached capture card has a USB audio endpoint for validation.
+recorded all zeros with the video-only image. This standalone test source
+does not carry Mac ASC sound. The attached capture card has a USB audio
+endpoint for validation of the full Mac option.
+
+The full Mac build has a separate opt-in switch:
+`make TQTT_HDMI_AUDIO=1 tqtt-full`. It uses
+`build/vivado_tqtt_hdmi_audio`; the default is
+`TQTT_HDMI_AUDIO=0`, retaining the established DVI-compatible 720p output.
+The opt-in path uses the ASC's stereo PCM stream, repeats samples to make a
+48 kHz HDMI stream, and uses the standalone probe's HDMI packet components.
+Full-Mac synthesis completed with the 48 kHz audio clock constrained on
+2026-10-24. Placement, routing, and capture/monitor tests remain before the
+option is considered validated. Selecting the option does not reprogram the
+currently running board.
 
 ## DDR4 IP configuration
 
@@ -149,8 +159,9 @@ direct TMDS pins, SD SPI, UART2, LEDs, and fan. The 50 MHz E18 oscillator
 drives one fabric MMCM that produces a 200 MHz core clock, 50 MHz peripheral
 clock, 100 MHz video reference, and 125 MHz GMII transmit clock. The 100 MHz
 T24/U24 differential clock remains dedicated to MIG. The existing Mac scanout
-runs at 720p60 and feeds a DVI-compatible TMDS encoder. HDMI audio from the Mac
-ASC is still to be connected; the standalone 48 kHz audio probe remains available.
+runs at 720p60 and feeds a DVI-compatible TMDS encoder by default. The
+ASC-to-HDMI option is in source but awaits full-image hardware validation; the
+standalone 48 kHz audio probe remains available.
 
 The RK physical DDR layout reserves its ROM and framebuffer above the first
 1 GiB. That would wrap on TQTT's 30-bit MIG AXI address bus and corrupt RAM.
@@ -262,9 +273,11 @@ defaults to 50% duty. JTAG VIO `probe_out2` can change duty live via
 `vio_fan_rpm` input reports tach-derived RPM once per second, assuming two
 tach pulses per revolution. Until temperature sensing and thermal testing
 are in place, the RTL clamps duty to at least 25%; MMCM clock loss releases
-the fan control line for full speed. These changes need a new full Mac build
-and hardware RPM/temperature validation before use; the currently loaded
-bitstream still drives full speed.
+the fan control line for full speed. The 200 MHz fan image at
+`build/vivado_tqtt_fan/fpga_top.local.bit` was loaded with its matching
+`fpga_top.ltx` on 2026-10-24 and booted Mac OS. At 50% duty, its tach
+reported about 3,450 RPM and the die reached 35.9 °C during the initial
+observation.
 `tools/tqtt_fan_status.tcl` reads the FPGA die temperature and, when present,
 the VIO RPM and duty probes without reprogramming. The full-speed baseline
 on 2026-10-24 was 32.4 °C. This is die temperature, not the fan's airflow or

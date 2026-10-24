@@ -199,6 +199,9 @@ module fpga_top #(
     // data-response failure and fatal peripheral-write wedge with this enabled.
     // Default to the established closed-per-sector CMD24 path (no staging).
     parameter integer SD_SAFE_CMD25 = 0,
+    // TQTT defaults to the validated DVI-compatible video output.  Opt-in
+    // HDMI inserts 48 kHz audio packets sourced from the Mac ASC.
+    parameter integer TQTT_HDMI_AUDIO = 0,
     // MAME's Quadra 700 model derives VIA clocks from C7M/10:
     // 31.3344 MHz / 4 / 10 = 783.36 kHz.
     parameter integer VIA_PHI2_HZ = 783_360,
