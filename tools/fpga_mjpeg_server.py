@@ -110,22 +110,6 @@ except ValueError as exc:
     raise SystemExit("FPGA_MJPEG_QUALITY must be an integer from 0 to 100") from exc
 if JPEG_QUALITY is not None and not 0 <= JPEG_QUALITY <= 100:
     raise SystemExit("FPGA_MJPEG_QUALITY must be an integer from 0 to 100")
-HLS_ENABLE = os.environ.get("FPGA_HLS_ENABLE", "0").lower() in (
-    "1", "true", "yes", "on"
-)
-try:
-    HLS_BITRATE_KBIT = int(os.environ.get("FPGA_HLS_BITRATE_KBIT", "2500"))
-except ValueError as exc:
-    raise SystemExit("FPGA_HLS_BITRATE_KBIT must be a positive integer") from exc
-if HLS_BITRATE_KBIT <= 0:
-    raise SystemExit("FPGA_HLS_BITRATE_KBIT must be a positive integer")
-HLS_DIR = os.environ.get("FPGA_HLS_DIR", "/dev/shm/fpga_hls")
-try:
-    HLS_MAX_FILES = int(os.environ.get("FPGA_HLS_MAX_FILES", "60"))
-except ValueError as exc:
-    raise SystemExit("FPGA_HLS_MAX_FILES must be at least 5") from exc
-if HLS_MAX_FILES < 5:
-    raise SystemExit("FPGA_HLS_MAX_FILES must be at least 5")
 BIND = os.environ.get("FPGA_MJPEG_BIND", "10.200.0.12")
 PORT = int(os.environ.get("FPGA_MJPEG_PORT", "8080"))
 BOUNDARY = "frame"
@@ -292,6 +276,12 @@ KEY_SHIFT = 0x38
 KEY_CMD = 0x37
 KEY_RETURN = 0x24
 KEY_DELETE = 0x33
+# Tab (ADB 0x30).  Wired because Mac OS dialogs move focus between controls with Tab,
+# and driving an app from here otherwise needs pointer positioning -- which is not
+# workable over this link: adb-mouse takes RELATIVE deltas through Mac OS pointer
+# acceleration, and verifying the result from the MJPEG stream is defeated by JPEG
+# re-encode noise.  Tab + Return covers most dialogs without touching the mouse.
+KEY_TAB = 0x30
 
 # DAFB monitor-sense codes, from MAME dafb.cpp:202-216.  Extended codes are
 # ext(bc,ac,ab) = 0x40 | bc<<4 | ac<<2 | ab.
@@ -543,28 +533,7 @@ def gst_pipeline():
         "v4l2src", f"device={DEVICE}",
         "!", f"image/jpeg,width={WIDTH},height={HEIGHT},framerate={FPS}/1",
     ]
-    if HLS_ENABLE and JPEG_QUALITY is not None:
-        pipeline += [
-            "!", "jpegdec",
-            *crop_elems(),
-            "!", "videoconvert",
-            "!", "tee", "name=raw",
-            "raw.", "!", "queue",
-            "!", "jpegenc", f"quality={JPEG_QUALITY}",
-            "!", "fdsink", "fd=1",
-            "raw.", "!", "queue",
-        ]
-    elif HLS_ENABLE:
-        pipeline += [
-            "!", "tee", "name=jpeg",
-            "jpeg.", "!", "queue",
-            "!", "fdsink", "fd=1",
-            "jpeg.", "!", "queue",
-            "!", "jpegdec",
-            *crop_elems(),
-            "!", "videoconvert",
-        ]
-    elif JPEG_QUALITY is not None:
+    if JPEG_QUALITY is not None:
         pipeline += [
             "!", "jpegdec",
             *crop_elems(),
@@ -581,19 +550,7 @@ def gst_pipeline():
             "!", "jpegenc", f"quality={CROP_FALLBACK_QUALITY}",
         ]
 
-    if HLS_ENABLE:
-        pipeline += [
-            "!", "x264enc", "tune=zerolatency", "speed-preset=veryfast",
-            f"bitrate={HLS_BITRATE_KBIT}", f"key-int-max={FPS}",
-            "!", "h264parse", "config-interval=-1",
-            "!", "hlssink2", f"max-files={HLS_MAX_FILES}",
-            "playlist-length=3",
-            "target-duration=1",
-            f"location={os.path.join(HLS_DIR, 'segment%05d.ts')}",
-            f"playlist-location={os.path.join(HLS_DIR, 'stream.m3u8')}",
-        ]
-    else:
-        pipeline += ["!", "fdsink", "fd=1"]
+    pipeline += ["!", "fdsink", "fd=1"]
     return pipeline
 
 
@@ -615,8 +572,6 @@ class FrameSource:
 
     # -- producer ---------------------------------------------------
     def run_forever(self):
-        if HLS_ENABLE:
-            os.makedirs(HLS_DIR, exist_ok=True)
         while True:
             try:
                 self._pump_once()
@@ -729,9 +684,6 @@ class FrameSource:
                 "stream_fps": STREAM_FPS,
                 "jpeg_quality": (JPEG_QUALITY if JPEG_QUALITY is not None
                                  else "capture-passthrough"),
-                "hls": HLS_ENABLE,
-                "hls_bitrate_kbit": HLS_BITRATE_KBIT if HLS_ENABLE else 0,
-                "hls_retention_s": HLS_MAX_FILES if HLS_ENABLE else 0,
             }
 
 
@@ -744,7 +696,7 @@ INDEX_HTML = b"""<!doctype html><meta charset=utf-8>
            font:13px/1.5 ui-monospace,monospace}
  .wrap{min-height:100%;display:flex;flex-direction:column;align-items:center;
        justify-content:center;gap:10px;padding:8px;box-sizing:border-box}
- img,video{max-width:100%;max-height:70vh;image-rendering:pixelated;background:#000}
+ img{max-width:100%;max-height:70vh;image-rendering:pixelated;background:#000}
  .ctl{display:flex;gap:18px;align-items:center;flex-wrap:wrap;
       justify-content:center}
  .pad{display:grid;grid-template-columns:repeat(3,40px);
@@ -772,8 +724,7 @@ INDEX_HTML = b"""<!doctype html><meta charset=utf-8>
  a{color:#7ab}
 </style>
 <div class=wrap>
- <video id=h264 autoplay muted playsinline hidden></video>
- <img id=mjpeg alt="FPGA HDMI capture">
+ <img id=mjpeg src="/stream.mjpg" alt="FPGA HDMI capture">
 
  <div class=ctl>
   <div class=pad>
@@ -787,6 +738,7 @@ INDEX_HTML = b"""<!doctype html><meta charset=utf-8>
     <label>step <input type=number id=step value=8 min=1 max=63></label>
     <button id=press>hold</button><button id=rel>release</button>
     <button id=cmdo title="Command-O (open)">&#8984;O</button>
+    <button id=cmdb title="Command-B - in Speedometer 4.02 this runs the Benchmark Mix. That is the project's only FIXED-WORK measurement: booting to the Finder and idling measures nothing, because idle has two regimes ~4x apart in miss rate depending on the boot.">&#8984;B</button>
     <button id=cmdw title="Command-W (close window)">&#8984;W</button>
     <button id=cmdq title="Command-Q (quit application)">&#8984;Q</button>
    </div>
@@ -794,6 +746,7 @@ INDEX_HTML = b"""<!doctype html><meta charset=utf-8>
     <input type=text id=txt placeholder="type into the Mac, then Enter">
     <button id=send>send</button>
     <button id=ret>&crarr;</button>
+    <button id=tab title="Tab (ADB 0x30) - moves focus between dialog controls. Tab+Return drives most dialogs without the mouse, which matters because pointer positioning over this link is not reliable.">&#8677;</button>
     <button id=del title="Delete / backspace (ADB 0x33) - the Mac's Delete key deletes BACKWARDS; forward-delete is a different key and is not wired up">&#9003;</button>
    </div>
    <div class=row>
@@ -866,39 +819,12 @@ INDEX_HTML = b"""<!doctype html><meta charset=utf-8>
 
  <div id=st></div>
  <div style="font-size:12px;color:#777">
-  /hls/stream.m3u8 &middot; /stream.mjpg &middot; /snapshot.jpg &middot; /healthz &middot; /input
+  /stream.mjpg &middot; /snapshot.jpg &middot; /healthz &middot; /input
   &mdash; arrow keys also work
  </div>
 </div>
 <script>
 const st = document.getElementById('st');
-// Safari (including iPhone/iPad) plays HLS natively.  Prefer the much smaller
-// H.264 stream when both the browser and server support it; every other
-// browser keeps the existing MJPEG image with no dependency on external JS.
-const h264 = document.getElementById('h264');
-const mjpeg = document.getElementById('mjpeg');
-const useMjpeg = () => {
-  h264.hidden = true;
-  h264.removeAttribute('src');
-  mjpeg.src = '/stream.mjpg';
-  mjpeg.hidden = false;
-};
-if(h264.canPlayType('application/vnd.apple.mpegurl')){
-  const tryHls = n => fetch('/hls/stream.m3u8', {cache:'no-store'})
-    .then(r => {
-      if(!r.ok) throw new Error('HLS not ready');
-      h264.src = '/hls/stream.m3u8';
-      h264.hidden = false;
-      mjpeg.hidden = true;
-      h264.play().catch(() => {});
-    })
-    .catch(() => {
-      if(n > 0) setTimeout(() => tryHls(n-1), 1000);
-      else useMjpeg();
-    });
-  h264.addEventListener('error', useMjpeg, {once:true});
-  tryHls(10);
-} else useMjpeg();
 const step = () => Math.max(1, Math.min(63, +document.getElementById('step').value || 8));
 async function go(qs){
   try{
@@ -917,8 +843,10 @@ document.getElementById('c').onclick = () => go('a=click');
 document.getElementById('press').onclick = () => go('a=press');
 document.getElementById('rel').onclick = () => go('a=release');
 document.getElementById('ret').onclick = () => go('a=return');
+document.getElementById('tab').onclick = () => go('a=tab');
 document.getElementById('del').onclick = () => go('a=delete');
 document.getElementById('cmdo').onclick = () => go('a=cmd&k=o');
+document.getElementById('cmdb').onclick = () => go('a=cmd&k=b');
 document.getElementById('cmdw').onclick = () => go('a=cmd&k=w');
 document.getElementById('cmdq').onclick = () => go('a=cmd&k=q');
 document.getElementById('reset').onclick = () => go('a=reset');
@@ -1067,21 +995,6 @@ class MJPEGHandler(http.server.BaseHTTPRequestHandler):
             h = SOURCE.health()
             body = ("\n".join(f"{k}={v}" for k, v in h.items()) + "\n").encode()
             return self._simple(200, "text/plain; charset=utf-8", body)
-        if path.startswith("/hls/"):
-            name = path[len("/hls/"):]
-            allowed = name == "stream.m3u8"
-            if name.startswith("segment") and name.endswith(".ts"):
-                allowed = name[len("segment"):-len(".ts")].isdigit()
-            if not HLS_ENABLE or not allowed:
-                return self._simple(404, "text/plain", b"not found\n")
-            try:
-                with open(os.path.join(HLS_DIR, name), "rb") as fh:
-                    body = fh.read()
-            except OSError:
-                return self._simple(404, "text/plain", b"HLS not ready\n")
-            ctype = ("application/vnd.apple.mpegurl" if name.endswith(".m3u8")
-                     else "video/mp2t")
-            return self._simple(200, ctype, body)
         if path in ("/snapshot.jpg", "/snapshot", "/frame.jpg"):
             frame, _ = SOURCE.latest()
             if frame is None:
@@ -1165,6 +1078,13 @@ class MJPEGHandler(http.server.BaseHTTPRequestHandler):
                 cmds = [f"adb-key 0x{KEY_RETURN:02X} press"]
             elif act == "delete":
                 cmds = [f"adb-key 0x{KEY_DELETE:02X} press"]
+            elif act == "tab":
+                # Optional repeat, so "Tab x3" is one round trip rather than three.
+                try:
+                    n = max(1, min(10, int((q.get("n") or ["1"])[0])))
+                except ValueError:
+                    n = 1
+                cmds = [f"adb-key 0x{KEY_TAB:02X} press"] * n
             elif act == "status":
                 cmds = ["adb-status"]
             elif act == "reset":
