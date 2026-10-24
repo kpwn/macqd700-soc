@@ -113,10 +113,14 @@ uses `build/vivado_tqtt_hdmi_audio`. Set `TQTT_HDMI_AUDIO=0` for the
 DVI-compatible 720p output. The HDMI audio path uses the ASC's stereo PCM
 stream, repeats samples to make a
 48 kHz HDMI stream, and uses the standalone probe's HDMI packet components.
-Full-Mac synthesis completed with the 48 kHz audio clock constrained on
-2026-10-24. Placement, routing, and capture/monitor tests remain before the
-option is considered validated. Selecting the option does not reprogram the
-currently running board.
+The 100 MHz full-Mac HDMI audio build in
+`build/vivado_tqtt_100_hdmi_audio` completed routing on 2026-10-24 with
+WNS +0.001 ns, WHS +0.009 ns, WPWS +0.181 ns, and no failing timing
+endpoints. Its bitstream passed DRC, was patched with the local ADB firmware,
+and was programmed on the KU5P. JTAG confirmed a running CPU, matching ROM
+load CRC16 values, and the SD volume enabled at 4,194,240 blocks without a
+volume error or watchdog fire. The HDMI audio packets from the Mac's ASC
+and a visible Mac desktop have not yet been confirmed on this image.
 
 ## DDR4 IP configuration
 
@@ -159,7 +163,8 @@ drives one fabric MMCM that produces a 200 MHz core clock, 50 MHz peripheral
 clock, 100 MHz video reference, and 125 MHz GMII transmit clock. The 100 MHz
 T24/U24 differential clock remains dedicated to MIG. The existing Mac scanout
 runs at 720p60 and feeds the ASC-to-HDMI transmitter by default. The
-full-image HDMI audio path awaits placement, routing, and hardware validation; the
+full-image HDMI audio path has routed and been programmed at 100 MHz; its
+sound and video output still need a live capture or monitor check. The
 standalone 48 kHz audio probe remains available.
 
 The RK physical DDR layout reserves its ROM and framebuffer above the first
@@ -217,10 +222,10 @@ establishes a working full Mac boot and basic ADB input despite the remaining
 +0.035 ns, WHS +0.010 ns, and WPWS +0.235 ns, with zero failing endpoints and
 all user timing constraints met. Its blank bitstream and matching ADB metadata
 were generated, then patched locally with the user's ADB firmware to
-`build/vivado_tqtt_100/fpga_top.local.bit`. This 100 MHz image has not been
-loaded or functionally tested; the 200 MHz patched image remains active on the
-board. A second 200 MHz placement from the original synthesis checkpoint is
-implemented with `ExtraPostPlacementOpt` placement and `AggressiveExplore`
+`build/vivado_tqtt_100/fpga_top.local.bit`. That earlier 100 MHz image was
+not loaded or functionally tested. A second 200 MHz placement from the
+original synthesis checkpoint is implemented with `ExtraPostPlacementOpt`
+placement and `AggressiveExplore`
 physical optimization/routing. Its final routed report has WNS -0.189 ns,
 WHS +0.007 ns, 538 failing setup endpoints, zero failing hold endpoints, and
 zero DRC errors. The new worst setup path is from a Dcache load-valid flop to
@@ -235,7 +240,17 @@ not generate a bitstream. A following `AlternateReplication` pass improved
 WNS to -0.076 ns with WHS 0.000 ns and 395 failing setup endpoints, again
 without timing closure or a bitstream. Its worst path is from the CPU fetch
 alignment PC register to the gshare retained-repair suffix register. The
-original patched image remains active.
+original patched image was active at the time of that test.
+
+On 2026-10-24, the 100 MHz full-Mac HDMI audio image described above became
+the active FPGA image, with its matching `.ltx` attached to the JTAG REPL.
+The REPL reported build ID `0x8B8EE5FE`, a running CPU, and the expected SD
+volume without an error. The host Ethernet link is up, but this boot did not
+answer at `192.168.42.11`; a short DHCP/ARP capture saw no packets. The
+capture server returned black frames. These observations do not establish
+an HDMI audio playback or a completed Mac OS boot. The image uses reduced
+debug, so `eth-status` telemetry is absent even though `ETH_ENABLE=1` was
+included in synthesis.
 
 The full-SoC GMII link also passed a Mac OS TCP/IP check on 2026-10-24. A
 host USB Ethernet adapter connected directly to the KU5P negotiated 1000
@@ -307,7 +322,7 @@ AMD's [DS922 recommended operating conditions](https://docs.amd.com/r/en-US/ds92
 limit HP-bank VCCO to 1.9 V and input voltage to VCCO + 0.2 V.
 
 Close the 200 MHz core timing and run full Mac benchmarks and storage integrity
-checks. HDMI audio and physical USB/ADB/serial follow.
+checks. Confirm full-Mac HDMI audio and bring up physical USB/ADB/serial.
 RK remains selectable as `BOARD=rk` until the TQTT full image passes these
 checks.
 
