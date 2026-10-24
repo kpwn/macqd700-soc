@@ -469,6 +469,8 @@ module boot_fsm #(
     reg [3:0]  cur_cmd;
     reg [2:0]  frame_idx;
     reg [9:0]  byte_idx;
+    reg        cmd6_hs_supported;
+    reg        cmd6_hs_selected;
     reg [19:0] poll_cnt;
     reg [19:0] token_cnt;
     reg [15:0] acmd41_try;
@@ -902,29 +904,14 @@ module boot_fsm #(
             endcase
             C_CMD6: case (frame_idx)
                 3'd0:    frame_byte = 8'h46;
-                // Real-HW finding 2026-07-24: byte1 bit7 is CMD6's own
-                // MODE bit (0=check function only, 1=actually SWITCH).
-                // This was 0x80 (MODE=1, real switch) — meaning even
-                // after 9521f93 disabled OUR OWN clock from ever
-                // engaging HS_HALF, we were still telling the CARD to
-                // actually switch its internal state into HS function
-                // group 1. That leaves the card believing it's in HS
-                // mode while we keep clocking it at the old rate — a
-                // genuine host/card state mismatch, and a strong
-                // candidate for the intermittent-looking CMD18 R1
-                // corruption seen after this point in the sequence
-                // (0x08/0x09/0x04/0x0D — no coherent pattern, consistent
-                // with the card's own logic being confused about what
-                // timing to expect). Changed to 0x00 (MODE=0, check
-                // only) so the card's state matches what we actually do
-                // — never switch — regardless of what it reports it
-                // supports.
-                3'd1:    frame_byte = 8'h00;
+                // Production stays in check mode. The standalone VIO probe
+                // uses cfg_force_hs to request a real function switch.
+                3'd1:    frame_byte = cfg_force_hs ? 8'h80 : 8'h00;
                 3'd2:    frame_byte = 8'hFF;
                 3'd3:    frame_byte = 8'hFF;
                 3'd4:    frame_byte = 8'hF1;
-                // CRC7 recomputed for (0x46,0x00,0xFF,0xFF,0xF1).
-                default: frame_byte = 8'h1F;
+                // CRC7 for (0x46,mode,0xFF,0xFF,0xF1).
+                default: frame_byte = cfg_force_hs ? 8'h29 : 8'h1F;
             endcase
             default: frame_byte = 8'hFF;
         endcase
@@ -945,6 +932,8 @@ module boot_fsm #(
             cur_cmd        <= C_NONE;
             frame_idx      <= 3'd0;
             byte_idx       <= 10'd0;
+            cmd6_hs_supported <= 1'b0;
+            cmd6_hs_selected  <= 1'b0;
             poll_cnt       <= 20'd0;
             token_cnt      <= 20'd0;
             acmd41_try     <= 16'd0;
@@ -1224,9 +1213,11 @@ module boot_fsm #(
                                 end
                                 C_CMD6: begin
                                     if (br == 8'h00) begin
-                                        // Accepted — read 64 status bytes
-                                        // (token + 64 data + 2 CRC) and
-                                        // then go high-speed.
+                                        // Read the 64-byte switch status and
+                                        // require group 1 to report HS before
+                                        // changing the host clock.
+                                        cmd6_hs_supported <= 1'b0;
+                                        cmd6_hs_selected  <= 1'b0;
                                         token_cnt <= 20'd0;
                                         byte_idx  <= 10'd0;
                                         st        <= ST_CMD6_TOK_SEND;
@@ -1486,6 +1477,13 @@ module boot_fsm #(
                 end
                 ST_CMD6_DATA_WAIT: begin
                     if (bdone) begin
+                        // Status bits 415:400 are group-1 support (bytes
+                        // 12:13); bits 379:376 are its selected function
+                        // (low nibble of byte 16). Function 1 is HS.
+                        if (byte_idx == 10'd13)
+                            cmd6_hs_supported <= br[1];
+                        if (byte_idx == 10'd16)
+                            cmd6_hs_selected <= br[3:0] == 4'h1;
                         if (byte_idx == 10'd63) begin
                             byte_idx <= 10'd0;
                             st       <= ST_CMD6_CRC_SEND;
@@ -1529,9 +1527,11 @@ module boot_fsm #(
                             // (25 MHz) even though the card accepted the
                             // switch. The 64+2 status bytes are still
                             // drained above; only the speed selection
-                            // changes (unless cfg_force_hs opts back in
-                            // for A/B testing on the sdmin harness).
-                            if (cfg_force_hs) spi_hs_mode <= 1'b1;
+                            // changes. The probe opts in only after its
+                            // MODE=1 status reports function 1 selected.
+                            if (cfg_force_hs && cmd6_hs_supported &&
+                                cmd6_hs_selected)
+                                spi_hs_mode <= 1'b1;
                             ctrl_retry  <= 4'd0;
                             st          <= ST_CTRL_KICK;
                         end else begin

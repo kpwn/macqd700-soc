@@ -65,24 +65,36 @@ proc sample {vio flags diag crc16 crc32} {
 set reference_crc ""
 foreach {mode cfg} {25 0 50 4} {
     for {set i 1} {$i <= $runs} {incr i} {
-        # Bit 0 is soft reset; bit 2 permits the negotiated CMD6 HS clock.
+        # Bit 0 is soft reset; bit 2 requests CMD6 MODE=1 and enables the
+        # 50 MHz clock only if the card reports HS function selected.
         ctrl_write $ctrl [expr {$cfg | 1}]
         after 100
         ctrl_write $ctrl $cfg
         set start [clock milliseconds]
-        set deadline [expr {$start + 30000}]
+        set deadline [expr {$start + 60000}]
         while {1} {
             set s [sample $vio $flags $diag $crc16 $crc32]
             set f [dict get $s flags]
             set d [dict get $s diag]
-            if {$f & 0x20} {
-                error [format "%d MHz run %d: SD error, sector=%d cause=%d" \
-                    $mode $i [expr {$d & 0xffff}] [expr {($d >> 16) & 7}]]
+            set sector [expr {$d & 0xffff}]
+            set now [clock milliseconds]
+            if {($f & 0x40) && $sector == 2048} {
+                # Confirm completion after the changing VIO inputs settle.
+                after 200
+                set confirmed [sample $vio $flags $diag $crc16 $crc32]
+                if {([dict get $confirmed flags] & 0x40) &&
+                    !([dict get $confirmed flags] & 0x20) &&
+                    ([dict get $confirmed diag] & 0xffff) == 2048 &&
+                    [dict get $confirmed crc32] == [dict get $s crc32]} {
+                    set s $confirmed
+                    set f [dict get $s flags]
+                    set d [dict get $s diag]
+                    break
+                }
             }
-            if {$f & 0x40} { break }
-            if {[clock milliseconds] > $deadline} {
-                error [format "%d MHz run %d: timeout, sector=%d" \
-                    $mode $i [expr {$d & 0xffff}]]
+            if {$now > $deadline} {
+                error [format "%d MHz run %d: timeout, sector=%d flags=0x%x cause=%d" \
+                    $mode $i $sector $f [expr {($d >> 16) & 7}]]
             }
             after 25
         }

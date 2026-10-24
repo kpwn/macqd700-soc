@@ -47,6 +47,7 @@ module tb_sd_boot_top #(
     // tb; the existing scenarios hold it HIGH so their behaviour is
     // unchanged, and the skip case gets its own scenario.
     input  wire        zero_en,
+    input  wire        cfg_force_hs,
 
     // ── physical SD pins (driven by tb_sd_boot.cpp sd-card model) ────
     output wire [31:0] card_num_lbas,
@@ -135,10 +136,9 @@ module tb_sd_boot_top #(
         .clk            (clk),
         .rst            (rst),
 
-        // Diagnostic-only overrides — tied off to preserve existing
-        // scenario behavior exactly (CMD59 sent, HS mode never engages).
+        // CMD6 switch is opt-in; the existing scenarios leave it low.
         .cfg_skip_cmd59 (1'b0),
-        .cfg_force_hs   (1'b0),
+        .cfg_force_hs   (cfg_force_hs),
 
         .card_num_lbas  (card_num_lbas),
 

@@ -9,6 +9,8 @@ sustained throughput, CRC/data-integrity results, and the exact card/image.
 
 The board schematic (page 4, J8) wires CLK, CMD, and DAT0-DAT3 to FPGA bank
 84. J8 VDD, the line pull-ups, and bank 84 VCCO are fixed at 3.3 V. Native
+SD pins are CLK AE15, CMD AD15, DAT0 AF13, DAT1 AE13, DAT2 AF15, and
+DAT3 AF14; J8 has 4.7 kOhm pull-ups on CMD and every data line.
 four-bit SD High Speed at 50 MHz has a 25 MB/s raw bus ceiling; actual card
 throughput will be lower. UHS-I signaling requires a 1.8 V I/O switch that
 this board does not provide. UHS-II's additional contacts and SD Express's
@@ -63,10 +65,20 @@ an isolated write-path reproduction and HFS consistency check.
    current contents. The old 100 MHz image remains the 25 MHz reference.
    `tools/tqtt_sd_25_50_integrity.tcl` automates repeated read-only 25/50 MHz
    loads of the 2048-sector boot window on the 200 MHz probe. It requires the
-   matching `.bit` and `.ltx`, checks that CMD6 actually enabled HS, rejects
+   matching `.bit` and `.ltx`, checks that CMD6 MODE=1 actually selected the
+   High Speed function in the card's 64-byte status, rejects
    whole-run retries, and compares CRC32 across runs. Passing this first
    window does not qualify the full card or writes; extend the probe to long
    and randomized LBAs before changing the Mac's SD clock.
+
+   On 2026-10-25 the TQTT card passed two complete runs per mode: 2048 sectors,
+   zero whole-run retries, matching final block CRC16, and the same full-window
+   CRC32 `0xFF52A648` at 25 MHz and at negotiated 50 MHz. The High Speed mode
+   flag was set only in the 50 MHz runs. Each run took about 12.4–12.9 seconds
+   including card initialization and JTAG polling, so that elapsed value is
+   not a data-transfer throughput measurement. VIO readback gave inconsistent
+   intermediate snapshots during active transfer; the script accepts only
+   two matching completed snapshots and times out stalled runs.
 
    ```sh
    make fpga-tqtt-sdmin-50mhz-bitstream
@@ -86,8 +98,8 @@ an isolated write-path reproduction and HFS consistency check.
    plus CRC handling. An isolated generator run produced a 246 KB core and
    CSR map.
    Integration still needs a block-command bridge for the existing boot and
-   SCSI consumers, direct TQTT IO constraints, and the board's DAT1/DAT2
-   package pins. The generated core has not been integrated or tested here.
+   SCSI consumers and direct TQTT IO constraints. The generated core has not
+   been integrated or tested here.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest
