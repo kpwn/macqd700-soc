@@ -865,12 +865,28 @@
 
 `ifdef TQTT_BOARD
     if (TQTT_HDMI_AUDIO) begin : gen_tqtt_hdmi_audio
+        // video_debug_{h,v}count are VTG counters delayed by video_top's
+        // two output registers.  al9134_{d,de,hs,vs} also pass through the
+        // compositor (CTRL_DELAY=4 plus its output register), so their
+        // coordinates are five pixel clocks later.  HDMI data islands and
+        // guard bands must use coordinates aligned with those output pins.
+        reg [11:0] hdmi_x_delay [0:4];
+        reg [10:0] hdmi_y_delay [0:4];
+        integer hdmi_coord_i;
+        always @(posedge pclk) begin
+            hdmi_x_delay[0] <= video_debug_hcount;
+            hdmi_y_delay[0] <= video_debug_vcount;
+            for (hdmi_coord_i = 1; hdmi_coord_i < 5; hdmi_coord_i = hdmi_coord_i + 1) begin
+                hdmi_x_delay[hdmi_coord_i] <= hdmi_x_delay[hdmi_coord_i-1];
+                hdmi_y_delay[hdmi_coord_i] <= hdmi_y_delay[hdmi_coord_i-1];
+            end
+        end
         tqtt_hdmi_audio_video u_tqtt_hdmi_audio_video (
             .pclk(pclk), .pclk_x5(tqtt_pclk_x5),
             .video_locked(hdmi_mmcm_locked),
             .rgb(al9134_d), .de(al9134_de),
             .hs(al9134_hs), .vs(al9134_vs),
-            .x(video_debug_hcount), .y(video_debug_vcount),
+            .x(hdmi_x_delay[4]), .y(hdmi_y_delay[4]),
             .pb_clk(pb_clk), .pb_rst(pb_full_rst_bank[3]),
             .sample_valid(asc_audio_sample_valid_w),
             .sample_l(asc_audio_pcm_l_w), .sample_r(asc_audio_pcm_r_w),

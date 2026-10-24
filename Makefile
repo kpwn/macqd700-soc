@@ -3787,6 +3787,15 @@ fpga-tqtt-eth-probe-bitstream:
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
 .PHONY: fpga-tqtt-hdmi-probe-bitstream
+.PHONY: fpga-tqtt-hdmi-integration-probe-bitstream
+TQTT_HDMI_INTEGRATION_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_hdmi_integration_probe
+TQTT_HDMI_INTEGRATION_PROBE_FABRIC ?= 0
+TQTT_HDMI_INTEGRATION_PROBE_SKEW ?= 0
+fpga-tqtt-hdmi-integration-probe-bitstream: BOARD=tqtt
+fpga-tqtt-hdmi-integration-probe-bitstream:
+	@mkdir -p $(TQTT_HDMI_INTEGRATION_PROBE_BUILD_DIR)
+	@touch $(VIVADO_LOCK)
+	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_hdmi_integration_probe.tcl -tclargs $(TQTT_HDMI_INTEGRATION_PROBE_BUILD_DIR) $(TQTT_HDMI_INTEGRATION_PROBE_FABRIC) $(TQTT_HDMI_INTEGRATION_PROBE_SKEW)'
 .PHONY: fpga-tqtt-eth-tx-probe-bitstream
 TQTT_ETH_TX_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_eth_tx_probe
 fpga-tqtt-eth-tx-probe-bitstream:

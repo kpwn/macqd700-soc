@@ -122,6 +122,23 @@ load CRC16 values, and the SD volume enabled at 4,194,240 blocks without a
 volume error or watchdog fire. The HDMI audio packets from the Mac's ASC
 and a visible Mac desktop have not yet been confirmed on this image.
 
+On 2026-10-25 the capture path returned the same uniform black JPEG after
+two loads of that full HDMI image, although JTAG sampled nonblack Mac
+scanout RGB and reported completed framebuffer reads. The 100 MHz DVI full
+image booted to the Mac improper-shutdown dialog on the same cable and
+capture card. A standalone 720p probe in
+`rtl/soc/tqtt_hdmi_integration_probe.sv` exercises the exact full-Mac
+`tqtt_hdmi_audio_video` transmitter. Both its direct 100 MHz clock and
+its TQTT 50 MHz fabric-MMCM clock variants showed color bars and produced
+a captured stereo tone near 1 kHz. With the latter clock chain unchanged,
+delaying the probe's RGB/DE/HS/VS five pixel clocks behind its coordinates
+produced the **byte-identical black JPEG** seen from the full image.
+`video_top`'s debug coordinates are only two output clocks behind the VTG,
+while RGB/DE/HS/VS pass through the compositor's four-stage control pipe,
+its output register, and those same two output clocks. The full-Mac HDMI
+connection now delays coordinates by five additional clocks; a new full
+100 MHz route and hardware validation are pending.
+
 ## DDR4 IP configuration
 
 The TQTT schematic and DDR4 example identify two `MT40A256M16GE-075E`
