@@ -226,6 +226,10 @@ module fpga_top #(
     // ── DDR4 reference / SIM_MODEL system clock (200 MHz diff) ───────
     input  wire        sys_clk_p,
     input  wire        sys_clk_n,
+`ifdef TQTT_BOARD
+    input  wire        fabric_clk_50,
+    input  wire        tqtt_reset,
+`else
     input  wire        cpu_resetn,       // active-low board reset
 
 `ifndef SIM_MODEL
@@ -233,10 +237,13 @@ module fpga_top #(
     input  wire        fabric_clk_p,
     input  wire        fabric_clk_n,
 `endif
+`endif
 
     // ── LEDs / buttons for bring-up visibility ───────────────────────
     output wire [3:0]  led,
+`ifndef TQTT_BOARD
     input  wire [3:0]  btn,
+`endif
 
     // ── Board UART routed to selected SCC channel ────────────────────
     input  wire        uart_rtl_0_rxd,
@@ -248,6 +255,14 @@ module fpga_top #(
     input  wire        sd_miso,
     output wire        sd_cs_n,
 
+`ifdef TQTT_BOARD
+    // Direct TMDS HDMI on the TQTT board.
+    output wire        hdmi_out_en,
+    output wire        tmds_clk_p,
+    output wire        tmds_clk_n,
+    output wire [2:0]  tmds_p,
+    output wire [2:0]  tmds_n,
+`else
     // ── HDMI (AL9134) ────────────────────────────────────────────────
     inout  wire        al9134_scl,
     inout  wire        al9134_sda,
@@ -258,23 +273,39 @@ module fpga_top #(
     output wire        al9134_clk,
     output wire        al9134_resetn,
     input  wire        al9134_int,
+`endif
 
     // ── Σ-Δ PWM audio (AN9134 NC pins J1.35 / J1.36) ─────────────────
     // Drive an off-board class-D speaker amp / RC-filter line-out.
     // Tied off when AUDIO_PATH != AUDIO_PATH_PWM in fpga_top_peripherals.vh.
     // Pin assignments live in synth/audio_pwm.xdc.
+`ifndef TQTT_BOARD
     output wire        pwm_audio_l,
     output wire        pwm_audio_r
+`else
+    output wire        fan_pwm
+`endif
 
 `ifdef ETH_ENABLE
     ,
-    // ── RTL8211F RGMII Ethernet (Phase 1 physical-link regression) ──
+    // ── Board Ethernet PHY ───────────────────────────────────────────
     input  wire        phy_rx_clk,
+`ifdef TQTT_BOARD
+    input  wire [7:0]  phy_rxd,
+    input  wire        phy_rx_dv,
+    input  wire        phy_rx_er,
+    output wire        phy_tx_clk,
+    output wire [7:0]  phy_txd,
+    output wire        phy_tx_en,
+    output wire        phy_tx_er,
+    output wire        phy_reset_n
+`else
     input  wire [3:0]  phy_rxd,
     input  wire        phy_rx_ctl,
     output wire        phy_tx_clk,
     output wire [3:0]  phy_txd,
     output wire        phy_tx_ctl
+`endif
 `endif
 
 `ifndef SIM_MODEL
@@ -309,6 +340,20 @@ module fpga_top #(
 `endif
 `endif
 );
+
+`ifdef TQTT_BOARD
+    // TQTT switch P19 is active high. The other RK buttons are absent.
+    wire cpu_resetn = ~tqtt_reset;
+    wire [3:0] btn = 4'b1111;
+    // The board's fan driver is inverting: high keeps the fan off.
+    // Keep airflow active until temperature control is integrated.
+    assign fan_pwm = 1'b0;
+    wire al9134_scl, al9134_sda;
+    wire [23:0] al9134_d;
+    wire al9134_hs, al9134_vs, al9134_de, al9134_clk, al9134_resetn;
+    wire al9134_int = 1'b0;
+    wire pwm_audio_l, pwm_audio_r;
+`endif
 
 `ifndef L2C_DH_PORT
     generate if (L2_DH_R_FALL_THROUGH != 0) begin : g_bad_dh_fall_through

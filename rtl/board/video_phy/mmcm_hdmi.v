@@ -65,6 +65,7 @@ module mmcm_hdmi #(
     // the C input of the ODDRE1 that forwards the pixel clock off-chip -- it
     // must not clock logic, or it becomes a second pixel-clock domain.
     output wire pclk_fwd,
+    output wire pclk_x5,
     output wire locked
 );
 
@@ -72,6 +73,7 @@ module mmcm_hdmi #(
     wire clkfb;
     wire pclk_unbuf;
     wire pclk_fwd_unbuf;
+    wire pclk_x5_unbuf;
 
 `ifdef VERILATOR
     // In Verilator we can't model Xilinx primitives.  Pass through the
@@ -83,6 +85,7 @@ module mmcm_hdmi #(
     // not exercised functionally (video_top's `ifdef VERILATOR branch forwards
     // pclk directly), so pass pclk through.
     assign pclk_fwd   = clk_in_buf;
+    assign pclk_x5    = clk_in_buf;
 
     reg locked_r = 1'b0;
     always @(posedge clk_in_buf or negedge resetn) begin
@@ -135,6 +138,8 @@ module mmcm_hdmi #(
         .CLKOUT1_DIVIDE       (CLKOUT1_DIVIDE_I),
         .CLKOUT1_PHASE        (CLKOUT1_PHASE_DEG),
         .CLKOUT1_DUTY_CYCLE   (0.500),
+        .CLKOUT2_DIVIDE       (4),
+        .CLKOUT2_PHASE        (180.000),
         .CLKOUT4_CASCADE      ("FALSE"),
         .COMPENSATION         ("INTERNAL"),
         .STARTUP_WAIT         ("FALSE"),
@@ -148,7 +153,7 @@ module mmcm_hdmi #(
         .CLKOUT0  (pclk_unbuf),
         .CLKOUT1  (pclk_fwd_unbuf),
         // unused outputs
-        .CLKOUT0B (), .CLKOUT1B (), .CLKOUT2  (),
+        .CLKOUT0B (), .CLKOUT1B (), .CLKOUT2  (pclk_x5_unbuf),
         .CLKOUT2B (), .CLKOUT3  (), .CLKOUT3B (), .CLKOUT4  (),
         .CLKOUT5  (), .CLKOUT6  (), .CLKFBOUTB(),
         .LOCKED   (locked),
@@ -166,6 +171,7 @@ module mmcm_hdmi #(
         .I (pclk_unbuf),
         .O (pclk)
     );
+    BUFG u_bufg_pclk_x5 (.I(pclk_x5_unbuf), .O(pclk_x5));
 
     // Second BUFG for the phase-shifted FORWARDING clock.  It drives exactly
     // one load -- the ODDRE1 in video_top that pushes the clock off-chip -- so

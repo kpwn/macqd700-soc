@@ -3793,6 +3793,22 @@ fpga-tqtt-hdmi-probe-bitstream:
 	flock -n -E 75 $(VIVADO_LOCK) -c 'TQTT_HDMI_AUDIO=$(TQTT_HDMI_AUDIO) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_hdmi_probe.tcl -tclargs $(TQTT_HDMI_PROBE_BUILD_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
+# Board-selectable full Mac build. Keep RK as the default until this image
+# passes boot, storage, video, and network checks on the TQTT board.
+.PHONY: check-tqtt-ddr-map tqtt-full
+check-tqtt-ddr-map:
+	@mkdir -p $(BUILD_DIR)/tb_tqtt_ddr_map
+	verilator --binary --top-module tb_tqtt_ddr_map -DTQTT_BOARD \
+	  -I$(RTL_DIR)/soc --Mdir $(BUILD_DIR)/tb_tqtt_ddr_map \
+	  $(TB_DIR)/tb_tqtt_ddr_map.v >/dev/null
+	$(BUILD_DIR)/tb_tqtt_ddr_map/Vtb_tqtt_ddr_map
+
+tqtt-full: check-tqtt-ddr-map
+	$(MAKE) tqtt-ddr4-mig
+	$(MAKE) BOARD=tqtt TARGET_FREQ_MHZ=200 CORE_CLK_HZ=200000000 CORE_MMCM=1 \
+	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced \
+	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt impl-split
+
 .PHONY: fpga-100mhz-jtag-bitstream
 fpga-100mhz-jtag-bitstream:
 	$(MAKE) fpga-100mhz-jtag-bitstream-dram

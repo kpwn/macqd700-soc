@@ -43,6 +43,18 @@ ALLOWLIST = {
     "rtl/soc/fpga_top_sdmin.v":     "standalone fpga-sdmin-bitstream top",
     "rtl/soc/sd_provision_core.v":  "standalone sd_provision_top bitstream",
     "rtl/soc/sd_provision_top.v":   "standalone provisioning bitstream top",
+    "rtl/soc/tqtt_ddr4_probe.v":   "standalone TQTT DDR4 hardware probe",
+    "rtl/soc/tqtt_eth_probe.v":    "standalone TQTT GMII receive probe",
+    "rtl/soc/tqtt_eth_tx_probe.v": "standalone TQTT GMII transmit probe",
+    "rtl/soc/tqtt_hdmi_probe.sv":  "standalone TQTT HDMI/audio probe",
+    "rtl/third_party/hdl_util_hdmi/audio_clock_regeneration_packet.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
+    "rtl/third_party/hdl_util_hdmi/audio_info_frame.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
+    "rtl/third_party/hdl_util_hdmi/audio_sample_packet.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
+    "rtl/third_party/hdl_util_hdmi/auxiliary_video_information_info_frame.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
+    "rtl/third_party/hdl_util_hdmi/hdmi.sv": "standalone HDMI probe packetizer",
+    "rtl/third_party/hdl_util_hdmi/packet_assembler.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
+    "rtl/third_party/hdl_util_hdmi/packet_picker.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
+    "rtl/third_party/hdl_util_hdmi/source_product_description_info_frame.sv": "HDMI audio; TQTT full Mac currently uses DVI video",
 }
 
 

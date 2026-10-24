@@ -93,8 +93,15 @@
 `endif
     ) u_q700_eth_link (
         .clk_ref(video_ref_clk),
+`ifdef TQTT_BOARD
+        .phy_rx_clk(phy_rx_clk), .phy_rxd(phy_rxd),
+        .phy_rx_dv(phy_rx_dv), .phy_rx_er(phy_rx_er),
+        .phy_tx_clk(phy_tx_clk), .phy_txd(phy_txd),
+        .phy_tx_en(phy_tx_en), .phy_tx_er(phy_tx_er),
+`else
         .phy_rx_clk(phy_rx_clk), .phy_rxd(phy_rxd), .phy_rx_ctl(phy_rx_ctl),
         .phy_tx_clk(phy_tx_clk), .phy_txd(phy_txd), .phy_tx_ctl(phy_tx_ctl),
+`endif
         .core_clk(core_clk), .core_rst(core_rst_bank[5]),
         .loopback(sonic_loopback),
         .rx_drain(sonic_rx_drain),
@@ -117,6 +124,16 @@
         .link_speed(eth_link_speed), .rx_activity(eth_rx_activity), .tx_activity(eth_tx_activity),
         .debug_event_toggle(eth_mac_debug_event_toggle)
     );
+`ifdef TQTT_BOARD
+    // RTL8211EG needs a reset pulse after the fabric reference is stable.
+    reg [16:0] tqtt_phy_reset_count = 0;
+    always @(posedge video_ref_clk) begin
+        if (!core_mmcm_locked) tqtt_phy_reset_count <= 0;
+        else if (tqtt_phy_reset_count != 17'd100000)
+            tqtt_phy_reset_count <= tqtt_phy_reset_count + 1'b1;
+    end
+    assign phy_reset_n = (tqtt_phy_reset_count == 17'd100000);
+`endif
 `else
     assign sonic_mac_tx_tready = 1'b0;
     assign sonic_mac_tx_cpl_valid = 1'b0;

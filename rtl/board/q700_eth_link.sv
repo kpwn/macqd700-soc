@@ -429,11 +429,21 @@ module q700_eth_link #(
     // The DDR sys_clk pins belong exclusively to the MIG black box.
     input  wire       clk_ref,
     input  wire       phy_rx_clk,
+`ifdef TQTT_GMII
+    input  wire [7:0] phy_rxd,
+    input  wire       phy_rx_dv,
+    input  wire       phy_rx_er,
+    output wire       phy_tx_clk,
+    output wire [7:0] phy_txd,
+    output wire       phy_tx_en,
+    output wire       phy_tx_er,
+`else
     input  wire [3:0] phy_rxd,
     input  wire       phy_rx_ctl,
     output wire       phy_tx_clk,
     output wire [3:0] phy_txd,
     output wire       phy_tx_ctl,
+`endif
     output wire [1:0] link_speed,
     output wire       rx_activity,
     output wire       tx_activity,
@@ -504,6 +514,7 @@ module q700_eth_link #(
     taxi_sync_reset #(.N(4)) rst_125_inst (.clk(clk_125mhz), .rst(~mmcm_locked), .out(rst_125mhz));
     taxi_sync_reset #(.N(4)) rst_312_inst (.clk(clk_312mhz), .rst(~mmcm_locked), .out(rst_312mhz));
 
+`ifndef TQTT_GMII
     wire [3:0] phy_rxd_delayed;
     wire phy_rx_ctl_delayed;
     IDELAYCTRL #(.SIM_DEVICE("ULTRASCALE")) idelayctrl_inst (
@@ -525,6 +536,7 @@ module q700_eth_link #(
         .DATAIN(1'b0), .DATAOUT(phy_rx_ctl_delayed), .CLK(1'b0), .EN_VTC(1'b1),
         .CE(1'b0), .INC(1'b0), .LOAD(1'b0), .RST(1'b0), .CNTVALUEIN(9'd0), .CNTVALUEOUT()
     );
+`endif
 
     taxi_axis_if #(.DATA_W(8), .ID_W(8), .USER_EN(1), .USER_W(1)) axis_tx();
     taxi_axis_if #(.DATA_W(8), .ID_W(8), .USER_EN(1), .USER_W(1)) axis_rx();
@@ -537,6 +549,35 @@ module q700_eth_link #(
     wire rx_error_bad_frame, rx_error_bad_fcs, rx_fifo_overflow;
     wire rx_fifo_bad_frame, rx_fifo_good_frame;
 
+`ifdef TQTT_GMII
+    // The TQTT RTL8211EG is wired as 8-bit GMII. The board exposes its
+    // GTX_CLK pin, used for the verified 1 Gb/s link; its 10/100 MII TX
+    // clock is not routed separately, so this initial board path is 1G.
+    taxi_eth_mac_1g_gmii_fifo #(
+        .SIM(1'b0), .VENDOR("XILINX"), .FAMILY("kintexuplus"),
+        .STAT_EN(1'b0), .TX_FIFO_DEPTH(4096), .TX_FRAME_FIFO(1'b1),
+        .RX_FIFO_DEPTH(4096), .RX_FRAME_FIFO(1'b1)
+    ) eth_mac_inst (
+        .gtx_clk(clk_125mhz), .gtx_rst(rst_125mhz),
+        .logic_clk(clk_125mhz), .logic_rst(rst_125mhz), .s_axis_tx(axis_tx),
+        .m_axis_tx_cpl(axis_tx_cpl), .m_axis_rx(axis_rx),
+        .gmii_rx_clk(phy_rx_clk), .gmii_rxd(phy_rxd),
+        .gmii_rx_dv(phy_rx_dv), .gmii_rx_er(phy_rx_er),
+        .mii_tx_clk(clk_125mhz),
+        .gmii_tx_clk(phy_tx_clk), .gmii_txd(phy_txd),
+        .gmii_tx_en(phy_tx_en), .gmii_tx_er(phy_tx_er),
+        .stat_clk(clk_125mhz), .stat_rst(rst_125mhz), .m_axis_stat(axis_stat),
+        .tx_error_underflow(tx_error_underflow), .tx_fifo_overflow(tx_fifo_overflow),
+        .tx_fifo_bad_frame(tx_fifo_bad_frame), .tx_fifo_good_frame(tx_fifo_good_frame),
+        .rx_error_bad_frame(rx_error_bad_frame), .rx_error_bad_fcs(rx_error_bad_fcs),
+        .rx_fifo_overflow(rx_fifo_overflow), .rx_fifo_bad_frame(rx_fifo_bad_frame),
+        .rx_fifo_good_frame(rx_fifo_good_frame), .link_speed(link_speed),
+        .cfg_tx_pad_en(1'b1), .cfg_tx_min_pkt_len(8'd59),
+        .cfg_tx_max_pkt_len(16'd1517), .cfg_tx_ifg(8'd12),
+        .cfg_tx_enable(1'b1), .cfg_rx_max_pkt_len(16'd1517),
+        .cfg_rx_enable(1'b1)
+    );
+`else
     taxi_eth_mac_1g_rgmii_fifo #(
         .SIM(1'b0), .VENDOR("XILINX"), .FAMILY("kintexuplus"),
         .USE_CLK90(1'b0), .STAT_EN(1'b0), .TX_FIFO_DEPTH(4096), .TX_FRAME_FIFO(1'b1),
@@ -556,6 +597,7 @@ module q700_eth_link #(
         .cfg_tx_min_pkt_len(8'd59), .cfg_tx_max_pkt_len(16'd1517), .cfg_tx_ifg(8'd12),
         .cfg_tx_enable(1'b1), .cfg_rx_max_pkt_len(16'd1517), .cfg_rx_enable(1'b1)
     );
+`endif
     assign axis_stat.tready = 1'b1;
 
     // Toggle-per-event CDC seam for the optional core-clock JTAG telemetry

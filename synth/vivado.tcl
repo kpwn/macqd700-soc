@@ -62,8 +62,8 @@ set board      [expr {[info exists ::env(BOARD)] ? $::env(BOARD) : "rk"}]
 if {$board ni {rk tqtt}} {
     error "BOARD must be rk or tqtt, got '$board'"
 }
-if {$board eq "tqtt"} {
-    error "TQTT full-SoC shell is not yet qualified; use BOARD=tqtt make fpga-sdmin-bitstream for the first read-only peripheral gate"
+if {$board eq "tqtt" && [info exists ::env(USE_SIM_MODEL)] && $::env(USE_SIM_MODEL) == 1} {
+    error "TQTT full-SoC build requires the real DDR4 MIG"
 }
 
 # ADB PIC BRAM is deliberately blank during synthesis. Users insert their own
@@ -390,7 +390,7 @@ if {$real_fpga_build && $mode eq "full_impl" && !$allow_undebuggable_fpga_build}
 # T24/U24 sys_clk pair as a fabric clock.  Real-MIG builds leave T24/U24
 # exclusively on the MIG DDR reference input and use the AB7/AB6 100 MHz
 # MGTREFCLK0 pair through IBUFDS_GTE4.ODIV2.
-set board_clk_hz [expr {$use_sim_model ? 200000000 : 100000000}]
+set board_clk_hz [expr {$use_sim_model ? 200000000 : ($board eq "tqtt" ? 50000000 : 100000000)}]
 
 if {[info exists ::env(PCIE_TEST_DIR)]} {
     set pcie_test_dir $::env(PCIE_TEST_DIR)
@@ -407,9 +407,10 @@ if {[info exists ::env(DDR4_MIG_DCP)]} {
     set ddr4_mig_dcp [file normalize $::env(DDR4_MIG_DCP)]
     set ddr4_mig_dcp_source "DDR4_MIG_DCP override"
 } else {
+    set mig_build_dir [expr {$board eq "tqtt" ? "ddr4_mig_tqtt" : "ddr4_mig"}]
     set ddr4_mig_dcp [file normalize [file join $proj_root \
-        build ddr4_mig design_1_ddr4_0_1.dcp]]
-    set ddr4_mig_dcp_source "repo-generated build/ddr4_mig"
+        build $mig_build_dir design_1_ddr4_0_1.dcp]]
+    set ddr4_mig_dcp_source "repo-generated build/$mig_build_dir"
 }
 set allow_pcie_test_mig_dcp [expr {
     [info exists ::env(USE_PCIE_TEST_MIG_DCP)] &&
@@ -493,7 +494,7 @@ if {[lsearch -exact {1 2 4 8} $core_clk_divide] < 0} {
 if {[info exists ::env(CORE_CLK_HZ)]} {
     set core_clk_hz [parse_int_env CORE_CLK_HZ 0]
 } else {
-    set core_clk_hz [expr {$board_clk_hz / $core_clk_divide}]
+    set core_clk_hz [expr {$board eq "tqtt" ? 200000000 : $board_clk_hz / $core_clk_divide}]
 }
 # CORE_MMCM — run the core ABOVE the board oscillator.
 #
@@ -506,7 +507,13 @@ if {[info exists ::env(CORE_CLK_HZ)]} {
 # awkward intermediate would either miss the VCO or make pb non-exact --
 # and every Mac peripheral timebase in this SoC (VIA phi2, SCC BRG, ADB,
 # audio PWM, peripheral-bus timeouts) is derived from PB_CLK_HZ.
-set core_mmcm [parse_bool_env CORE_MMCM 0]
+set core_mmcm [expr {$board eq "tqtt" ? 1 : [parse_bool_env CORE_MMCM 0]}]
+if {$board eq "tqtt" && $core_clk_hz != 200000000} {
+    error "TQTT board shell currently supports CORE_CLK_HZ=200000000 only"
+}
+if {$board eq "tqtt" && $enable_pcie_xdma} {
+    error "TQTT board has no RK PCIe XDMA pin mapping"
+}
 if {$core_mmcm} {
     if {[lsearch -exact {100000000 120000000 150000000 200000000} $core_clk_hz] < 0} {
         puts stderr "ERROR: CORE_MMCM=1 supports CORE_CLK_HZ in {100000000, 120000000, 150000000, 200000000}"
@@ -594,6 +601,9 @@ if {$enable_pcie_xdma &&
 # on the active core clock so Vivado judges core-internal timing against the
 # requested budget without inventing a different board oscillator.
 set target_freq_mhz [expr {[info exists ::env(TARGET_FREQ_MHZ)] ? double($::env(TARGET_FREQ_MHZ)) : 200.0}]
+if {$board eq "tqtt" && $target_freq_mhz != 200.0} {
+    error "TQTT full Mac build requires TARGET_FREQ_MHZ=200"
+}
 set target_period_ns [expr {1000.0 / $target_freq_mhz}]
 
 puts "Target: $part @ ${target_freq_mhz} MHz (${target_period_ns} ns)"
@@ -645,7 +655,7 @@ proc read_taxi_filelist {file seen_name} {
 }
 
 proc read_all_rtl {rtl_dir} {
-    global use_sim_model cpu_m68k040 cpu_m68k040_v eth_enable eth_rk5_dir
+    global board use_sim_model cpu_m68k040 cpu_m68k040_v eth_enable eth_rk5_dir
 
     # ── CPU socket occupant ──────────────────────────────────────────────
     # CPU=m68k: the m68k-ooo submodule supplies the whole OoO CPU
@@ -728,6 +738,11 @@ proc read_all_rtl {rtl_dir} {
     read_verilog $rtl_dir/board/video_phy/scanout_display.v
     read_verilog $rtl_dir/board/video_phy/linebuf_scanout.v
     read_verilog $rtl_dir/board/video_phy/video_top.v
+    if {$board eq "tqtt"} {
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/tmds_channel.sv
+        read_verilog -sv $rtl_dir/third_party/hdl_util_hdmi/serializer.sv
+        read_verilog -sv $rtl_dir/board/video_phy/tqtt_tmds_video.sv
+    }
     read_verilog $rtl_dir/board/video_phy/vram_smoke.v
 
     # System (clocks, AXI, DDR, VRAM, SD)
@@ -841,7 +856,8 @@ proc read_all_rtl {rtl_dir} {
             error "ETH_ENABLE=1 requires rk5-eth at $eth_rk5_dir (set ETH_RK5_DIR to override)"
         }
         set taxi_seen [dict create]
-        read_taxi_filelist $eth_rk5_dir/third_party/taxi/src/eth/rtl/taxi_eth_mac_1g_rgmii_fifo.f taxi_seen
+        set taxi_mac_fl [expr {$board eq "tqtt" ? "taxi_eth_mac_1g_gmii_fifo.f" : "taxi_eth_mac_1g_rgmii_fifo.f"}]
+        read_taxi_filelist $eth_rk5_dir/third_party/taxi/src/eth/rtl/$taxi_mac_fl taxi_seen
         read_verilog -sv $eth_rk5_dir/third_party/taxi/src/sync/rtl/taxi_sync_reset.sv
         read_verilog -sv $eth_rk5_dir/rtl/icmp_echo_responder.sv
         read_verilog -sv $rtl_dir/board/q700_eth_link.sv
@@ -854,7 +870,8 @@ proc read_all_rtl {rtl_dir} {
 
     # Top
     if {!$use_sim_model} {
-        read_verilog $rtl_dir/board/vendor/design_1_ddr4_0_1_stub.v
+        set mig_stub [expr {$board eq "tqtt" ? "tqtt_ddr4_mig_stub.v" : "design_1_ddr4_0_1_stub.v"}]
+        read_verilog $rtl_dir/board/vendor/$mig_stub
     }
     read_verilog $rtl_dir/soc/fpga_top.v
 }
@@ -1091,22 +1108,24 @@ if {$enable_pcie_xdma} {
 # for the MIG DDR reference.  In real-MIG builds it also constrains the
 # separate AB7/AB6 fabric clock at 100 MHz.  TARGET_FREQ_MHZ remains a timing
 # budget; the physical input clocks stay at their board frequencies.
-read_xdc $synth_dir/fpga_top.xdc
-if {!$use_sim_model} {
-    read_xdc $synth_dir/fpga_top_real_mig.xdc
-    read_xdc $synth_dir/ddr4.xdc
+if {$board eq "tqtt"} {
+    read_xdc $synth_dir/tqtt_fpga_top.xdc
+} else {
+    read_xdc $synth_dir/fpga_top.xdc
+    if {!$use_sim_model} {
+        read_xdc $synth_dir/fpga_top_real_mig.xdc
+        read_xdc $synth_dir/ddr4.xdc
+    }
+    if {$enable_pcie_xdma} { read_xdc $synth_dir/pcie_xdma.xdc }
+    read_xdc $synth_dir/hdmi.xdc
 }
-if {$enable_pcie_xdma} {
-    read_xdc $synth_dir/pcie_xdma.xdc
-}
-read_xdc $synth_dir/hdmi.xdc
 # audio_pwm.xdc constrains the Σ-Δ PWM audio outputs on AN9134 NC pins
 # J1.35 / J1.36.  See docs/superpowers/specs/2026-05-04-an9134-pwm-audio-
 # design.md.  The package_pin lines are commented out in audio_pwm.xdc
 # until the carrier-side FPGA pins are confirmed; the IOSTANDARD / DRIVE
 # / SLEW / false_path constraints still apply once pins are uncommented.
-read_xdc $synth_dir/audio_pwm.xdc
-if {$eth_enable} {
+if {$board eq "rk"} { read_xdc $synth_dir/audio_pwm.xdc }
+if {$eth_enable && $board eq "rk"} {
     read_xdc $synth_dir/ethernet_rgmii.xdc
 }
 
@@ -1136,6 +1155,7 @@ if {$mode eq "ddr_pincheck"} {
     if {$enable_jtag_axi} { lappend pincheck_def_args -verilog_define JTAG_AXI_ENABLE }
     if {$enable_pcie_xdma} { lappend pincheck_def_args -verilog_define PCIE_XDMA_ENABLE }
     if {$eth_enable} { lappend pincheck_def_args -verilog_define ETH_ENABLE }
+    if {$board eq "tqtt"} { lappend pincheck_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
     if {$eth_debug_enable} { lappend pincheck_def_args -verilog_define ETH_DEBUG_ENABLE }
     # debug_ctrl.v's local cycle/inst-count fallback is for unit testing only;
     # the integrated bitstream always feeds real 64-bit external counters.
@@ -1174,6 +1194,7 @@ if {$mode eq "dry_run"} {
     if {$enable_jtag_axi} { lappend dry_def_args -verilog_define JTAG_AXI_ENABLE }
     if {$enable_pcie_xdma} { lappend dry_def_args -verilog_define PCIE_XDMA_ENABLE }
     if {$eth_enable} { lappend dry_def_args -verilog_define ETH_ENABLE }
+    if {$board eq "tqtt"} { lappend dry_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
     if {$eth_debug_enable} { lappend dry_def_args -verilog_define ETH_DEBUG_ENABLE }
     if {$core_mmcm} { lappend dry_def_args -verilog_define CORE_MMCM }
     lappend dry_def_args -verilog_define DEBUG_CTRL_NO_LOCAL_FALLBACK
@@ -1210,6 +1231,7 @@ if {$mode eq "clock_report"} {
     if {$enable_jtag_axi} { lappend clock_def_args -verilog_define JTAG_AXI_ENABLE }
     if {$enable_pcie_xdma} { lappend clock_def_args -verilog_define PCIE_XDMA_ENABLE }
     if {$eth_enable} { lappend clock_def_args -verilog_define ETH_ENABLE }
+    if {$board eq "tqtt"} { lappend clock_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
     if {$eth_debug_enable} { lappend clock_def_args -verilog_define ETH_DEBUG_ENABLE }
     lappend clock_def_args -verilog_define DEBUG_CTRL_NO_LOCAL_FALLBACK
     synth_design \
@@ -1275,6 +1297,7 @@ if {$enable_scsi_trace} { lappend synth_def_args -verilog_define SCSI_TRACE_ENAB
 if {$enable_jtag_axi} { lappend synth_def_args -verilog_define JTAG_AXI_ENABLE }
 if {$enable_pcie_xdma} { lappend synth_def_args -verilog_define PCIE_XDMA_ENABLE }
 if {$eth_enable} { lappend synth_def_args -verilog_define ETH_ENABLE }
+if {$board eq "tqtt"} { lappend synth_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
 if {$eth_debug_enable} { lappend synth_def_args -verilog_define ETH_DEBUG_ENABLE }
 if {$core_mmcm} { lappend synth_def_args -verilog_define CORE_MMCM }
 # debug_ctrl.v's local cycle/inst-count fallback is unit-tb only; the
@@ -1502,7 +1525,7 @@ synth_design \
 # Taxi's constraint Tcl files operate on elaborated cells, so source them
 # only after synthesis has created the hierarchy they query.  They are kept
 # verbatim from the pinned physical-link baseline.
-if {$eth_enable} {
+if {$eth_enable && $board eq "rk"} {
     foreach tcl_file [list \
             $eth_rk5_dir/third_party/taxi/src/eth/syn/vivado/taxi_rgmii_phy_if.tcl \
             $eth_rk5_dir/third_party/taxi/src/eth/syn/vivado/taxi_eth_mac_fifo.tcl \
@@ -1830,6 +1853,10 @@ proc get_active_core_clock {} {
     # not, so the order is only about which lookup is cheaper.  Resolving
     # by pin (not by name) is the whole point: see the comment on
     # get_active_pb_clock below for what a name lookup silently did.
+    set core_clk [_clocks_on_pin "*u_tqtt_core_bufg/O"]
+    if {[llength $core_clk] > 0} {
+        return $core_clk
+    }
     set core_clk [_clocks_on_pin "*u_core_mmcm_core_bufg/O"]
     if {[llength $core_clk] > 0} {
         return $core_clk
@@ -1867,6 +1894,10 @@ proc get_active_core_clock {} {
 proc get_active_pb_clock {} {
     # CORE_MMCM builds take pb off the same MMCM (CLKOUT1, /24) instead of
     # the BUFG_GT divider -- same pin-not-name rule as the core clock.
+    set pb [_clocks_on_pin "*u_tqtt_pb_bufg/O"]
+    if {[llength $pb] > 0} {
+        return $pb
+    }
     set pb [_clocks_on_pin "*u_core_mmcm_pb_bufg/O"]
     if {[llength $pb] > 0} {
         return $pb
@@ -2761,7 +2792,7 @@ if {$l2c_enable_effective && $l2c_uram_floorplan} {
 # this check says so in its own manifest instead of being found out later.
 # MIG_WR_FLOP_LOC=0 disables it for a controlled A/B.
 # ──────────────────────────────────────────────────────────────────────────────
-set mig_wr_flop_loc [parse_bool_env MIG_WR_FLOP_LOC 1]
+set mig_wr_flop_loc [parse_bool_env MIG_WR_FLOP_LOC [expr {$board eq "tqtt" ? 0 : 1}]]
 set mig_wr_flop_site "SLICE_X1Y37"
 if {!$use_sim_model && $mig_wr_flop_loc} {
     set mig_wr_cell [get_cells -quiet -hier -regexp \

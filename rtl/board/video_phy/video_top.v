@@ -165,6 +165,7 @@ module video_top #(
 
     // Exposed for upstream observability / debug
     output wire        pclk_out,
+    output wire        pclk_x5_out,
     output wire        mmcm_locked,
     output wire        hdmi_i2c_done,
     output wire        fb_underflow_sticky,
@@ -275,6 +276,8 @@ module video_top #(
     // ODDRE1 that forwards the pixel clock to the encoder -- never any logic.
     wire pclk_fwd;
     assign pclk_out = pclk;
+    wire pclk_x5;
+    assign pclk_x5_out = pclk_x5;
 
     mmcm_hdmi #(
         .CLKIN1_PERIOD     (MMCM_CLKIN1_PERIOD),
@@ -290,6 +293,7 @@ module video_top #(
         .resetn   (ext_resetn),
         .pclk     (pclk),
         .pclk_fwd (pclk_fwd),
+        .pclk_x5  (pclk_x5),
         .locked   (mmcm_locked)
     );
 

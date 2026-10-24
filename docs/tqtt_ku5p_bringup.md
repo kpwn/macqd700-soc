@@ -137,26 +137,40 @@ the sampled addresses and all 256 data bits at each address; it does not
 exercise every byte of DRAM. The HDMI audio bitstream was restored after the
 test, and the capture feed resumed.
 
-## Remaining gates before the full SoC
+## Full SoC integration in progress
 
-1. **HDMI:** adapt the existing 720p60 pixel scanout and Mac ASC sound to the
-   proven standalone TMDS video and audio transmitter.
-   The connector's four pairs are on bank 65 at 1.2 V. The vendor example
-   calls them `LVDS`, but AMD UG571 specifies 1.8 V VCCO for LVDS output;
-   the probe instead uses legal `DIFF_SSTL12`. Electrical margin and DDC/HPD
-   behavior still need hardware validation.
-2. **Ethernet:** this board's RTL8211EG exposes GMII (8-bit), whereas the RK
-   board's RTL8211F uses RGMII (4-bit). Standalone transmit and receive passed;
-   the SoC needs a GMII variant of its shared Taxi MAC and board constraints.
-3. **DDR4 and clocks:** integrate the calibrated TQTT MIG and pin map into
-   the full SoC, then retime its core/peripheral/video domains. Do not reuse
-   the RK MIG DCP or its XDC.
-4. **Full Mac:** select the TQTT shell with `BOARD=tqtt`, boot from the SD
-   image, verify video and Ethernet, then close timing at the required
-   200 MHz core clock. Keep the RK shell as `BOARD=rk`.
-5. **Physical I/O:** bring up real USB, ADB, and serial on the TQTT headers.
-   RK support for those physical interfaces is deferred until its own
-   hardware path exists.
+`BOARD=tqtt` now selects the TQTT 1 GiB DDR4 MIG, 8-bit GMII Taxi MAC,
+direct TMDS pins, SD SPI, UART2, LEDs, and fan. The 50 MHz E18 oscillator
+drives one fabric MMCM that produces a 200 MHz core clock, 50 MHz peripheral
+clock, and 100 MHz video/GMII reference. The 100 MHz T24/U24 differential
+clock remains dedicated to MIG. The existing Mac scanout runs at 720p60 and
+feeds a DVI-compatible TMDS encoder. HDMI audio from the Mac ASC is still to
+be connected; the standalone 48 kHz audio probe remains available.
+
+The RK physical DDR layout reserves its ROM and framebuffer above the first
+1 GiB. That would wrap on TQTT's 30-bit MIG AXI address bus and corrupt RAM.
+The TQTT build therefore decodes 512 MiB of guest RAM, places the 4 MiB ROM
+at DDR `0x3F00_0000`, and places the 8 MiB framebuffer at `0x3F40_0000`.
+`make check-tqtt-ddr-map` verifies that the ranges are disjoint and fit in
+1 GiB. The guest-visible ROM and framebuffer addresses remain unchanged.
+
+On 2026-10-24, `BOARD=tqtt TARGET_FREQ_MHZ=200 CORE_CLK_HZ=200000000
+CORE_MMCM=1 USE_REAL_MIG=1 make vivado-dry-run` elaborated the full 68040
+SoC with zero errors and zero critical warnings. `make tqtt-full` is the
+200 MHz implementation command, using the reduced CPU debug profile and a
+separate TQTT output directory. A successful elaboration does not establish
+timing closure or a Mac boot; those are the next hardware gates.
+
+Before loading the full image, check the TQTT +ADJ rail that supplies bank 67
+and the E18 oscillator input. The board reference warns that +ADJ should be
+1.71-1.89 V, while its power page specifies 1.9 V. The 50 MHz oscillator is
+connected through a 43 ohm series resistor. This clock path was not used by
+the earlier DDR, SD, HDMI, or GMII probes, which used T24/U24 instead.
+
+After timing closure, boot the existing SD image, confirm the 720p60 Mac
+screen on the monitor and capture card, verify DDR/SD behavior and GMII RX/TX,
+then integrate HDMI audio and physical USB/ADB/serial. RK remains selectable
+as `BOARD=rk` until the TQTT full image passes these checks.
 
 Board pin facts were checked against the TQTT XCKU5P schematic and example
 constraints at <https://github.com/joshheyse/tqtt-ku5p>. No vendor example

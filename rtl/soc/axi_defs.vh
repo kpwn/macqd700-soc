@@ -43,7 +43,11 @@
 
 // ── System address map ────────────────────────────────────────────────────
 `define AXI_RAM_BASE      32'h0000_0000
+`ifdef TQTT_BOARD
+`define AXI_RAM_SIZE      32'h2000_0000   // 512 MiB; TQTT has 1 GiB total DDR
+`else
 `define AXI_RAM_SIZE      32'h4000_0000   // 1 GiB decode window
+`endif
 `define AXI_RAM_ALIAS_BASE 32'h5800_0000
 `define AXI_RAM_ALIAS_SIZE 32'h0400_0000  // 64 MiB Q700 RAM probe alias
 
@@ -174,8 +178,15 @@
 // The mapping is a compile-time constant (small LUT), not a shift — real
 // hardware DDR is bigger than RAM alone so ROM/FB just live above RAM.
 `define AXI_DDR_RAM_OFFSET 32'h0000_0000
+`ifdef TQTT_BOARD
+// The TQTT MIG exposes 30 address bits. Reserve 12 MiB at the top of its
+// 1 GiB DDR4 for ROM and scanout; 512 MiB of guest RAM is decoded below.
+`define AXI_DDR_ROM_OFFSET 32'h3F00_0000
+`define AXI_DDR_FB_OFFSET  32'h3F40_0000
+`else
 `define AXI_DDR_ROM_OFFSET 32'h4000_0000
 `define AXI_DDR_FB_OFFSET  32'h4040_0000
+`endif
 
 // DDR 0x5000_0000 .. 0x5FFF_FFFF was the RAM disk's flattened carve-out
 // (AXI_DDR_RAMDISK_OFFSET + AXI_RAMDISK_L2_BYP_BASE/MASK).  Removed with

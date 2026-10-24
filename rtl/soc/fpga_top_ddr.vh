@@ -57,9 +57,9 @@
     // no special handling needed (matches the spec's S3 finding; ROM
     // writes are already dropped upstream by axi_xbar.v before reaching
     // S0). No parameter override needed for this: l2c's default
-    // CACHEABLE_BASE/CACHEABLE_SIZE (0x0000_0000 + 0x4100_0000) already
-    // spans AXI_DDR_RAM_OFFSET(0)+AXI_RAM_SIZE(1G) through
-    // AXI_DDR_FB_OFFSET(0x4040_0000)+AXI_FB_SIZE(8M) (axi_defs.vh).
+    // CACHEABLE_BASE/CACHEABLE_SIZE (0x0000_0000 + 0x4100_0000) spans
+    // the board-selected DDR RAM, ROM, and framebuffer offsets in
+    // axi_defs.vh. TQTT reserves ROM/FB below its 1 GiB limit.
     // This paragraph is true for S0 only -- it does NOT cover cpu040's
     // Level-A fetch port, which binds directly to l2c's dedicated
     // f_axi_* port below and never touches S0 or ddr_flatten() at all.
@@ -161,14 +161,8 @@
     // Fold it here, once, on the address feeding l2c's fetch port --
     // same arithmetic as ddr_flatten()'s ROM branch (rtl/soc/axi_xbar.v),
     // so the two decodes are trivially diffable against each other if
-    // either ever changes. `AXI_DDR_ROM_OFFSET` == `AXI_ROM_MIRROR_BASE`
-    // (both 0x4000_0000) on this fetch path -- there is no separate
-    // "flattened DDR window" here the way the xbar has one, since l2c's
-    // own CACHEABLE_BASE/SIZE (0x0000_0000 + 0x4100_0000, see the ROM
-    // window comment on u_l2c below) already addresses RAM and ROM with
-    // plain system addresses -- but the `+ offset` term is kept anyway,
-    // spelled the same way as ddr_flatten(), rather than special-cased
-    // away as a no-op.
+    // either ever changes. The `+ AXI_DDR_ROM_OFFSET` term is required:
+    // RK places ROM at 0x4000_0000, while TQTT places it below 1 GiB.
     //
     // Scoped strictly to the ROM-mirror window: every other address
     // (RAM, the 0x5800_0000 RAM-probe alias, IO, etc.) passes through
@@ -605,7 +599,11 @@
         .c0_ddr4_aresetn(!mig_ui_rst),
 
         .c0_ddr4_s_axi_awid(mig_awid),
+`ifdef TQTT_BOARD
+        .c0_ddr4_s_axi_awaddr(mig_awaddr[29:0]),
+`else
         .c0_ddr4_s_axi_awaddr(mig_awaddr),
+`endif
         .c0_ddr4_s_axi_awlen(mig_awlen),
         .c0_ddr4_s_axi_awsize(mig_awsize),
         .c0_ddr4_s_axi_awburst(mig_awburst),
@@ -628,7 +626,11 @@
         .c0_ddr4_s_axi_bvalid(mig_bvalid),
 
         .c0_ddr4_s_axi_arid(mig_arid),
+`ifdef TQTT_BOARD
+        .c0_ddr4_s_axi_araddr(mig_araddr[29:0]),
+`else
         .c0_ddr4_s_axi_araddr(mig_araddr),
+`endif
         .c0_ddr4_s_axi_arlen(mig_arlen),
         .c0_ddr4_s_axi_arsize(mig_arsize),
         .c0_ddr4_s_axi_arburst(mig_arburst),

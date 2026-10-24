@@ -131,6 +131,9 @@
     wire                   vram_rd_valid;
 
     wire pclk;
+`ifdef TQTT_BOARD
+    wire tqtt_pclk_x5;
+`endif
     wire hdmi_mmcm_locked;
     wire hdmi_i2c_done;
     wire fb_underflow_sticky;
@@ -813,6 +816,9 @@
         .vram_rst     (vram_rd_rst ),
         .vram_side_rst(video_vram_side_rst),
         .pclk_out     (pclk        ),
+`ifdef TQTT_BOARD
+        .pclk_x5_out (tqtt_pclk_x5),
+`endif
         .mmcm_locked  (hdmi_mmcm_locked),
         .hdmi_i2c_done(hdmi_i2c_done),
         .fb_underflow_sticky(fb_underflow_sticky),
@@ -856,4 +862,18 @@
         .vram_rd_data(vram_rd_data),
         .vram_rd_valid(vram_rd_valid)
     );
+
+`ifdef TQTT_BOARD
+    // The existing 720p scanout feeds three TMDS lanes directly. HDMI audio
+    // will be connected after the full Mac video path is verified.
+    tqtt_tmds_video u_tqtt_tmds_video (
+        .pclk(pclk), .pclk_x5(tqtt_pclk_x5),
+        .reset(!hdmi_mmcm_locked),
+        .rgb(al9134_d), .de(al9134_de),
+        .hs(al9134_hs), .vs(al9134_vs),
+        .tmds_clk_p(tmds_clk_p), .tmds_clk_n(tmds_clk_n),
+        .tmds_p(tmds_p), .tmds_n(tmds_n)
+    );
+    assign hdmi_out_en = 1'b1;
+`endif
 
