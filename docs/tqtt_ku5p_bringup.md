@@ -201,6 +201,16 @@ establishes a working full Mac boot and basic ADB input despite the remaining
 -0.304 ns core setup miss. A 100 MHz comparison build is underway; the
 200 MHz patched image remains the active board image.
 
+The full-SoC GMII link also passed a Mac OS TCP/IP check on 2026-10-24. A
+host USB Ethernet adapter connected directly to the KU5P negotiated 1000
+Mb/s full duplex. With `192.168.42.1/24` on the host adapter and a DHCP
+server bound only to that interface, the Mac's SONIC address
+`00:05:02:00:00:00` completed Discover/Offer/Request/ACK and received
+`192.168.42.11`. Five host ICMP echo requests received five replies, with
+0% loss and 0.236 ms average round trip. This exercises full-SoC receive,
+DMA, driver, and transmit paths; an application-level TCP transfer remains
+to be checked.
+
 For the current 640x480 Mac mode, run the MJPEG server with
 `FPGA_VIDEO_WIDTH=1280 FPGA_VIDEO_HEIGHT=720 FPGA_VIDEO_FPS=60
 FPGA_VIDEO_CROP=auto FPGA_VIDEO_SRC_W=640 FPGA_VIDEO_SRC_H=480`. Capturing
