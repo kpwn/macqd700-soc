@@ -172,7 +172,11 @@ generated `build/vivado_tqtt/fpga_top.blank.bit` with zero DRC errors,
 WNS -0.304 ns and WHS +0.002 ns after six post-route passes. The true core
 clock is 5 ns. SD pad paths now close: CLK +0.104 ns, MOSI +0.284 ns,
 CS +0.228 ns, and MISO +0.416 ns. The core image remains below the requested
-200 MHz timing margin.
+200 MHz timing margin. The routed report counts 1,307 failing core endpoints;
+its worst path runs from `LsEuPlugin`'s aligned-send pointer to a `DcachePlugin`
+dirty-bank register through 19 logic levels. Of the 5.302 ns data delay,
+3.831 ns is routing. This is a CPU core path rather than an SD or HDMI pad
+path.
 
 The second image was programmed on the KU5P via JTAG on 2026-10-24. VIO
 reported DDR calibration complete, ROM load complete, core reset released,
