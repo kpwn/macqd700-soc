@@ -58,6 +58,20 @@ settled, VIO saw 250,494,346 RX clock edges and one receive frame in 2.005 s,
 with **zero in-frame RXER cycles**. The initial version counted RXER during
 idle and could not distinguish real frame errors.
 
+The transmit probe is `make fpga-tqtt-eth-tx-probe-bitstream`. It uses the
+same pins and 125 MHz forwarded GTX clock, sends a broadcast test frame with
+an Ethernet FCS every second, and exposes a Gray-coded TX count in VIO probe
+3. The TX data changes on the falling clock edge for setup before the PHY's
+next rising edge. On 2026-10-24 it routed with zero DRC errors, setup slack
++0.614 ns and hold slack +0.016 ns. JTAG counted two transmitted frames in
+2.004 s and zero in-frame RX errors. The host's RTL8153 adapter negotiated
+1000 Mb/s full duplex and `tcpdump` captured three consecutive frames with
+source MAC `02:54:51:54:54:01`, EtherType `0x88b5`, the `TQTT` marker, and
+incrementing frame IDs. The adapter reported `rx_errors=0` and
+`tx_errors=0`. This proves standalone GMII TX and RX wiring; the Mac's shared
+Taxi MAC still needs a GMII board variant. The HDMI audio image was restored
+after testing.
+
 ## HDMI sound
 
 HDMI audio is carried in data islands on the same three TMDS pairs as video;
@@ -132,8 +146,8 @@ test, and the capture feed resumed.
    the probe instead uses legal `DIFF_SSTL12`. Electrical margin and DDC/HPD
    behavior still need hardware validation.
 2. **Ethernet:** this board's RTL8211EG exposes GMII (8-bit), whereas the RK
-   board's RTL8211F uses RGMII (4-bit). The receive probe passed; the SoC
-   needs a GMII PHY adapter, transmit path, and pin/timing constraints.
+   board's RTL8211F uses RGMII (4-bit). Standalone transmit and receive passed;
+   the SoC needs a GMII variant of its shared Taxi MAC and board constraints.
 3. **DDR4 and clocks:** integrate the calibrated TQTT MIG and pin map into
    the full SoC, then retime its core/peripheral/video domains. Do not reuse
    the RK MIG DCP or its XDC.
