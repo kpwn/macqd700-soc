@@ -139,6 +139,12 @@ its output register, and those same two output clocks. The full-Mac HDMI
 connection now delays coordinates by five additional clocks; a new full
 100 MHz route and hardware validation are pending.
 
+Build the matching-clock control with
+`make TQTT_HDMI_INTEGRATION_PROBE_FABRIC=1 fpga-tqtt-hdmi-integration-probe-bitstream`. Add
+`TQTT_HDMI_INTEGRATION_PROBE_SKEW=5` to reproduce the old coordinate
+offset. The targets use separate output directories, and programming
+either probe replaces the full Mac image until it is loaded again.
+
 ## DDR4 IP configuration
 
 The TQTT schematic and DDR4 example identify two `MT40A256M16GE-075E`

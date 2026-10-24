@@ -3788,9 +3788,9 @@ fpga-tqtt-eth-probe-bitstream:
 
 .PHONY: fpga-tqtt-hdmi-probe-bitstream
 .PHONY: fpga-tqtt-hdmi-integration-probe-bitstream
-TQTT_HDMI_INTEGRATION_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_hdmi_integration_probe
 TQTT_HDMI_INTEGRATION_PROBE_FABRIC ?= 0
 TQTT_HDMI_INTEGRATION_PROBE_SKEW ?= 0
+TQTT_HDMI_INTEGRATION_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_hdmi_integration_probe$(if $(filter 1,$(TQTT_HDMI_INTEGRATION_PROBE_FABRIC)),_fabric,)$(if $(filter 5,$(TQTT_HDMI_INTEGRATION_PROBE_SKEW)),_skew5,)
 fpga-tqtt-hdmi-integration-probe-bitstream: BOARD=tqtt
 fpga-tqtt-hdmi-integration-probe-bitstream:
 	@mkdir -p $(TQTT_HDMI_INTEGRATION_PROBE_BUILD_DIR)
