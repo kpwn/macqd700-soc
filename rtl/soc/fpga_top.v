@@ -199,9 +199,9 @@ module fpga_top #(
     // data-response failure and fatal peripheral-write wedge with this enabled.
     // Default to the established closed-per-sector CMD24 path (no staging).
     parameter integer SD_SAFE_CMD25 = 0,
-    // TQTT defaults to the validated DVI-compatible video output.  Opt-in
-    // HDMI inserts 48 kHz audio packets sourced from the Mac ASC.
-    parameter integer TQTT_HDMI_AUDIO = 0,
+    // TQTT sends 48 kHz HDMI audio packets sourced from the Mac ASC by
+    // default. Set TQTT_HDMI_AUDIO=0 for DVI-compatible video only.
+    parameter integer TQTT_HDMI_AUDIO = 1,
     // Optional fabric SYSMON fan curve. Manual VIO control remains the
     // default until the automatic image has been exercised on hardware.
     parameter integer TQTT_FAN_AUTO = 0,

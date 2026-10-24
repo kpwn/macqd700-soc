@@ -549,7 +549,7 @@ if {$video_smoke != 0 && $video_smoke != 1} {
 set boot_rom_sectors [parse_int_env BOOT_ROM_SECTORS 2048]
 set sd_safe_cmd25 [parse_int_env SD_SAFE_CMD25 0]
 if {$sd_safe_cmd25 ni {0 1}} {error "SD_SAFE_CMD25 must be 0 or 1"}
-set tqtt_hdmi_audio [parse_int_env TQTT_HDMI_AUDIO 0]
+set tqtt_hdmi_audio [parse_int_env TQTT_HDMI_AUDIO [expr {$board eq "tqtt" ? 1 : 0}]]
 if {$tqtt_hdmi_audio ni {0 1}} {error "TQTT_HDMI_AUDIO must be 0 or 1"}
 if {$tqtt_hdmi_audio && $board ne "tqtt"} {error "TQTT_HDMI_AUDIO requires BOARD=tqtt"}
 set tqtt_fan_auto [parse_int_env TQTT_FAN_AUTO 0]

@@ -1,9 +1,9 @@
-# Standalone TQTT HDMI test pattern; TQTT_HDMI_AUDIO=1 adds 48 kHz PCM.
+# Standalone TQTT HDMI test pattern with 48 kHz PCM by default.
 if {[lindex $argv 0] eq ""} { error "output directory required" }
 set output_dir [file normalize [lindex $argv 0]]
 set proj_root [file normalize [file dirname [info script]]/..]
 set part xcku5p-ffvb676-2-i
-set audio 0
+set audio 1
 if {[info exists ::env(TQTT_HDMI_AUDIO)]} { set audio $::env(TQTT_HDMI_AUDIO) }
 if {$audio ni {0 1}} { error "TQTT_HDMI_AUDIO must be 0 or 1" }
 file mkdir $output_dir

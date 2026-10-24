@@ -3265,7 +3265,7 @@ ETH_DEBUG_ENABLE      ?= 0
 CPU_IPC_PROFILE ?= throughput-v2
 CPU_DEBUG_PROFILE ?= full
 BOARD ?= rk
-TQTT_HDMI_AUDIO ?= 0
+TQTT_HDMI_AUDIO ?= $(if $(filter tqtt,$(BOARD)),1,0)
 TQTT_FAN_AUTO ?= 0
 ifneq ($(filter $(BOARD),rk tqtt),$(BOARD))
 $(error BOARD must be rk or tqtt, got '$(BOARD)')
@@ -3796,6 +3796,7 @@ fpga-tqtt-eth-tx-probe-bitstream:
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — TQTT GMII TX probe pending"; fi; exit $$status; }
 
 TQTT_HDMI_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_hdmi_probe$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_audio,)
+fpga-tqtt-hdmi-probe-bitstream: BOARD=tqtt
 fpga-tqtt-hdmi-probe-bitstream:
 	@mkdir -p $(TQTT_HDMI_PROBE_BUILD_DIR)
 	@touch $(VIVADO_LOCK)
@@ -3813,6 +3814,7 @@ fpga-tqtt-usb-host-probe-bitstream:
 # Board-selectable full Mac build. Keep RK as the default until this image
 # passes boot, storage, video, and network checks on the TQTT board.
 .PHONY: check-tqtt-ddr-map tqtt-full tqtt-full-100
+tqtt-full tqtt-full-100: BOARD=tqtt
 check-tqtt-ddr-map:
 	@mkdir -p $(BUILD_DIR)/tb_tqtt_ddr_map
 	verilator --binary --top-module tb_tqtt_ddr_map -DTQTT_BOARD \

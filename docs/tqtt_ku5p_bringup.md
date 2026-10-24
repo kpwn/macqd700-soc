@@ -87,9 +87,9 @@ source should supply a supported audio rate such as 48 kHz.
 
 The standalone HDMI probe uses the MIT-licensed `hdl-util/hdmi` packetizer
 and encoder with a local UltraScale+ `ODDRE1` serializer. Build its 640x480p60
-test pattern with `make BOARD=tqtt TQTT_HDMI_AUDIO=0
-fpga-tqtt-hdmi-probe-bitstream`; set `TQTT_HDMI_AUDIO=1` to send real HDMI
-packets with a quiet 48 kHz stereo 1 kHz test tone. The pixel clock is 25.2
+test pattern with `make BOARD=tqtt fpga-tqtt-hdmi-probe-bitstream`; it sends
+real HDMI packets with a quiet 48 kHz stereo 1 kHz test tone by default.
+Set `TQTT_HDMI_AUDIO=0` for the video-only probe. The pixel clock is 25.2
 MHz and the serializer clock is 126 MHz. The connector's four differential
 pairs use `DIFF_SSTL12` on the board's 1.2 V bank. The video-only image routed
 with 0 DRC errors, setup slack +2.866 ns, and hold slack +0.026 ns. It was
@@ -108,11 +108,10 @@ recorded all zeros with the video-only image. This standalone test source
 does not carry Mac ASC sound. The attached capture card has a USB audio
 endpoint for validation of the full Mac option.
 
-The full Mac build has a separate opt-in switch:
-`make TQTT_HDMI_AUDIO=1 tqtt-full`. It uses
-`build/vivado_tqtt_hdmi_audio`; the default is
-`TQTT_HDMI_AUDIO=0`, retaining the established DVI-compatible 720p output.
-The opt-in path uses the ASC's stereo PCM stream, repeats samples to make a
+The full Mac build enables HDMI audio by default with `make tqtt-full` and
+uses `build/vivado_tqtt_hdmi_audio`. Set `TQTT_HDMI_AUDIO=0` for the
+DVI-compatible 720p output. The HDMI audio path uses the ASC's stereo PCM
+stream, repeats samples to make a
 48 kHz HDMI stream, and uses the standalone probe's HDMI packet components.
 Full-Mac synthesis completed with the 48 kHz audio clock constrained on
 2026-10-24. Placement, routing, and capture/monitor tests remain before the
@@ -159,8 +158,8 @@ direct TMDS pins, SD SPI, UART2, LEDs, and fan. The 50 MHz E18 oscillator
 drives one fabric MMCM that produces a 200 MHz core clock, 50 MHz peripheral
 clock, 100 MHz video reference, and 125 MHz GMII transmit clock. The 100 MHz
 T24/U24 differential clock remains dedicated to MIG. The existing Mac scanout
-runs at 720p60 and feeds a DVI-compatible TMDS encoder by default. The
-ASC-to-HDMI option is in source but awaits full-image hardware validation; the
+runs at 720p60 and feeds the ASC-to-HDMI transmitter by default. The
+full-image HDMI audio path awaits placement, routing, and hardware validation; the
 standalone 48 kHz audio probe remains available.
 
 The RK physical DDR layout reserves its ROM and framebuffer above the first
