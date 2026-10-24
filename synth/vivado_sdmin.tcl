@@ -18,10 +18,13 @@ set rtl_dir    $proj_root/rtl
 set synth_dir  $proj_root/synth
 set part       "xcku5p-ffvb676-2-i"
 set board      [expr {[info exists ::env(BOARD)] ? $::env(BOARD) : "rk"}]
+set tqtt_50mhz [expr {[info exists ::env(TQTT_SD_50MHZ_PROBE)] && $::env(TQTT_SD_50MHZ_PROBE) eq "1"}]
 if {$board ni {rk tqtt}} {
     error "BOARD must be rk or tqtt, got '$board'"
 }
+if {$tqtt_50mhz && $board ne "tqtt"} {error "TQTT_SD_50MHZ_PROBE requires BOARD=tqtt"}
 puts "=== SDMIN board: $board ==="
+puts "=== SDMIN TQTT negotiated 50 MHz probe: $tqtt_50mhz ==="
 
 set_param general.maxThreads 16
 file mkdir $output_dir
@@ -98,6 +101,7 @@ set synth_args [list -top fpga_top_sdmin -part $part \
 if {$board eq "tqtt"} {
     lappend synth_args -verilog_define TQTT_BOARD
 }
+if {$tqtt_50mhz} {lappend synth_args -verilog_define TQTT_SD_50MHZ_PROBE}
 synth_design {*}$synth_args
 
 write_checkpoint -force $output_dir/checkpoints/synth.dcp
@@ -117,6 +121,7 @@ write_debug_probes -force $output_dir/fpga_top_sdmin.ltx
 set buildinfo_fh [open $output_dir/fpga_top_sdmin.buildinfo w]
 puts $buildinfo_fh "part=$part"
 puts $buildinfo_fh "board=$board"
+puts $buildinfo_fh "tqtt_50mhz_probe=$tqtt_50mhz"
 puts $buildinfo_fh "top=fpga_top_sdmin"
 puts $buildinfo_fh "bitstream=fpga_top_sdmin.bit"
 puts $buildinfo_fh "debug_probes=fpga_top_sdmin.ltx"

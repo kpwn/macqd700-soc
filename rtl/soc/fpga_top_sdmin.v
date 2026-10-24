@@ -57,10 +57,33 @@ module fpga_top_sdmin (
     );
 
     wire core_clk;
+    wire sd_mmcm_locked;
+`ifdef TQTT_SD_50MHZ_PROBE
+    // The TQTT DDR reference pair is 100 MHz. Double it for a 200 MHz
+    // transport clock, leaving HS_HALF=2 at a real 50 MHz on the SD pins.
+    wire clk200_unbuf, clkfb;
+    MMCME4_BASE #(
+        .CLKIN1_PERIOD(10.000), .DIVCLK_DIVIDE(1),
+        .CLKFBOUT_MULT_F(10.000), .CLKOUT0_DIVIDE_F(5.000)
+    ) u_sd_probe_mmcm (
+        .CLKIN1(sys_clk_ibuf), .CLKFBIN(clkfb),
+        .CLKFBOUT(clkfb), .CLKFBOUTB(),
+        .CLKOUT0(clk200_unbuf), .CLKOUT0B(),
+        .CLKOUT1(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(),
+        .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
+        .LOCKED(sd_mmcm_locked), .PWRDWN(1'b0), .RST(1'b0)
+    );
+    BUFG u_core_clk_bufg (
+        .I (clk200_unbuf),
+        .O (core_clk)
+    );
+`else
+    assign sd_mmcm_locked = 1'b1;
     BUFG u_core_clk_bufg (
         .I (sys_clk_ibuf),
         .O (core_clk)
     );
+`endif
 
     // ═══════════════════════════════════════════════════════════════
     // Reset: power-on-reset counter (declaration-time FF init values are
@@ -86,7 +109,7 @@ module fpga_top_sdmin (
         cpu_resetn_sync <= {cpu_resetn_sync[1:0], cpu_resetn};
 
     wire vio_soft_rst;
-    wire rst = por_rst || !cpu_resetn_sync[2] || vio_soft_rst;
+    wire rst = por_rst || !sd_mmcm_locked || !cpu_resetn_sync[2] || vio_soft_rst;
 
     // ═══════════════════════════════════════════════════════════════
     // boot_fsm + sd_ctrl (internal) + sd_spi — no sd_spi_mux needed
@@ -194,11 +217,19 @@ module fpga_top_sdmin (
 
     sd_spi #(
 `ifdef TQTT_BOARD
+`ifdef TQTT_SD_50MHZ_PROBE
+        // 200 MHz core: init 400 kHz, ordinary fast 25 MHz, HS 50 MHz.
+        // Set VIO cfg_force_hs only after confirming CMD6 was accepted.
+        .SLOW_HALF (250),
+        .FAST_HALF (4),
+        .HS_HALF   (2)
+`else
         // TQTT USER1_CLK is 100 MHz.  Keep init near 400 kHz and cap
         // fast/HS SPI at 25 MHz, matching the proven RK wire rate.
         .SLOW_HALF (125),
         .FAST_HALF (2),
         .HS_HALF   (2)
+`endif
 `else
         .SLOW_HALF (250),
         .FAST_HALF (4),

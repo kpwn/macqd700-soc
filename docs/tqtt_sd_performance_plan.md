@@ -38,6 +38,14 @@ the cache's simulated projections as a hardware result.
 2. Build a standalone TQTT 200 MHz SPI probe at 25 and 50 MHz. Use long
    sequential and randomized reads, CRC16 on every block, and repeated
    resets. Only use 50 MHz in the Mac image if this passes on the actual card.
+   The first experiment is `make fpga-tqtt-sdmin-50mhz-bitstream`; its
+   `build/vivado_sdmin_tqtt_50` image runs the SD engine at 200 MHz and
+   offers 25 MHz fast / 50 MHz negotiated HS. In `jtag_repl_sdmin.tcl`,
+   set `ctrl 5` then `ctrl 4` to assert/release soft reset while requesting
+   HS after CMD6. Read sector count, retry/error flags, per-block CRC, and
+   whole-image CRC. Compare the latter against a fresh 25 MHz run on the
+   same card, rather than assuming a host ROM file matches the card's
+   current contents. The old 100 MHz image remains the 25 MHz reference.
 3. Implement native four-bit SD initialization and transport for the same
    block-level boot and SCSI consumers. Native mode must start at boot:
    a card initialized into SPI mode cannot switch to native mode without

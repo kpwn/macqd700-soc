@@ -3759,6 +3759,12 @@ fpga-sdmin-bitstream:
 	flock -n -E 75 $(VIVADO_LOCK) -c 'BOARD=$(BOARD) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_sdmin.tcl -tclargs $(SDMIN_BUILD_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
+.PHONY: fpga-tqtt-sdmin-50mhz-bitstream
+fpga-tqtt-sdmin-50mhz-bitstream:
+	$(MAKE) BOARD=tqtt TQTT_SD_50MHZ_PROBE=1 \
+	  SDMIN_BUILD_DIR=$(BUILD_DIR)/vivado_sdmin_tqtt_50 \
+	  fpga-sdmin-bitstream
+
 .PHONY: fpga-tqtt-eth-probe-bitstream
 .PHONY: fpga-tqtt-ddr4-probe-bitstream
 TQTT_DDR4_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_ddr4_probe
