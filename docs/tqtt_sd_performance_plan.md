@@ -80,6 +80,14 @@ an isolated write-path reproduction and HFS consistency check.
    a card initialized into SPI mode cannot switch to native mode without
    resetting its power. Preserve bounded requests, back-pressure,
    CRC/checking, error propagation, and write coherency.
+   [LiteSDCard](https://github.com/enjoy-digital/litesdcard) is a BSD-2-Clause
+   candidate for this transport: release 2024.12 generates a standalone
+   32-bit Wishbone control/DMA Verilog core with one CMD and four DAT lines,
+   plus CRC handling. An isolated generator run produced a 246 KB core and
+   CSR map.
+   Integration still needs a block-command bridge for the existing boot and
+   SCSI consumers, direct TQTT IO constraints, and the board's DAT1/DAT2
+   package pins. The generated core has not been integrated or tested here.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest
