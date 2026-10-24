@@ -55,22 +55,40 @@ HDMI audio is carried in data islands on the same three TMDS pairs as video;
 it consumes no expansion-header pins. `rtl/board/audio_hdmi_bridge.v` is only
 a formatter skeleton, and its outputs are currently disconnected from the
 video scanout. The native ASC sample stream is around 22 kHz, while an HDMI
-source should supply a supported audio rate such as 48 kHz. Bring up video
-first, then add a true HDMI packet scheduler with ACR and Audio InfoFrames,
-rate conversion or sample holding as appropriate, and verify the result via
-the attached capture card's USB audio device. The dual MIT/Apache-2.0
-`hdl-util/hdmi` project is a possible packetizer reference, but its Xilinx
-serializer uses Series 7 `OSERDESE2` and must be adapted for UltraScale+.
+source should supply a supported audio rate such as 48 kHz.
+
+The standalone HDMI probe uses the MIT-licensed `hdl-util/hdmi` packetizer
+and encoder with a local UltraScale+ `ODDRE1` serializer. Build its 640x480p60
+test pattern with `make BOARD=tqtt TQTT_HDMI_AUDIO=0
+fpga-tqtt-hdmi-probe-bitstream`; set `TQTT_HDMI_AUDIO=1` to send real HDMI
+packets with a quiet 48 kHz stereo 1 kHz test tone. The pixel clock is 25.2
+MHz and the serializer clock is 126 MHz. The connector's four differential
+pairs use `DIFF_SSTL12` on the board's 1.2 V bank. The video-only image routed
+with 0 DRC errors, setup slack +2.866 ns, and hold slack +0.026 ns. It was
+programmed over JTAG on 2026-10-24. The physical monitor displayed video,
+and the USB capture card showed all eight color bars cleanly at 640x480.
+The MJPEG server at `http://10.200.0.12:8080/` served fresh frames from this
+source. The capture card briefly failed USB format negotiation with `EBUSY`;
+rebinding its dedicated xHCI controller recovered the device.
+
+The audio-enabled image also routed with zero DRC errors and positive setup
+and hold slack (+3.161 ns and +0.042 ns). Its generated 48 kHz clock is
+explicitly constrained. A 2-second 48 kHz stereo recording from the capture
+card had sample values from -4096 to +4096 and rising edges every 48 samples,
+confirming the 1 kHz tone in both matching channels. The same capture path
+recorded all zeros with the video-only image. This test source does not yet
+carry Mac ASC sound. That integration needs rate
+conversion or sample holding and a clock-domain crossing into the HDMI
+packetizer. The attached capture card has a USB audio endpoint for validation.
 
 ## Remaining gates before the full SoC
 
-1. **HDMI:** adapt the existing pixel scanout to three TMDS encoders and
-   serializers. The connector's four pairs are on bank 65, which the board
-   pin notes identify as 1.2 V. The vendor example calls them `LVDS`, but
-   AMD UG571 specifies 1.8 V VCCO for LVDS output. Resolve the actual rail,
-   legal I/O standard, sink electrical margin, DDC, and HPD before loading
-   an HDMI image. Start with a 720p60 pattern and preserve the 74.25 MHz
-   pixel clock used by the current SoC.
+1. **HDMI:** verify the standalone pattern and tone on the capture card,
+   then adapt the existing 720p60 pixel scanout to the TMDS transmitter.
+   The connector's four pairs are on bank 65 at 1.2 V. The vendor example
+   calls them `LVDS`, but AMD UG571 specifies 1.8 V VCCO for LVDS output;
+   the probe instead uses legal `DIFF_SSTL12`. Electrical margin and DDC/HPD
+   behavior still need hardware validation.
 2. **Ethernet:** this board's RTL8211EG exposes GMII (8-bit), whereas the RK
    board's RTL8211F uses RGMII (4-bit). It needs a GMII PHY adapter and its
    own pin/timing constraints; changing only the pins would miswire data.
