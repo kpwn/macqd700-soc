@@ -200,6 +200,15 @@ Speedometer folder. JTAG `vhdd-status` reported the SD volume enabled at
 establishes a working full Mac boot and basic ADB input despite the remaining
 -0.304 ns core setup miss. A 100 MHz comparison build is underway; the
 200 MHz patched image remains the active board image.
+
+For the current 640x480 Mac mode, run the MJPEG server with
+`FPGA_VIDEO_WIDTH=1280 FPGA_VIDEO_HEIGHT=720 FPGA_VIDEO_FPS=60
+FPGA_VIDEO_CROP=auto FPGA_VIDEO_SRC_W=640 FPGA_VIDEO_SRC_H=480`. Capturing
+the 720p HDMI frame directly at 640x480 squeezes its centered 640x480 Mac
+window into a square. The full-resolution capture plus crop restores its
+4:3 shape in the web UI; the physical HDMI signal still carries the Mac
+window at native size within the 1280x720 raster. Change the crop dimensions
+if the Mac switches video mode.
 `tools/tqtt_full_status.tcl` reads all live VIO probes without reprogramming.
 
 Before loading the full image, check the TQTT +ADJ rail that supplies bank 67
