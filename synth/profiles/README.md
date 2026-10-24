@@ -31,3 +31,34 @@ Full debug means the supported CPU/IPC/storage diagnosis facilities; it does
 not enable PCIe XDMA or Ethernet traffic generators. Neither profile relaxes
 debug timing constraints, and neither programs or resets a board automatically.
 The profile name is a frequency target, not a claim of timing closure.
+
+## Validated P4 split-load image
+
+`p4-split-200mhz-validated.env` records the exact CPU options used for the
+P4-enabled 200 MHz image validated on 2026-10-24. It retains the SCSI trace
+ring and uses the `AltSpreadLogic_high` placement and `AggressiveExplore`
+route directives. The corresponding SoC RTL is commit `8284a403`; later SoC
+`main` commits only changed the `cpu040` submodule pointer. The CPU hardware
+is commit `00df756f`; later CPU `master` commits changed the replay harness
+and documentation, not RTL. The source pins on the branches are intended to
+make the successful image reproducible, although a fresh implementation must
+still pass its own timing report.
+
+In a clean shell with the pinned CPU submodule initialized, run:
+
+```sh
+set -a
+. synth/profiles/p4-split-200mhz-validated.env
+set +a
+make impl-split TARGET_FREQ_MHZ=200 DDR4_MIG_DCP=/path/to/design_1_ddr4_0_1.dcp
+```
+
+The validated route had setup WNS +0.031 ns and hold WHS +0.010 ns. Four board
+Benchmark Mix runs averaged 12.139 at 199.60-199.62 MHz and mean IPC
+0.563651. The matched P4-disabled image used the same SoC RTL and CPU
+environment, with only `CPU_LS_SPLIT_ONE_XLATE=0` and `CPU_LS_SPLIT_FWD=0`;
+it averaged 11.9085 and IPC 0.554358. The CPU repo's
+`docs/P4_200MHZ_VALIDATION_2026-10-23.md` records the full simulation, timing,
+benchmark, and Dhrystones tradeoff. The blank bitstream needs the local ADB
+firmware patch before loading on the board; that firmware is not in this
+repository.
