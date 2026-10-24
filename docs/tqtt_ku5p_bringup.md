@@ -270,6 +270,13 @@ the VIO RPM and duty probes without reprogramming. The full-speed baseline
 on 2026-10-24 was 32.4 °C. This is die temperature, not the fan's airflow or
 the hottest board component.
 
+The desired automatic-control target is a maximum FPGA die temperature of
+50 °C. The present controller is manual, so reaching that target requires
+hardware temperature sampling, a tested duty-control loop, and a fail-safe
+full-speed response if readings stop or the temperature exceeds the limit.
+Validate RPM and temperature across idle and sustained Mac workloads before
+calling the fan bring-up complete.
+
 Before loading the full image, check the TQTT +ADJ rail that supplies bank 67
 and the E18 oscillator input. The board reference warns that +ADJ should be
 1.71-1.89 V, while its power page specifies 1.9 V. The 50 MHz oscillator is
