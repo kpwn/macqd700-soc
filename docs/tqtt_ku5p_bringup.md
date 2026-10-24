@@ -146,8 +146,14 @@ enabled at 4,194,240 blocks, with no error or framebuffer fetch miss.
 The capture card recorded silence at the idle Finder desktop. The classic
 `Sound` control panel opened and showed its alert list, but injected mouse
 clicks did not visibly change the selected alert; recordings during these
-attempts were also silent. A confirmed Mac sound event is still needed to
-verify ASC playback through the full image.
+attempts were also silent. A controlled alert sound test remains needed.
+During a warm reset, the capture card recorded a roughly 0.29-second stereo
+burst beginning about 2.9 seconds after reset. Both channels contained
+nonzero samples (peak magnitude 32,512), unlike idle silence, so the Mac
+audio source reaches the HDMI capture path. The waveform had a large negative
+DC offset; audible chime quality and the ASC sample conversion still need
+checking. After reset, Mac OS returned to the improper-shutdown dialog and
+ADB Return dismissed it.
 
 Build the matching-clock control with
 `make TQTT_HDMI_INTEGRATION_PROBE_FABRIC=1 fpga-tqtt-hdmi-integration-probe-bitstream`. Add
