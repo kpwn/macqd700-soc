@@ -62,3 +62,12 @@ it averaged 11.9085 and IPC 0.554358. The CPU repo's
 benchmark, and Dhrystones tradeoff. The blank bitstream needs the local ADB
 firmware patch before loading on the board; that firmware is not in this
 repository.
+
+After the matched board runs, a read-only card check used the provisioning
+image's `sd-read` command on all 2048 ROM sectors and four 256-sector disk
+samples at LBAs 8192, 54784, 58112, and 1000000. Each batch passed the
+staging CRC check and a second independent SD read with no warnings or
+retries. The known-good main image was restored afterward. Logs and hashes
+are under `/var/tmp/codex-p4-storage-readcheck/`. This establishes stable
+reads for those regions; it does not assert that the mutable filesystem
+matches a host image or that every card sector was checked.
