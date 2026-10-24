@@ -81,6 +81,22 @@ carry Mac ASC sound. That integration needs rate
 conversion or sample holding and a clock-domain crossing into the HDMI
 packetizer. The attached capture card has a USB audio endpoint for validation.
 
+## DDR4 IP configuration
+
+The TQTT schematic and DDR4 example identify two `MT40A256M16GE-075E`
+devices, a 32-bit bus, 1 GiB total, and a 100 MHz reference clock. Generate
+the board-specific MIG with `make tqtt-ddr4-mig-validate` or synthesize its
+out-of-context DCP with `make tqtt-ddr4-mig`. These use
+`build/ddr4_mig_tqtt/` and `synth/tqtt_ddr4.xdc`; the RK MIG and pin map are
+separate. Vivado 2025.2 accepted the TQTT part, 100 MHz input, 256-bit AXI
+data bus, and 30-bit AXI address bus on 2026-10-24. The 31-bit RK AXI address
+setting is invalid for this 1 GiB memory geometry. MIG configuration alone
+does not establish hardware calibration or memory integrity; those require a
+standalone controller test on the board. The generated TQTT stub has 30-bit
+AXI address ports; the checked-in RK stub has 31-bit ports, so the TQTT shell
+must select its own stub when the full SoC is integrated. Out-of-context MIG
+synthesis completed with no errors and produced the TQTT DCP.
+
 ## Remaining gates before the full SoC
 
 1. **HDMI:** verify the standalone pattern and tone on the capture card,
@@ -92,8 +108,8 @@ packetizer. The attached capture card has a USB audio endpoint for validation.
 2. **Ethernet:** this board's RTL8211EG exposes GMII (8-bit), whereas the RK
    board's RTL8211F uses RGMII (4-bit). It needs a GMII PHY adapter and its
    own pin/timing constraints; changing only the pins would miswire data.
-3. **DDR4 and clocks:** generate a TQTT-specific MIG for its 32-bit DDR4
-   wiring and clock topology, prove calibration and AXI memory tests, then
+3. **DDR4 and clocks:** prove calibration and AXI memory tests with the
+   TQTT-specific MIG and pin map, then
    retime the SoC's core/peripheral/video domains. Do not reuse the RK MIG
    DCP or its XDC.
 4. **Full Mac:** select the TQTT shell with `BOARD=tqtt`, boot from the SD

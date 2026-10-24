@@ -3525,6 +3525,22 @@ ddr4-mig-validate:
 	  python3 $(DDR4_MIG_CACHE_TOOL) stamp --mode validate --dir "$(DDR4_MIG_DIR)" --generator "$(DDR4_MIG_GEN_TCL)"; \
 	fi
 
+.PHONY: tqtt-ddr4-mig-validate tqtt-ddr4-mig
+tqtt-ddr4-mig-validate:
+	@mkdir -p build/ddr4_mig_tqtt
+	@touch $(VIVADO_LOCK)
+	flock -n -E 75 $(VIVADO_LOCK) $(VIVADO) -mode batch -source $(SYNTH_DIR)/gen_tqtt_ddr4_mig.tcl -tclargs validate build/ddr4_mig_tqtt tqtt
+
+tqtt-ddr4-mig:
+	@mkdir -p build/ddr4_mig_tqtt
+	@if tclsh $(SYNTH_DIR)/gen_tqtt_ddr4_mig.tcl cache-check build/ddr4_mig_tqtt tqtt; then \
+	  :; \
+	else \
+	  status=$$?; if [ $$status -ne 2 ]; then exit $$status; fi; \
+	  touch $(VIVADO_LOCK); \
+	  flock -n -E 75 $(VIVADO_LOCK) $(VIVADO) -mode batch -source $(SYNTH_DIR)/gen_tqtt_ddr4_mig.tcl -tclargs synth build/ddr4_mig_tqtt tqtt; \
+	fi
+
 .PHONY: ddr4-mig-cache-status
 ddr4-mig-cache-status:
 	@mkdir -p $(DDR4_MIG_DIR)
