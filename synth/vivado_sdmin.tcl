@@ -17,6 +17,11 @@ set proj_root  [file normalize [file dirname [info script]]/..]
 set rtl_dir    $proj_root/rtl
 set synth_dir  $proj_root/synth
 set part       "xcku5p-ffvb676-2-i"
+set board      [expr {[info exists ::env(BOARD)] ? $::env(BOARD) : "rk"}]
+if {$board ni {rk tqtt}} {
+    error "BOARD must be rk or tqtt, got '$board'"
+}
+puts "=== SDMIN board: $board ==="
 
 set_param general.maxThreads 16
 file mkdir $output_dir
@@ -81,11 +86,19 @@ read_verilog $rtl_dir/soc/boot_fsm.v
 read_verilog $rtl_dir/board/sd_ctrl.v
 read_verilog $rtl_dir/board/sd_spi.v
 read_ip $ip_xci
-read_xdc $synth_dir/fpga_top_sdmin.xdc
+if {$board eq "tqtt"} {
+    read_xdc $synth_dir/tqtt_sdmin.xdc
+} else {
+    read_xdc $synth_dir/fpga_top_sdmin.xdc
+}
 
 puts "=== synth_design ==="
-synth_design -top fpga_top_sdmin -part $part \
-    -include_dirs [list $rtl_dir $rtl_dir/soc $rtl_dir/board]
+set synth_args [list -top fpga_top_sdmin -part $part \
+    -include_dirs [list $rtl_dir $rtl_dir/soc $rtl_dir/board]]
+if {$board eq "tqtt"} {
+    lappend synth_args -verilog_define TQTT_BOARD
+}
+synth_design {*}$synth_args
 
 write_checkpoint -force $output_dir/checkpoints/synth.dcp
 
@@ -103,6 +116,7 @@ write_debug_probes -force $output_dir/fpga_top_sdmin.ltx
 
 set buildinfo_fh [open $output_dir/fpga_top_sdmin.buildinfo w]
 puts $buildinfo_fh "part=$part"
+puts $buildinfo_fh "board=$board"
 puts $buildinfo_fh "top=fpga_top_sdmin"
 puts $buildinfo_fh "bitstream=fpga_top_sdmin.bit"
 puts $buildinfo_fh "debug_probes=fpga_top_sdmin.ltx"

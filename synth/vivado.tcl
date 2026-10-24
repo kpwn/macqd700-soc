@@ -58,6 +58,13 @@ if {$mode ne "synth_only" && $mode ne "full_impl" && $mode ne "place_only" && $m
 set proj_root  [file normalize [file dirname [info script]]/..]
 set rtl_dir    $proj_root/rtl
 set synth_dir  $proj_root/synth
+set board      [expr {[info exists ::env(BOARD)] ? $::env(BOARD) : "rk"}]
+if {$board ni {rk tqtt}} {
+    error "BOARD must be rk or tqtt, got '$board'"
+}
+if {$board eq "tqtt"} {
+    error "TQTT full-SoC shell is not yet qualified; use BOARD=tqtt make fpga-sdmin-bitstream for the first read-only peripheral gate"
+}
 
 # ADB PIC BRAM is deliberately blank during synthesis. Users insert their own
 # firmware after implementation; see docs/adb_firmware_bitstream.md.

@@ -3264,7 +3264,12 @@ ETH_DEBUG_ENABLE      ?= 0
 # actually want the slow core.
 CPU_IPC_PROFILE ?= throughput-v2
 CPU_DEBUG_PROFILE ?= full
+BOARD ?= rk
+ifneq ($(filter $(BOARD),rk tqtt),$(BOARD))
+$(error BOARD must be rk or tqtt, got '$(BOARD)')
+endif
 VIVADO_RUN_ENV := PCIE_TEST_DIR=$(PCIE_TEST_DIR) INCREMENTAL_REF_DCP=$(INCREMENTAL_REF_DCP) CPU_IPC_PROFILE=$(CPU_IPC_PROFILE) CPU_DEBUG_PROFILE=$(CPU_DEBUG_PROFILE)
+VIVADO_RUN_ENV += BOARD=$(BOARD)
 # CPU socket select for synth/impl — same CPU=stub|m68k knob as the
 # Verilator flow (see "CPU build select" above); consumed by vivado.tcl.
 VIVADO_RUN_ENV += CPU=$(CPU)
@@ -3731,11 +3736,19 @@ fpga-50mhz-jtag-bitstream-dram:
 # minutes. VIO probe_out0 bits (cfg_skip_cmd59, cfg_force_hs, soft-reset)
 # let ONE flashed bitstream test multiple init-sequence hypotheses
 # without a resynth between experiments — see boot_fsm.v's port comment.
-SDMIN_BUILD_DIR ?= $(BUILD_DIR)/vivado_sdmin
+SDMIN_BUILD_DIR ?= $(BUILD_DIR)/vivado_sdmin$(if $(filter tqtt,$(BOARD)),_tqtt,)
 fpga-sdmin-bitstream:
 	@mkdir -p $(SDMIN_BUILD_DIR)
 	@touch $(VIVADO_LOCK)
-	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_sdmin.tcl -tclargs $(SDMIN_BUILD_DIR)' \
+	flock -n -E 75 $(VIVADO_LOCK) -c 'BOARD=$(BOARD) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_sdmin.tcl -tclargs $(SDMIN_BUILD_DIR)' \
+	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
+
+.PHONY: fpga-tqtt-eth-probe-bitstream
+TQTT_ETH_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_eth_probe
+fpga-tqtt-eth-probe-bitstream:
+	@mkdir -p $(TQTT_ETH_PROBE_BUILD_DIR)
+	@touch $(VIVADO_LOCK)
+	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_eth_probe.tcl -tclargs $(TQTT_ETH_PROBE_BUILD_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
 .PHONY: fpga-100mhz-jtag-bitstream

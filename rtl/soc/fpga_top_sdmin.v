@@ -26,15 +26,25 @@
 module fpga_top_sdmin (
     input  wire        sys_clk_p,
     input  wire        sys_clk_n,
+`ifndef TQTT_BOARD
     input  wire        cpu_resetn,
+`endif
 
     output wire        sd_clk,
     output wire        sd_mosi,
     input  wire        sd_miso,
-    output wire        sd_cs_n,
-
-    output wire [3:0]  led
+    output wire        sd_cs_n
+`ifndef TQTT_BOARD
+    , output wire [3:0] led
+`endif
 );
+
+`ifdef TQTT_BOARD
+    // TQTT's reset and LED banks use an adjustable rail whose measured
+    // voltage is not yet qualified.  Keep those pads out of the first SD
+    // bitstream; POR and the VIO soft reset still restart this harness.
+    wire cpu_resetn = 1'b1;
+`endif
 
     // ═══════════════════════════════════════════════════════════════
     // Clock
@@ -183,9 +193,17 @@ module fpga_top_sdmin (
     );
 
     sd_spi #(
+`ifdef TQTT_BOARD
+        // TQTT USER1_CLK is 100 MHz.  Keep init near 400 kHz and cap
+        // fast/HS SPI at 25 MHz, matching the proven RK wire rate.
+        .SLOW_HALF (125),
+        .FAST_HALF (2),
+        .HS_HALF   (2)
+`else
         .SLOW_HALF (250),
         .FAST_HALF (4),
         .HS_HALF   (2)
+`endif
     ) u_spi (
         .clk(core_clk), .rst(rst),
         .fast_mode(bf_fast_mode), .hs_mode(bf_hs_mode),
@@ -317,11 +335,13 @@ module fpga_top_sdmin (
     // LEDs — quick visual sanity without JTAG (led[0]=heartbeat,
     // led[1]=rom_loaded, led[2]=boot_error, led[3]=sd_crc_enabled)
     // ═══════════════════════════════════════════════════════════════
+`ifndef TQTT_BOARD
     reg [23:0] heartbeat = 24'd0;
     always @(posedge core_clk) heartbeat <= heartbeat + 24'd1;
     assign led[0] = heartbeat[23];
     assign led[1] = rom_loaded;
     assign led[2] = boot_error;
     assign led[3] = sd_crc_enabled;
+`endif
 
 endmodule
