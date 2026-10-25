@@ -156,7 +156,10 @@ csr 0x2804 256
 csr 0x2808 1
 after 5
 cmd 0 0 0
-cmd 8 0x1aa 1
+set ifcond [cmd 8 0x1aa 1]
+if {($ifcond & 0xfff) != 0x1aa} {
+    error [format "CMD8 voltage/check pattern mismatch: 0x%08x" $ifcond]
+}
 csr 0x2804 4 ;# 100 MHz / 4 = 25 MHz
 set ready 0
 for {set attempt 0} {$attempt < 1000} {incr attempt} {
@@ -167,10 +170,24 @@ for {set attempt 0} {$attempt < 1000} {incr attempt} {
 }
 if {!$ready} {error "ACMD41 card never became ready"}
 puts [format "OCR=0x%08x" $ocr]
+if {!($ocr & 0x40000000)} {
+    error "card lacks block addressing (CCS=0); probe LBA arguments require SDHC/SDXC"
+}
 cmd 2 0 2
+set cid [list]
+foreach offset {0x100c 0x1010 0x1014 0x1018} {
+    lappend cid [format %08x [csr $offset]]
+}
+puts "CID(raw)=[join $cid :]"
 set rca_response [cmd 3 0 1]
 set rca [expr {$rca_response & 0xffff0000}]
 puts [format "RCA=0x%08x" $rca]
+cmd 9 $rca 2
+set csd [list]
+foreach offset {0x100c 0x1010 0x1014 0x1018} {
+    lappend csd [format %08x [csr $offset]]
+}
+puts "CSD(raw)=[join $csd :]"
 cmd 7 $rca 3
 cmd 55 $rca 1
 cmd 6 2 1 ;# ACMD6, four data wires
