@@ -19,6 +19,7 @@ static std::vector<uint8_t> read_bytes;
 static std::vector<int> commands;
 static bool failed = false;
 static int cycles = 0;
+static int stall_after_bytes = -1;
 
 static uint32_t pattern_word(int index) {
     uint32_t b = uint32_t(index * 4);
@@ -37,9 +38,12 @@ static void tick() {
     dut.wb_dma_adr = dma_index;
     dut.wb_dma_dat_w = pattern_word(dma_index);
     dut.wb_dma_sel = 15;
-    dut.wr_avail = write_test && source_pos < block_count * 512;
+    dut.wr_avail = write_test && source_pos < block_count * 512 &&
+                   (stall_after_bytes < 0 || source_pos < stall_after_bytes);
     dut.wr_data = uint8_t(source_pos);
-    dut.rd_ready = !write_test && (cycles % 19) < 13;
+    dut.rd_ready = !write_test && (cycles % 19) < 13 &&
+                   (stall_after_bytes < 0 ||
+                    int(read_bytes.size()) < stall_after_bytes);
     dut.eval();
     bool take_csr = !dut.rst && dut.wb_ctrl_cyc && dut.wb_ctrl_stb && !dut.wb_ctrl_ack;
     bool take_write_byte = dut.wr_ready;
@@ -108,7 +112,7 @@ static void tick() {
     ++cycles;
 }
 
-static bool run(bool write, int blocks) {
+static bool run(bool write, int blocks, bool expect_stall = false) {
     csr_ack_pending = false;
     csr_data_pending = 0;
     command_word = 0;
@@ -123,6 +127,7 @@ static bool run(bool write, int blocks) {
     commands.clear();
     failed = false;
     cycles = 0;
+    stall_after_bytes = expect_stall ? 5 : -1;
     dut.rst = 1;
     dut.go = 0;
     dut.cmd_type = write ? (blocks > 1 ? 4 : 3) : (blocks > 1 ? 2 : 1);
@@ -135,6 +140,20 @@ static bool run(bool write, int blocks) {
     tick();
     dut.go = 0;
     for (int i = 0; i < 200000 && !dut.done && !failed; ++i) tick();
+    if (expect_stall) {
+        if (!dut.done || !dut.error || failed || dut.card_session_active ||
+            (write && !commands.empty()) ||
+            (!write && (commands != std::vector<int>{17} ||
+                        read_bytes.size() != 5))) {
+            std::fprintf(stderr,
+                         "stalled transfer failed to abort: write=%d done=%d error=%d card_active=%d commands=%zu bytes=%zu cycles=%d\n",
+                         write, int(dut.done), int(dut.error),
+                         int(dut.card_session_active), commands.size(),
+                         read_bytes.size(), cycles);
+            return false;
+        }
+        return true;
+    }
     if (!dut.done || dut.error || failed || dut.debug_dma_words != blocks * 128 ||
         dma_index != blocks * 128 || block_count != blocks) {
         std::fprintf(stderr, "block transfer failed: write=%d blocks=%d done=%d error=%d dma=%d/%d debug=%d cycles=%d\n",
@@ -173,7 +192,8 @@ static bool run(bool write, int blocks) {
 int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     if (!run(false, 1) || !run(true, 1) ||
-        !run(false, 32) || !run(true, 32)) return 1;
-    std::puts("PASS native SD block engine: 1/32-sector read/write, DMA RAM, ordered bytes, CMD12");
+        !run(false, 32) || !run(true, 32) ||
+        !run(true, 1, true) || !run(false, 1, true)) return 1;
+    std::puts("PASS native SD block engine: 1/32-sector read/write, DMA RAM, ordered bytes, CMD12, stalled-stream aborts");
     return 0;
 }

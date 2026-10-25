@@ -218,7 +218,10 @@ an isolated write-path reproduction and HFS consistency check.
    requests longer than the backend's 32-sector RAM window into consecutive
    commands while keeping one SCSI completion. Its test covers 65-sector
    reads and writes, a later-chunk failure, and invalid requests
-   (`make tb-sd-native-chunker`). An experimental full-SoC TQTT source
+   (`make tb-sd-native-chunker`). The block engine also bounds idle time while
+   filling its write RAM or draining a completed read, so an interrupted
+   producer or consumer reports an error instead of holding SCSI busy forever
+   (`make tb-sd-native-block`). An experimental full-SoC TQTT source
    variant now selects native pins and connects the backend through boot
    and SCSI FIFO CDCs with `TQTT_NATIVE_SD=1`. It still needs Vivado
    elaboration, hardware read/write integrity tests, and 200 MHz timing.
