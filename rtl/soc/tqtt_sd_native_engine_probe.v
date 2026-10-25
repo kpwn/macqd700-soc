@@ -19,32 +19,6 @@ module tqtt_sd_native_engine_probe (
     wire init_ready, init_error;
     wire [31:0] card_num_lbas, rca;
     wire [4:0] init_phase;
-    wire [3:0] init_cmd_event;
-    wire init_cmd_timeout;
-
-    wire [29:0] init_wb_adr, block_wb_adr;
-    wire [1:0] init_wb_bte, block_wb_bte;
-    wire [2:0] init_wb_cti, block_wb_cti;
-    wire init_wb_cyc, block_wb_cyc;
-    wire [31:0] init_wb_dat_w, block_wb_dat_w;
-    wire init_wb_stb, block_wb_stb;
-    wire [3:0] init_wb_sel, block_wb_sel;
-    wire init_wb_we, block_wb_we;
-    wire [31:0] wb_dat_r;
-    wire wb_ack, wb_err;
-
-    sd_native_init_controller u_init (
-        .clk(clk), .rst(rst), .ready(init_ready), .error(init_error),
-        .card_num_lbas(card_num_lbas), .rca(rca),
-        .debug_phase(init_phase), .debug_cmd_event(init_cmd_event),
-        .debug_cmd_timeout(init_cmd_timeout),
-        .wb_adr(init_wb_adr), .wb_bte(init_wb_bte),
-        .wb_cti(init_wb_cti), .wb_cyc(init_wb_cyc),
-        .wb_dat_r(wb_dat_r), .wb_dat_w(init_wb_dat_w),
-        .wb_ack(wb_ack), .wb_err(wb_err),
-        .wb_sel(init_wb_sel), .wb_stb(init_wb_stb), .wb_we(init_wb_we)
-    );
-
     reg [31:0] lba_q;
     reg [5:0] count_q;
     reg request_seen;
@@ -54,56 +28,17 @@ module tqtt_sd_native_engine_probe (
     wire [7:0] block_rd_data;
     wire [15:0] block_dma_words;
     wire [3:0] block_cmd_event;
-    wire dma_ack, dma_err;
-    wire [29:0] dma_adr;
-    wire dma_cyc, dma_stb, dma_we;
-    wire [31:0] dma_dat_r, dma_dat_w;
-    wire [3:0] dma_sel;
-
-    sd_native_block_engine u_block (
-        .clk(clk), .rst(rst || !init_ready),
+    sd_native_backend u_backend (
+        .clk(clk), .rst(rst), .ready(init_ready), .init_error(init_error),
+        .card_num_lbas(card_num_lbas), .rca(rca), .init_phase(init_phase),
         .cmd_type(count_q == 1 ? 3'd1 : 3'd2),
         .lba(lba_q), .block_count({10'b0, count_q}), .go(block_go),
         .busy(block_busy), .done(block_done), .error(block_error),
         .rd_valid(block_rd_valid), .rd_data(block_rd_data),
         .rd_ready(1'b1), .wr_ready(), .wr_data(8'b0), .wr_avail(1'b0),
-        .debug_dma_words(block_dma_words), .debug_cmd_event(block_cmd_event),
-        .wb_ctrl_adr(block_wb_adr), .wb_ctrl_bte(block_wb_bte),
-        .wb_ctrl_cti(block_wb_cti), .wb_ctrl_cyc(block_wb_cyc),
-        .wb_ctrl_dat_r(wb_dat_r), .wb_ctrl_dat_w(block_wb_dat_w),
-        .wb_ctrl_ack(wb_ack), .wb_ctrl_err(wb_err),
-        .wb_ctrl_sel(block_wb_sel), .wb_ctrl_stb(block_wb_stb),
-        .wb_ctrl_we(block_wb_we),
-        .wb_dma_ack(dma_ack), .wb_dma_adr(dma_adr),
-        .wb_dma_cyc(dma_cyc), .wb_dma_dat_r(dma_dat_r),
-        .wb_dma_dat_w(dma_dat_w), .wb_dma_err(dma_err),
-        .wb_dma_sel(dma_sel), .wb_dma_stb(dma_stb), .wb_dma_we(dma_we)
-    );
-
-    wire [29:0] wb_adr = init_ready ? block_wb_adr : init_wb_adr;
-    wire [1:0] wb_bte = init_ready ? block_wb_bte : init_wb_bte;
-    wire [2:0] wb_cti = init_ready ? block_wb_cti : init_wb_cti;
-    wire wb_cyc = init_ready ? block_wb_cyc : init_wb_cyc;
-    wire [31:0] wb_dat_w = init_ready ? block_wb_dat_w : init_wb_dat_w;
-    wire [3:0] wb_sel = init_ready ? block_wb_sel : init_wb_sel;
-    wire wb_stb = init_ready ? block_wb_stb : init_wb_stb;
-    wire wb_we = init_ready ? block_wb_we : init_wb_we;
-    wire irq, sd_cmd_dir, sd_dat0_dir, sd_dat13_dir;
-    litesdcard_core u_sd (
-        .clk(clk), .rst(rst), .irq(irq), .sdcard_cd(1'b0),
-        .sdcard_clk(sd_clk), .sdcard_cmd(sd_cmd),
-        .sdcard_cmd_dir(sd_cmd_dir), .sdcard_dat0_dir(sd_dat0_dir),
-        .sdcard_dat13_dir(sd_dat13_dir), .sdcard_data(sd_dat),
-        .wb_ctrl_ack(wb_ack), .wb_ctrl_adr(wb_adr),
-        .wb_ctrl_bte(wb_bte), .wb_ctrl_cti(wb_cti),
-        .wb_ctrl_cyc(wb_cyc), .wb_ctrl_dat_r(wb_dat_r),
-        .wb_ctrl_dat_w(wb_dat_w), .wb_ctrl_err(wb_err),
-        .wb_ctrl_sel(wb_sel), .wb_ctrl_stb(wb_stb), .wb_ctrl_we(wb_we),
-        .wb_dma_ack(dma_ack), .wb_dma_adr(dma_adr),
-        .wb_dma_bte(), .wb_dma_cti(), .wb_dma_cyc(dma_cyc),
-        .wb_dma_dat_r(dma_dat_r), .wb_dma_dat_w(dma_dat_w),
-        .wb_dma_err(dma_err), .wb_dma_sel(dma_sel),
-        .wb_dma_stb(dma_stb), .wb_dma_we(dma_we)
+        .debug_dma_words(block_dma_words),
+        .debug_cmd_event(block_cmd_event),
+        .sd_clk(sd_clk), .sd_cmd(sd_cmd), .sd_dat(sd_dat)
     );
 
     function [31:0] crc32_byte;
