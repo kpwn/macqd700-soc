@@ -86,6 +86,7 @@ while {1} {
     after 20
 }
 set capacity [dict get $snap capacity]
+set card_rca [dict get $snap rca]
 if {$lba + $blocks > $capacity} {
     error [format "request LBA %u + %u exceeds card capacity %u" $lba $blocks $capacity]
 }
@@ -112,6 +113,9 @@ commit_hw_vio [list $p_lba $p_ctrl]
 set_property OUTPUT_VALUE [format %08x [expr {$blocks | $request_toggle}]] $p_ctrl
 commit_hw_vio [list $p_ctrl]
 
+if {[info exists ::env(NATIVE_SD_SETTLE_MS)]} {
+    after $::env(NATIVE_SD_SETTLE_MS)
+}
 set deadline [expr {[clock milliseconds] + 10000}]
 while {1} {
     set snap [sample]
@@ -133,9 +137,30 @@ while {1} {
     set snap $again
 }
 set status [dict get $snap status]
+set coherent 0
+for {set attempt 0} {$attempt < 20} {incr attempt} {
+    if {[dict get $snap capacity] == $capacity &&
+        [dict get $snap rca] == $card_rca &&
+        (($status >> 5) & 31) == 14 &&
+        (($status >> 3) & 1) == 1 &&
+        (($status >> 10) & 1) == $high_speed} {
+        set coherent 1
+        break
+    }
+    after 50
+    set snap [sample]
+    set status [dict get $snap status]
+}
+if {!$coherent} {
+    error [format "native SD VIO readback incoherent after %d retries: status=0x%08x capacity=%u rca=0x%08x" \
+        $attempt $status [dict get $snap capacity] [dict get $snap rca]]
+}
 puts [format "NATIVE_SD_POST status=0x%08x crc=0x%08x cycles=%u capacity=%u rca=0x%08x" \
     $status [dict get $snap crc] [dict get $snap cycles] \
     [dict get $snap capacity] [dict get $snap rca]]
+puts [format "NATIVE_SD_STAGE failure_state=%u command_done=%u dma_words_nonzero=%u" \
+    [expr {($status >> 11) & 15}] [expr {($status >> 15) & 1}] \
+    [expr {($status >> 16) & 1}]]
 set received [expr {$status >> 17}]
 if {$status & 2} {error [format "native SD block error: status=0x%08x" $status]}
 if {$received != $blocks * 512} {

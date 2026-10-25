@@ -28,6 +28,7 @@ module tqtt_sd_native_engine_probe (
     wire [7:0] block_rd_data;
     wire [15:0] block_dma_words;
     wire [3:0] block_cmd_event;
+    wire [3:0] block_failure_state;
 `ifdef TQTT_NATIVE_SD_HS
     localparam integer HIGH_SPEED = 1;
 `else
@@ -45,6 +46,7 @@ module tqtt_sd_native_engine_probe (
         .rd_ready(1'b1), .wr_ready(), .wr_data(8'b0), .wr_avail(1'b0),
         .debug_dma_words(block_dma_words),
         .debug_cmd_event(block_cmd_event),
+        .debug_failure_state(block_failure_state),
         .sd_clk(sd_clk), .sd_cmd(sd_cmd), .sd_dat(sd_dat)
     );
 
@@ -109,9 +111,12 @@ module tqtt_sd_native_engine_probe (
             end
         end
     end
-    // Bit 10 reports a confirmed CMD6 High Speed switch; all earlier status
-    // fields retain their positions for the existing read script.
-    wire [31:0] status = {byte_count, 6'b0, high_speed_active, init_phase, init_error,
+    // Bit 10 reports a confirmed CMD6 High Speed switch. Bits 14:11 hold
+    // the block engine's failure state; 15 reports command completion and
+    // 16 reports whether any DMA word arrived. Earlier fields keep their
+    // positions for the read script.
+    wire [31:0] status = {byte_count, (block_dma_words != 0), block_cmd_event[0],
+                          block_failure_state, high_speed_active, init_phase, init_error,
                           init_ready, block_busy, last_error, done_toggle};
     native_sd_vio u_vio (
         .clk(clk),

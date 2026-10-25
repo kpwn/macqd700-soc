@@ -19,6 +19,8 @@ static std::vector<uint8_t> read_bytes;
 static std::vector<int> commands;
 static bool failed = false;
 static int cycles = 0;
+static int last_dma_cycle = -1;
+static int cmd12_cycle = -1;
 static int stall_after_bytes = -1;
 static bool inject_data_event_error = false;
 
@@ -70,6 +72,7 @@ static void tick() {
             if (csr_addr == 0x1008) {
                 int cmd = (command_word >> 8) & 63;
                 commands.push_back(cmd);
+                if (cmd == 12) cmd12_cycle = cycles;
                 if (cmd == 17 || cmd == 18 || cmd == 24 || cmd == 25) {
                     int expected_data_type = write_test ? 2 : 1;
                     if (((command_word >> 5) & 3) != expected_data_type ||
@@ -111,6 +114,7 @@ static void tick() {
             failed = true;
         }
         ++dma_index;
+        if (dma_index == transfer_words) last_dma_cycle = cycles;
     }
     csr_ack_pending = take_csr;
     csr_data_pending = next_csr_data;
@@ -133,6 +137,8 @@ static bool run(bool write, int blocks, bool expect_stall = false,
     commands.clear();
     failed = false;
     cycles = 0;
+    last_dma_cycle = -1;
+    cmd12_cycle = -1;
     stall_after_bytes = expect_stall ? 5 : -1;
     inject_data_event_error = inject_error;
     dut.rst = 1;
@@ -187,6 +193,12 @@ static bool run(bool write, int blocks, bool expect_stall = false,
         std::vector<int>{write ? 24 : 17};
     if (commands != expected_commands || command_arg != (blocks > 1 ? 0u : 8192u)) {
         std::fputs("card command sequence mismatch\n", stderr);
+        return false;
+    }
+    if (blocks > 1 && (last_dma_cycle < 0 ||
+        cmd12_cycle - last_dma_cycle < 4096)) {
+        std::fprintf(stderr, "CMD12 gap too short: dma_cycle=%d cmd12_cycle=%d\n",
+                     last_dma_cycle, cmd12_cycle);
         return false;
     }
     if (write) {

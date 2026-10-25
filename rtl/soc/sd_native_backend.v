@@ -31,6 +31,7 @@ module sd_native_backend #(
     input  wire        wr_avail,
     output wire [15:0] debug_dma_words,
     output wire [3:0]  debug_cmd_event,
+    output wire [3:0]  debug_failure_state,
     output wire        sd_clk,
     inout  wire        sd_cmd,
     inout  wire [3:0]  sd_dat
@@ -90,6 +91,7 @@ module sd_native_backend #(
         .wr_ready(wr_ready), .wr_data(wr_data), .wr_avail(wr_avail),
         .debug_dma_words(debug_dma_words),
         .debug_cmd_event(debug_cmd_event),
+        .debug_failure_state(debug_failure_state),
         .wb_ctrl_adr(block_wb_adr), .wb_ctrl_bte(block_wb_bte),
         .wb_ctrl_cti(block_wb_cti), .wb_ctrl_cyc(block_wb_cyc),
         .wb_ctrl_dat_r(wb_dat_r), .wb_ctrl_dat_w(block_wb_dat_w),

@@ -7,7 +7,8 @@
 module sd_native_block_engine #(
     parameter integer POLL_TIMEOUT_CYCLES = 100000000,
     parameter integer EVENT_TIMEOUT_CYCLES = 100000000,
-    parameter integer CSR_TIMEOUT_CYCLES = 1024
+    parameter integer CSR_TIMEOUT_CYCLES = 1024,
+    parameter integer STOP_GAP_CYCLES = 4096
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -30,6 +31,7 @@ module sd_native_block_engine #(
     input  wire        wr_avail,
     output reg  [15:0] debug_dma_words,
     output wire [3:0]  debug_cmd_event,
+    output reg  [3:0]  debug_failure_state,
 
     output wire [29:0] wb_ctrl_adr,
     output wire [1:0]  wb_ctrl_bte,
@@ -66,7 +68,8 @@ module sd_native_block_engine #(
         S_DMA_WAIT  = 4'd9,
         S_STOP      = 4'd10,
         S_STOP_WAIT = 4'd11,
-        S_STREAM    = 4'd12;
+        S_STREAM    = 4'd12,
+        S_STOP_GAP  = 4'd13;
     localparam integer POLL_W = $clog2(POLL_TIMEOUT_CYCLES + 1);
     localparam [POLL_W-1:0] POLL_LAST = POLL_TIMEOUT_CYCLES - 1;
     reg [3:0] state;
@@ -77,6 +80,8 @@ module sd_native_block_engine #(
     reg [14:0] byte_index;
     reg [31:0] write_accum;
     reg [POLL_W-1:0] poll_timer;
+    localparam integer STOP_W = $clog2(STOP_GAP_CYCLES + 1);
+    reg [STOP_W-1:0] stop_gap_count;
     reg transfer_failed;
     wire writing = cmd_type_q == 3'd3 || cmd_type_q == 3'd4;
     wire multi = cmd_type_q == 3'd2 || cmd_type_q == 3'd4;
@@ -85,7 +90,8 @@ module sd_native_block_engine #(
     assign card_session_active = state == S_CMD || state == S_CMD_WAIT ||
                                  state == S_DATA || state == S_DATA_WAIT ||
                                  state == S_DMA || state == S_DMA_WAIT ||
-                                 state == S_STOP || state == S_STOP_WAIT;
+                                 state == S_STOP_GAP || state == S_STOP ||
+                                 state == S_STOP_WAIT;
     assign wr_ready = state == S_FILL && wr_avail;
     assign rd_valid = state == S_STREAM && rd_ready && byte_index < total_bytes;
 
@@ -258,7 +264,9 @@ module sd_native_block_engine #(
             cfg_step <= 0;
             byte_index <= 0;
             poll_timer <= 0;
+            stop_gap_count <= 0;
             transfer_failed <= 0;
+            debug_failure_state <= 0;
             done <= 0;
             error <= 0;
         end else begin
@@ -267,6 +275,7 @@ module sd_native_block_engine #(
                  (state == S_FILL && !wr_ready) ||
                  (state == S_STREAM && !rd_valid)) &&
                 poll_timer == POLL_LAST) begin
+                debug_failure_state <= state;
                 if (multi && (state == S_DATA || state == S_DMA)) begin
                     // A multi-block command may still own the card. Try a
                     // bounded CMD12 before reporting the transfer error.
@@ -300,6 +309,7 @@ module sd_native_block_engine #(
                             cfg_step <= 0;
                             poll_timer <= 0;
                             transfer_failed <= 0;
+                            debug_failure_state <= 0;
                             state <= cmd_type >= 3'd3 ? S_FILL : S_CFG;
                         end
                     end
@@ -316,6 +326,7 @@ module sd_native_block_engine #(
                     S_CFG: if (direct_csr_ready) state <= S_CFG_WAIT;
                     S_CFG_WAIT: if (direct_csr_rsp_valid) begin
                         if (direct_csr_rsp_error) begin
+                            debug_failure_state <= state;
                             state <= S_IDLE; done <= 1; error <= 1;
                         end else if (cfg_step == 6) state <= S_CMD;
                         else begin
@@ -326,6 +337,7 @@ module sd_native_block_engine #(
                     S_CMD: if (!command_busy) state <= S_CMD_WAIT;
                     S_CMD_WAIT: if (command_done) begin
                         if (command_error) begin
+                            debug_failure_state <= state;
                             if (multi) begin
                                 transfer_failed <= 1;
                                 state <= S_STOP;
@@ -340,6 +352,7 @@ module sd_native_block_engine #(
                     S_DATA: if (direct_csr_ready) state <= S_DATA_WAIT;
                     S_DATA_WAIT: if (direct_csr_rsp_valid) begin
                         if (direct_csr_rsp_error || direct_csr_rsp_rdata[3:1] != 0) begin
+                            debug_failure_state <= state;
                             if (multi) begin
                                 transfer_failed <= 1;
                                 state <= S_STOP;
@@ -354,6 +367,7 @@ module sd_native_block_engine #(
                     S_DMA: if (direct_csr_ready) state <= S_DMA_WAIT;
                     S_DMA_WAIT: if (direct_csr_rsp_valid) begin
                         if (direct_csr_rsp_error) begin
+                            debug_failure_state <= state;
                             if (multi) begin
                                 transfer_failed <= 1;
                                 state <= S_STOP;
@@ -361,15 +375,22 @@ module sd_native_block_engine #(
                                 state <= S_IDLE; done <= 1; error <= 1;
                             end
                         end else if (direct_csr_rsp_rdata[0]) begin
-                            state <= multi ? S_STOP : writing ? S_IDLE : S_STREAM;
+                            state <= multi ? S_STOP_GAP : writing ? S_IDLE : S_STREAM;
+                            if (multi) stop_gap_count <= STOP_GAP_CYCLES - 1;
                             if (!multi && writing) done <= 1;
                             byte_index <= 0;
                             poll_timer <= 0;
                         end else state <= S_DMA;
                     end
+                    S_STOP_GAP: begin
+                        if (stop_gap_count == 0) state <= S_STOP;
+                        else stop_gap_count <= stop_gap_count - 1'b1;
+                    end
                     S_STOP: if (!command_busy) state <= S_STOP_WAIT;
                     S_STOP_WAIT: if (command_done) begin
                         if (command_error || transfer_failed) begin
+                            if (command_error && !transfer_failed)
+                                debug_failure_state <= state;
                             state <= S_IDLE; done <= 1; error <= 1;
                         end else if (writing) begin
                             state <= S_IDLE; done <= 1;
@@ -392,8 +413,8 @@ module sd_native_block_engine #(
         end
     end
 `ifndef SYNTHESIS
-    initial if (POLL_TIMEOUT_CYCLES < 1)
-        $error("sd_native_block_engine POLL_TIMEOUT_CYCLES must be positive");
+    initial if (POLL_TIMEOUT_CYCLES < 1 || STOP_GAP_CYCLES < 1)
+        $error("sd_native_block_engine timing parameters must be positive");
 `endif
 endmodule
 `default_nettype wire

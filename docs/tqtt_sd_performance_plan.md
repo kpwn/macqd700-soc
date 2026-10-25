@@ -12,9 +12,12 @@ The board schematic (page 4, J8) wires CLK, CMD, and DAT0-DAT3 to FPGA bank
 SD pins are CLK AE15, CMD AD15, DAT0 AF13, DAT1 AE13, DAT2 AF15, and
 DAT3 AF14; J8 has 4.7 kOhm pull-ups on CMD and every data line.
 four-bit SD High Speed at 50 MHz has a 25 MB/s raw bus ceiling; actual card
-throughput will be lower. UHS-I signaling requires a 1.8 V I/O switch that
-this board does not provide. UHS-II's additional contacts and SD Express's
-PCIe interface are absent. Do not claim those modes from the card label.
+throughput will be lower. Standards-compliant UHS-I signaling requires a
+1.8 V I/O switch that this board does not provide. A 100 MHz clock at 3.3 V
+is a possible experimental overclock, not a negotiated UHS mode. It requires
+a faster FPGA SD clock domain and read-only CRC testing across this card
+before any write test. UHS-II's additional contacts and SD Express's PCIe
+interface are absent. Do not claim those modes from the card label.
 
 ## Current implementation and measured problem
 
@@ -388,13 +391,30 @@ The automatic initializer previously raised the clock to 25 MHz before
 ACMD41 was ready. It now stays at 390 kHz until the card is ready and inserts
 a 4096-cycle gap between commands. With this change, the automatic block
 engine reads one sector at 25 MHz with CRC32 `0x1df5ba99`, matching the
-manual probe. Automatic two- and 32-sector requests still fail, while the
-manual 32-sector path succeeds. VIO samples after those requests are
-incoherent (`status=0x00000747`, zero capacity, shifted RCA), so their error
-location is not established. Do not load the full native Mac image or write
-the card until the automatic multi-block path and integrity matrix pass.
+manual probe. The first automatic multi-block attempts reached DMA, then
+timed out on CMD12. A 4096-cycle pause between DMA completion and CMD12
+fixed this: automatic 32-sector reads at both 25 and 50 MHz return CRC32
+`0x3f0eb0b8` for LBA 0 and `0x9ff83835` for LBA 8192. At LBA 8192, the
+50 MHz automatic read took 158,317 system cycles for 16 KiB, or 10.35 MB/s;
+two 25 MHz runs took 199,113 and 187,969 cycles, or 8.23 and 8.72 MB/s.
+LBA 0 was much slower at both speeds, around 2.2-2.3 MB/s. These are
+end-to-end block-engine measurements and show card/location latency is
+material. Logs are under `/var/tmp/tqtt_sd_stopgap_*.log`.
+
+Some JTAG VIO samples are incoherent even after successful card reads: the
+reported capacity becomes zero and RCA/CRC fields shift into adjacent probe
+values. The read script now checks fixed capacity, RCA, init phase, and
+negotiated speed before accepting a result. The 50 MHz automatic read-only
+matrix passed twice at LBA 0, 8192, 90000, 95410, 250000, 500000,
+1000000, and 2000000 (32 sectors each, plus one sector at LBA 0); CRCs
+matched on every repeat. Results are in
+`/var/tmp/tqtt_sd_stopgap_matrix50/summary.tsv`. The 32-sector results range
+from 1.97 to 11.18 MB/s depending on LBA and run. Those variations need
+investigation before calling the card's performance stable. Write/readback
+and full-Mac tests remain. Do not write the card or load the full native Mac
+image until those gates pass.
 
 The manual probe's cycle counter includes JTAG-driven command and polling
 delays; its 3.18 MiB/s figure at 50 MHz is not a sustained card bandwidth
-measurement. Measure throughput using the automatic engine after it is
-repaired.
+measurement. Use the automatic engine's cycle counter for raw block-path
+throughput and Mac benchmarks for user-visible throughput.
