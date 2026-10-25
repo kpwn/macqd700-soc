@@ -978,9 +978,10 @@ proc gen_debug_vio_ip {output_dir part} {
     set ip_dir $output_dir/ip
     set ip_xci $ip_dir/debug_vio/debug_vio.xci
     set ip_dcp $ip_dir/debug_vio/debug_vio.dcp
-    # Compact map v31 adds native-SD negotiated High Speed readback.
+    # Native-SD builds append write-flow diagnosis above the 84-bit C96 state.
     # all probe widths and the disabled activity-detector setting.
     set widths {32 6 10 8 16 32 32 32 32 68 188 48 96 160 84 32}
+    if {$::tqtt_native_sd} { lset widths 14 116 }
     if {$::board eq "tqtt"} { lappend widths 16 20 }
     set config [list CONFIG.C_NUM_PROBE_IN [llength $widths] \
         CONFIG.C_NUM_PROBE_OUT 2 CONFIG.C_PROBE_OUT0_WIDTH 5 \

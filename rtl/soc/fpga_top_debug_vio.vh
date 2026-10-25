@@ -384,7 +384,14 @@
     //   0 BUS_FREE 1 SELECT 2 COMMAND 3 CMD_EXEC 4 DATA_IN 5 DATA_OUT
     //   6 VH_WAIT_RD 7 VH_WAIT_WR 8 STATUS 9 MSG_IN 10 DISCONNECT 11 RESET
     // Values 3/6/7 in [49:46] are states MAME's xfr_phase can never hold.
+`ifdef TQTT_NATIVE_SD
+    // Upper 32 bits capture the write ring/REQ state; the original 84-bit
+    // 53C96 probe remains unchanged in the low bits.
+    wire [115:0] vio_scsi_c96 = {scsi_dbg_write_flow_w,
+                                 scsi_dbg_c96_state_w};
+`else
     wire [83:0] vio_scsi_c96 = scsi_dbg_c96_state_w;
+`endif
 
     // [187] is the actual negotiated native-SD High Speed state. Existing
     // fields retain their bit positions on both boards.

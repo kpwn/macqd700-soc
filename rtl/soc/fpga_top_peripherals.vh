@@ -1870,6 +1870,7 @@
     wire        scsi_dma_wr_ready_w;
     wire        pb_scsi_dma16_lo_beat;
     wire [83:0] scsi_dbg_c96_state_w;
+    wire [31:0] scsi_dbg_write_flow_w;
     wire        scsi_sd_rd_ready_w;
     wire        scsi_sd_wr_valid_w;
     /* verilator lint_on UNUSEDSIGNAL */
@@ -2193,6 +2194,7 @@
         // 53C96 initiator-state probe -> vio_scsi_c96 (probe_in26).
         // Observation only; see the port decl in rtl/mac/scsi.v.
         .dbg_c96_state         (scsi_dbg_c96_state_w),
+        .dbg_write_flow        (scsi_dbg_write_flow_w),
         // Capacity of whichever volume the live transaction belongs to —
         // selected by u_vhdd_mux below from vh_dev_sel.
         .vh_num_lbas(scsi_vh_num_lbas_w),

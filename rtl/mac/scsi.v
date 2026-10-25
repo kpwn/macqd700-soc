@@ -281,7 +281,9 @@ module scsi #(
     //   8 STATUS     9 MSG_IN    10 DISCONNECT 11 RESET
     // NOTE 3/6/7 are OUR internal states; MAME's xfr_phase is masked
     // from the bus (`ctrl & S_PHASE_MASK`) and can never hold them.
-    output wire [83:0] dbg_c96_state
+    output wire [83:0] dbg_c96_state,
+    // Native-SD DATA OUT back-pressure diagnosis; observation only.
+    output wire [31:0] dbg_write_flow
 );
     localparam [0:0] TURBOSCSI_C96_EN = (TURBOSCSI_C96 != 0);
     localparam TGT_B_LIVE = (TARGET_B_EN != 0);
@@ -6699,5 +6701,13 @@ module scsi #(
                             c96_irq_pending,      // [2]
                             t_req,                // [1]
                             c96_nondma_supply};   // [0]
+    // [31:22] ring occupancy; [21:12] bytes left in current sector;
+    // [11:0] multi-write, kicked, req_go, busy, wr_ready, REQ, DRQ,
+    // shim-withhold, done, error, range-ok, request-is-write.
+    assign dbg_write_flow = {vh_buf_count, xfer_bytes_left[9:0],
+                             vh_multi_write, vh_kicked, vh_req_go, vh_busy,
+                             vh_wr_ready, t_req, drq_c96,
+                             c96_shim_wr_withhold, vh_done, vh_error,
+                             vh_chk_ok, vh_req_write};
 
 endmodule

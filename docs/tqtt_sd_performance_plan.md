@@ -455,5 +455,25 @@ It uses a 100 MHz CPU, 50 MHz four-bit native SD, HDMI audio, automatic fan,
 and Ethernet. Final route timing is WNS +0.015 ns, WHS +0.010 ns, WPWS
 +0.073 ns with zero failing endpoints; bitstream DRC reported zero errors.
 JTAG loaded it as build `0x7AD1DFA7` on 2026-10-25. The first native init
-failed after switching from a SPI-mode image, so hardware byte-order and
-full-Mac boot checks are pending a physical card power cycle and hard reset.
+failed after switching from a SPI-mode image; a physical card power cycle
+and hard reset resolved that initialization failure.
+
+After the Samsung EVO was reseated and the board hard-reset, native High
+Speed initialization and all 2048 ROM sectors completed. The ROM's first
+two vectors and seven words spread through its 1 MiB image matched the
+saved SPI/reference ROM. The CPU reached low-RAM Mac OS code. At the later
+stall, SCSI reported 1273 completions, zero SD errors, and zero CHECK
+CONDITIONs; the 53C96 trace ended after 426 consecutive pseudo-DMA data-port
+writes. The CPU stopped at PC `0x000C04AA` with `AxiDMerge` waiting for a
+D-cache write response and the crossbar's S1 peripheral slot still busy.
+The C96 was in DATA OUT with `REQ=0`, four blocks in the active SCSI request,
+and no backend busy indication. This supports a pseudo-DMA back-pressure
+deadlock; the exact missing transition is not yet measured. The trace is
+`/var/tmp/tqtt_native_bytes_fixed_scsi_wedge.csv`.
+
+The next diagnostic image appends `dbg_write_flow` to the upper 32 bits of
+`vio_scsi_c96` in native-SD builds, leaving its original low 84 bits intact.
+The new fields are `[31:22]` write-ring occupancy, `[21:12]` bytes left in
+the current sector, then flags `[11:0]`: multi-write, backend kicked,
+request-go, backend busy, write-ready, target REQ, C96 DRQ, shim-write
+withhold, backend done, backend error, range-check OK, request is write.
