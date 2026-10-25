@@ -849,6 +849,28 @@ $(SDBOOT_NATIVE_BUILD)/Vtb_boot_native: $(RTL_DIR)/soc/boot_fsm.v $(TB_DIR)/tb_b
 		-Wno-PINMISSING -Wno-CASEINCOMPLETE -Wno-TIMESCALEMOD \
 		--Mdir $(SDBOOT_NATIVE_BUILD) $^
 
+SD_NATIVE_OWNER_BUILD := $(BUILD_DIR)/tb_sd_native_owner_mux
+.PHONY: tb-sd-native-owner
+tb-sd-native-owner: $(SD_NATIVE_OWNER_BUILD)/Vtb_sd_native_owner_mux
+	$(SD_NATIVE_OWNER_BUILD)/Vtb_sd_native_owner_mux
+
+$(SD_NATIVE_OWNER_BUILD)/Vtb_sd_native_owner_mux: $(RTL_DIR)/soc/sd_native_owner_mux.v $(TB_DIR)/tb_sd_native_owner_mux.sv
+	@mkdir -p $(SD_NATIVE_OWNER_BUILD)
+	$(VERILATOR) --binary --timing --top-module tb_sd_native_owner_mux \
+		-Wno-TIMESCALEMOD -Wno-UNUSED -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		--Mdir $(SD_NATIVE_OWNER_BUILD) $^
+
+SD_NATIVE_CHUNKER_BUILD := $(BUILD_DIR)/tb_sd_native_scsi_chunker
+.PHONY: tb-sd-native-chunker
+tb-sd-native-chunker: $(SD_NATIVE_CHUNKER_BUILD)/Vtb_sd_native_scsi_chunker
+	$(SD_NATIVE_CHUNKER_BUILD)/Vtb_sd_native_scsi_chunker
+
+$(SD_NATIVE_CHUNKER_BUILD)/Vtb_sd_native_scsi_chunker: $(RTL_DIR)/soc/sd_native_scsi_chunker.v $(TB_DIR)/tb_sd_native_scsi_chunker.sv
+	@mkdir -p $(SD_NATIVE_CHUNKER_BUILD)
+	$(VERILATOR) --binary --timing --top-module tb_sd_native_scsi_chunker \
+		-Wno-TIMESCALEMOD -Wno-UNUSED -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		--Mdir $(SD_NATIVE_CHUNKER_BUILD) $^
+
 $(SDBOOT_BUILD)/Vtb_sd_boot_top: $(SDBOOT_RTL) $(TB_DIR)/tb_sd_boot.cpp
 	@mkdir -p $(SDBOOT_BUILD)
 	$(VERILATOR) --cc --exe --build --assert \
