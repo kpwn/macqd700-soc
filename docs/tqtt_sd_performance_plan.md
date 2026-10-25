@@ -356,9 +356,10 @@ an isolated write-path reproduction and HFS consistency check.
    `e268eb9972404f1b21b12f12bc04ff0e1bc946c97b7224eaa864439d4b7c4255`).
    It retains the existing JTAG commands and uses 32-sector native batches.
    Post-route WNS/WHS/WPWS are +5.804/+0.018/+4.458 ns; bitstream DRC has
-   zero errors. SPI provisioning regression and native two-sector writer
-   round trip pass. The native image has not been loaded or used to write
-   a card; physical read-only integrity checks remain the prerequisite.
+   zero errors. The SPI provisioning regression and native writer round trips
+   pass at both 2 sectors and the maximum 32-sector batch, with independent
+   expected CRC32 values. The native image has not been loaded or used to
+   write a card; physical read-only integrity checks remain the prerequisite.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest

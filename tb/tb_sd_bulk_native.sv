@@ -15,13 +15,14 @@ module tb_sd_bulk_native;
     wire [7:0] native_wr_data;
     wire writer_busy;
     reg card_active = 0, card_write = 0, card_done = 0;
-    reg [10:0] card_idx = 0;
-    reg [7:0] card_mem [0:1023];
+    reg [14:0] card_idx = 0;
+    reg [15:0] test_blocks = 2;
+    reg [7:0] card_mem [0:16383];
     wire native_wr_ready = card_active && card_write && native_wr_avail;
     wire native_rd_valid = card_active && !card_write && native_rd_ready;
-    wire [7:0] native_rd_data = card_mem[card_idx[9:0]];
+    wire [7:0] native_rd_data = card_mem[card_idx];
 
-    sd_bulk_writer #(.STAGE_SECTORS(2), .NATIVE_TRANSPORT(1)) dut (
+    sd_bulk_writer #(.STAGE_SECTORS(32), .NATIVE_TRANSPORT(1)) dut (
         .clk(clk), .rst(rst), .card_ready(1'b1), .init_error(1'b0),
         .s_awaddr(awaddr), .s_awlen(8'd0), .s_awvalid(awvalid),
         .s_awready(awready), .s_wdata(wdata), .s_wstrb(4'hf),
@@ -55,7 +56,7 @@ module tb_sd_bulk_native;
         end else begin
             card_done <= 0;
             if (native_go && !card_active) begin
-                if (native_lba != 100 || native_block_count != 2 ||
+                if (native_lba != 100 || native_block_count != test_blocks ||
                     (native_cmd_type != 2 && native_cmd_type != 4))
                     $fatal(1, "wrong native bulk command");
                 card_write <= native_cmd_type == 4;
@@ -64,8 +65,8 @@ module tb_sd_bulk_native;
             end else if (card_active &&
                          ((card_write && native_wr_ready) ||
                           (!card_write && native_rd_valid))) begin
-                if (card_write) card_mem[card_idx[9:0]] <= native_wr_data;
-                if (card_idx == 1023) begin
+                if (card_write) card_mem[card_idx] <= native_wr_data;
+                if (card_idx == test_blocks * 512 - 1) begin
                     card_active <= 0;
                     card_done <= 1;
                 end else card_idx <= card_idx + 1;
@@ -86,36 +87,41 @@ module tb_sd_bulk_native;
         wait(bvalid);
         repeat (2) @(negedge clk);
     endtask
-    task automatic run_op(input [31:0] cmd);
+    task automatic run_op(input [31:0] cmd, input [31:0] expected_crc);
         reg_write(32'h4, cmd);
         wait(dut.done_sticky_q);
         if (dut.error_q) $fatal(1, "native bulk op error %h", cmd);
-        if (~dut.crc_q != 32'hf16469ae)
+        if (~dut.crc_q != expected_crc)
             $fatal(1, "native bulk CRC mismatch: %h", ~dut.crc_q);
     endtask
+    task automatic test_batch(input integer blocks, input [31:0] expected_crc);
+        test_blocks = 16'(blocks);
+        for (int i = 0; i < blocks * 128; i++) dut.stage_ram[i] = pattern_word(i);
+        for (int i = 0; i < blocks * 512; i++) card_mem[i] = 0;
+        reg_write(32'hc, 32'(blocks));
+        run_op(32'h5db0_0001, expected_crc); // WRITE
+        for (int i = 0; i < blocks * 512; i++)
+            if (card_mem[i] != 8'(i ^ 8'h5a))
+                $fatal(1, "native bulk write byte %d got %h", i, card_mem[i]);
+        for (int i = 0; i < blocks * 128; i++) dut.stage_ram[i] = 0;
+        run_op(32'h5db0_0003, expected_crc); // READ to staging
+        repeat (3) @(negedge clk);
+        for (int i = 0; i < blocks * 128; i++)
+            if (dut.stage_ram[i] != pattern_word(i))
+                $fatal(1, "native bulk read word %d got %h", i, dut.stage_ram[i]);
+        run_op(32'h5db0_0002, expected_crc); // CRC verify
+    endtask
     initial begin
-        for (int i = 0; i < 256; i++) dut.stage_ram[i] = pattern_word(i);
-        for (int i = 0; i < 1024; i++) card_mem[i] = 0;
         repeat (4) @(negedge clk);
         rst = 0;
         reg_write(32'h0, 32'd100);
-        reg_write(32'hc, 32'd2);
-        run_op(32'h5db0_0001); // WRITE
-        for (int i = 0; i < 1024; i++)
-            if (card_mem[i] != 8'(i ^ 8'h5a))
-                $fatal(1, "native bulk write byte %d got %h", i, card_mem[i]);
-        for (int i = 0; i < 256; i++) dut.stage_ram[i] = 0;
-        run_op(32'h5db0_0003); // READ to staging
-        repeat (3) @(negedge clk);
-        for (int i = 0; i < 256; i++)
-            if (dut.stage_ram[i] != pattern_word(i))
-                $fatal(1, "native bulk read word %d got %h", i, dut.stage_ram[i]);
-        run_op(32'h5db0_0002); // CRC verify without rewriting staging
-        $display("PASS native bulk writer two-sector WRITE/READ/VERIFY");
+        test_batch(2, 32'hf16469ae);
+        test_batch(32, 32'h13e636f9);
+        $display("PASS native bulk writer 2- and 32-sector WRITE/READ/VERIFY");
         $finish;
     end
     initial begin
-        #200000;
+        #5000000;
         $fatal(1, "native bulk writer timed out");
     end
 endmodule
