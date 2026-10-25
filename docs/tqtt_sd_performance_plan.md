@@ -634,4 +634,27 @@ provider is in `S_VH_WAIT_WR`, then raises it after STATUS is visible. The
 end-to-end test checks for an interrupt in DATA OUT after the final payload,
 using a one-command, 512-byte write like Finder. The same test fails against
 the previous RTL (`status=0x90`) and passes with the fix: 27/27 native FIFO
-and 27/27 legacy bridge cases. Hardware Finder retest is still required.
+and 27/27 legacy bridge cases.
+
+The corrected TQTT image from `ac1ff52` is
+`/var/tmp/tqtt_c96_waitfix_100/vivado/fpga_top.local.bit` (local ADB ROM;
+SHA-256
+`15af1955b9646b4558db806d62cf1bcd6abf3ed3afc3ef4479628a76725b4219`).
+It keeps the 100 MHz reduced-debug throughput CPU, native four-bit 50 MHz
+SD, HDMI audio, automatic fan, and Ethernet. The HDMI TMDS two-cycle
+constraint matched 35 serializer inputs. Routed WNS/WHS/WPWS are
++0.095/+0.001/+0.210 ns, with zero failing endpoints; bitstream DRC passed.
+JTAG loaded build ID `0xAC1FF528` on 2026-10-25. The Mac booted to Finder,
+and duplicating the same `MacTCP DNR` file now succeeds: the System Folder
+count rose from 15 to 16 and `MacTCP DNR copy` appeared without an error
+dialog. The frozen trace
+`/var/tmp/tqtt_c96_waitfix_mactcp_copy_trace.csv` has 4,096 entries,
+including one WRITE(10), no REQUEST SENSE, and the expected
+`R4=0x93` STATUS completion followed by FIFO count two and first status
+byte `0x00`. The live probe after the copy showed 2,573 completions,
+zero SD errors, and zero CHECK CONDITIONs. A subsequent Mac reboot reached
+the Speedometer desktop; the probe again showed zero SD errors and zero
+CHECK CONDITIONs after 2,718 completions. This validates the previously
+failing small-file copy path in hardware. A readback of the new file's
+forks from the card, a larger Finder copy, and a measured Mac-visible
+throughput/integrity workload remain open.
