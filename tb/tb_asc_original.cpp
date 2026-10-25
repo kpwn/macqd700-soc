@@ -46,7 +46,10 @@ int main() {
     ok &= check("silent-mode RAM write",read8(0x012),0x5a);
     write8(0x801,1);
     for(int i=0;i<600;i++) write8(0x000,uint8_t(i));
-    samples(89);
+    ok &= check("original FIFO A is not forced empty on write",read8(0x804)&2,0);
+    samples(1);
+    ok &= check("original FIFO A is not forced empty on stream",read8(0x804)&2,0);
+    samples(88);
     ok &= check("no early half-empty IRQ",dut.irq,0);
     samples(1);
     ok &= check("exact cap=511 half-empty IRQ",dut.irq,1);

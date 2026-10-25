@@ -1320,7 +1320,8 @@ module asc #(
                 // base stream loop; EASC does NOT have it (asc.cpp:
                 // 1457-1535 has no equivalent block at the top of the
                 // EASC stream update).  Suppressed under IS_EASC.
-                if (!IS_EASC && fifo_active && !playreca_reg[0])
+                if (!IS_EASC && !IS_ORIGINAL_ASC && fifo_active
+                    && !playreca_reg[0])
                     fifostat[STAT_BIT_EMPTY_OR_FULL_A] <= 1'b1;
 
                 // FIFO A pop or hold-last-sample-on-underflow (FIFO mode).
