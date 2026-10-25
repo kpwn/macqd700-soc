@@ -27,6 +27,11 @@ if {[info exists ::env(INCREMENTAL_REF_DCP)] && $::env(INCREMENTAL_REF_DCP) ne "
     set incremental_ref_dcp [file normalize $::env(INCREMENTAL_REF_DCP)]
 }
 file mkdir $output_dir/reports $proj_root/synth/timing_reports
+set from_route [expr {[info exists ::env(RESUME_ROUTED_CHECKPOINT)] && $::env(RESUME_ROUTED_CHECKPOINT) eq "1"}]
+if {$from_route} {
+    open_checkpoint $output_dir/checkpoints/route.dcp
+    puts "=== RESUME: opened existing routed checkpoint ==="
+} else {
 open_checkpoint $output_dir/checkpoints/place.dcp
 puts "=== RESUME: opened place.dcp, routing with -directive $route_directive ==="
 phys_opt_design -directive AggressiveExplore
@@ -168,27 +173,9 @@ if {[get_property SLACK [get_timing_paths -delay_type min_max]] < 0} {
 }
 
 write_checkpoint -force $output_dir/checkpoints/route.dcp
+}
 
-# The SPI pads used to be false-pathed. Fail loudly if they disappear from
-# analysis again, and preserve explicit reports for the physical IO budget.
-foreach sd_output {sd_clk sd_mosi sd_cs_n} {
-    set sd_paths [get_timing_paths -to [get_ports $sd_output] -delay_type max -max_paths 1]
-    if {[llength $sd_paths] == 0} {error "SPI output $sd_output is not timed"}
-    if {abs([get_property REQUIREMENT $sd_paths] - 4.0) > 0.001} {
-        error "SPI output $sd_output lost its 4ns latency allocation"
-    }
-    puts "SPI_IO_BUDGET $sd_output slack=[get_property SLACK $sd_paths]"
-}
-set sd_input_paths [get_timing_paths -from [get_ports sd_miso] -delay_type max -max_paths 1]
-if {[llength $sd_input_paths] == 0} {error "SPI input sd_miso is not timed"}
-if {abs([get_property REQUIREMENT $sd_input_paths] - 3.0) > 0.001} {
-    error "SPI input sd_miso lost its 3ns latency allocation"
-}
-puts "SPI_IO_BUDGET sd_miso slack=[get_property SLACK $sd_input_paths]"
-report_timing -from [get_ports sd_miso] -delay_type max -max_paths 4 \
-    -file $output_dir/reports/sd_miso_timing.rpt
-report_timing -to [get_ports {sd_clk sd_mosi sd_cs_n}] -delay_type max -max_paths 6 \
-    -file $output_dir/reports/sd_output_timing.rpt
+source [file dirname [info script]]/check_sd_io.tcl
 
 # Incremental-compile reuse report + stash for the next iteration.  Vivado's
 # report_incremental_reuse summarises how much placement+routing was carried
