@@ -690,4 +690,7 @@ shows Speedometer 4.02 at **Disk 4.279**, CPU 7.530, Graphics 3.346,
 Math 88.666, and overall PR 5.245 (Quadra 605 = 1.0). After that run,
 the live SCSI probe showed 2,928 completions, zero SD errors, and zero
 CHECK CONDITIONs. A large file copy/readback and longer 200 MHz stability
-run are still required. SPI flash remains on the verified 100 MHz image.
+run are still required. The 200 MHz image was subsequently written and
+readback-verified in TQTT SPI flash, then booted with Vivado's explicit
+`boot_hw_device` command. See [the flash boot diagnosis](spi_flash.md#200-mhz-tqtt-flash-boot-diagnosis-2026-10-25).
+Unattended power-on boot remains unverified.
