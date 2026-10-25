@@ -29,6 +29,10 @@ module tb_adb_inject (
     output wire [7:0]  pb_rdata,
     output wire        pb_ack,
 
+    input  wire        usb_kc_valid,
+    input  wire [7:0]  usb_kc_byte,
+    output wire        usb_kc_ready,
+
     // Device-bus command face (as driven by adb_phy's dispatcher)
     input  wire        dev_cmd_valid,
     input  wire [3:0]  dev_cmd_addr,
@@ -72,6 +76,9 @@ module tb_adb_inject (
         .pb_rd         (pb_rd),
         .pb_rdata      (pb_rdata),
         .pb_ack        (pb_ack),
+        .usb_kc_valid  (usb_kc_valid),
+        .usb_kc_byte   (usb_kc_byte),
+        .usb_kc_ready  (usb_kc_ready),
         .inj_kc_valid  (inj_kc_valid),
         .inj_kc_byte   (inj_kc_byte),
         .kbd_status    (kbd_status),

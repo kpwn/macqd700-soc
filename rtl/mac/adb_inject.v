@@ -51,6 +51,13 @@ module adb_inject (
     output reg  [7:0]  pb_rdata,
     output reg         pb_ack,
 
+    // Fabric USB keyboard source. MMIO wins a same-cycle collision; USB
+    // keeps its event valid until ready returns. kbd_status reserves the
+    // one registered injection pulse already on its way to the device.
+    input  wire        usb_kc_valid,
+    input  wire [7:0]  usb_kc_byte,
+    output wire        usb_kc_ready,
+
     // To adb_keyboard.inj_*
     output reg         inj_kc_valid,
     output reg  [7:0]  inj_kc_byte,
@@ -79,6 +86,15 @@ module adb_inject (
     localparam [7:0] ADBINJ_MOUSE_DX_W   = 8'h18;
     localparam [7:0] ADBINJ_MOUSE_DY_W   = 8'h1C;
 
+    wire pb_kbd_write = pb_wr &&
+                        (pb_addr == ADBINJ_KBD_ENQ || pb_addr == ADBINJ_KBD_ENQ_W);
+    wire [5:0] kbd_count = kbd_status[6:1];
+    // inj_kc_valid is registered here, so it occupies a FIFO slot at the
+    // next edge even while the device's status still shows the old count.
+    wire usb_has_slot = !kbd_status[7] &&
+                        (kbd_count < 6'd15 || !inj_kc_valid);
+    assign usb_kc_ready = !rst && !pb_kbd_write && usb_has_slot;
+
     always @(posedge clk) begin
         if (rst) begin
             inj_kc_valid  <= 1'b0;
@@ -98,6 +114,11 @@ module adb_inject (
             inj_dx_valid  <= 1'b0;
             inj_dy_valid  <= 1'b0;
             pb_ack        <= pb_wr | pb_rd;
+
+            if (usb_kc_valid && usb_kc_ready) begin
+                inj_kc_byte  <= usb_kc_byte;
+                inj_kc_valid <= 1'b1;
+            end
 
             if (pb_wr) begin
                 case (pb_addr)

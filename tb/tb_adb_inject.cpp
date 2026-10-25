@@ -55,6 +55,7 @@ static void tick() {
 static void reset() {
     dut->rst = 1;
     dut->pb_addr = 0; dut->pb_wdata = 0; dut->pb_wr = 0; dut->pb_rd = 0;
+    dut->usb_kc_valid = 0; dut->usb_kc_byte = 0;
     dut->dev_cmd_valid = 0; dut->dev_cmd_addr = 0; dut->dev_cmd_op = 0;
     dut->dev_listen_valid = 0; dut->dev_listen_b0 = 0; dut->dev_listen_b1 = 0;
     for (int i = 0; i < 4; i++) tick();
@@ -302,6 +303,54 @@ static bool test_flush_clears_pending() {
     return true;
 }
 
+// MMIO wins a same-cycle collision; the USB producer holds valid until the
+// following ready cycle, and both events reach the ADB keyboard FIFO.
+static bool test_usb_and_mmio_collision() {
+    reset();
+    dut->usb_kc_valid = 1;
+    dut->usb_kc_byte = 0x00; // USB A
+    dut->pb_addr = OFF_KBD_ENQ_W;
+    dut->pb_wdata = 0x0b;   // web/JTAG B
+    dut->pb_wr = 1;
+    dut->eval();
+    CHECK_EQ("USB waits for MMIO", dut->usb_kc_ready, 0);
+    tick();
+    dut->pb_wr = 0;
+    dut->eval();
+    CHECK_EQ("USB ready after MMIO", dut->usb_kc_ready, 1);
+    tick();
+    dut->usb_kc_valid = 0;
+    tick(); tick();
+    TalkResult r = talk(ADDR_KBD, OP_TALK_R0);
+    CHECK_TRUE("collision events delivered", r.valid);
+    CHECK_EQ("MMIO event first", r.b0, 0x0b);
+    CHECK_EQ("USB event second", r.b1, 0x00);
+    return true;
+}
+
+// adb_inject adds one registered cycle before adb_keyboard sees the pulse.
+// The USB ready signal must reserve that slot near a full keyboard FIFO.
+static bool test_usb_reserves_inflight_slot() {
+    reset();
+    for (int i = 0; i < 15; i++) pb_write(OFF_KBD_ENQ_W, 0x01);
+    CHECK_EQ("keyboard count 15", (pb_read(OFF_KBD_ENQ_W) >> 1) & 0x0f, 15);
+    dut->usb_kc_valid = 1;
+    dut->usb_kc_byte = 0x02;
+    dut->eval();
+    CHECK_EQ("one slot available", dut->usb_kc_ready, 1);
+    tick();
+    dut->usb_kc_valid = 0;
+    dut->eval();
+    CHECK_EQ("in-flight event reserves last slot", dut->usb_kc_ready, 0);
+    tick();
+    CHECK_EQ("keyboard now full", pb_read(OFF_KBD_ENQ_W) & 0x80, 0x80);
+    TalkResult r = talk(ADDR_KBD, OP_TALK_R0);
+    CHECK_TRUE("full FIFO can drain", r.valid);
+    dut->eval();
+    CHECK_EQ("USB ready after drain", dut->usb_kc_ready, 1);
+    return true;
+}
+
 #define RUN(t) do { \
     printf("%-40s ", #t); fflush(stdout); \
     if (t()) { printf("PASS\n"); n_pass++; } \
@@ -323,6 +372,8 @@ int main(int argc, char** argv) {
     RUN(test_mouse_delta_accumulate);
     RUN(test_talk_r3_identity);
     RUN(test_flush_clears_pending);
+    RUN(test_usb_and_mmio_collision);
+    RUN(test_usb_reserves_inflight_slot);
 
     printf("\n%d/%d scenarios passed.\n", n_pass, n_pass + n_fail);
     delete dut;

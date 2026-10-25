@@ -114,5 +114,9 @@ disconnect, ignores rollover reports, and avoids duplicate key events. The
 USB domain to the 50 MHz peripheral domain through the existing asynchronous
 FIFO, including a zero report when the host disconnects. The
 `tb-usb-hid-adb-keyboard-cdc` regression checks report order and key release
-across the two clocks. The path is not yet connected to the Mac ADB injector;
-hardware enumeration and Mac-visible USB typing remain pending.
+across the two clocks. The ADB injector now has a ready/valid USB keyboard
+input; MMIO wins a same-cycle collision, and the USB event waits until the
+keyboard FIFO has room including its registered in-flight pulse.
+`tb-adb-inject` covers both cases. The full SoC ties this port off until a
+physical USB host is wired and validated; hardware enumeration and
+Mac-visible USB typing remain pending.
