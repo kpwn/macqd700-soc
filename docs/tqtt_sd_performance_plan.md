@@ -211,7 +211,15 @@ an isolated write-path reproduction and HFS consistency check.
    and both failure guards. The existing SPI boot suite still passes 12/12.
    The native boot interface is not yet connected to the full SoC; it needs
    the 100 MHz storage-to-core CDC and exclusive access to the one card
-   backend during ROM load. The negotiated 50 MHz CMD6
+   backend during ROM load. `sd_native_owner_mux` now handles the boot-to-SCSI
+   ownership change and rejects requests from the inactive side; its focused
+   test checks both byte-stream directions and in-flight owner retention
+   (`make tb-sd-native-owner`). `sd_native_scsi_chunker` now translates SCSI
+   requests longer than the backend's 32-sector RAM window into consecutive
+   commands while keeping one SCSI completion. Its test covers 65-sector
+   reads and writes, a later-chunk failure, and invalid requests
+   (`make tb-sd-native-chunker`). These modules are not connected to the
+   full SoC yet. The negotiated 50 MHz CMD6
    switch must wait until its 64-byte status can be checked through DMA.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
