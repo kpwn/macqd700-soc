@@ -221,7 +221,9 @@ an isolated write-path reproduction and HFS consistency check.
    (`make tb-sd-native-chunker`). The block engine also bounds idle time while
    filling its write RAM or draining a completed read, so an interrupted
    producer or consumer reports an error instead of holding SCSI busy forever
-   (`make tb-sd-native-block`). An experimental full-SoC TQTT source
+   (`make tb-sd-native-block`). A multi-block data error now makes a bounded
+   CMD12 stop attempt before the error is returned; the same test checks
+   both read and write error paths. An experimental full-SoC TQTT source
    variant now selects native pins and connects the backend through boot
    and SCSI FIFO CDCs with `TQTT_NATIVE_SD=1`. It still needs Vivado
    elaboration, hardware read/write integrity tests, and 200 MHz timing.
