@@ -80,12 +80,17 @@ def highest_used_block(fh, part_start, mdb):
     nbytes = (nbits + 7) // 8
     fh.seek(part_start * SECTOR + mdb["drVBMSt"] * SECTOR)
     bm = fh.read(nbytes)
+    if len(bm) != nbytes:
+        raise SystemExit(f"short HFS allocation bitmap: expected {nbytes} bytes, got {len(bm)}")
     for i in range(nbytes - 1, -1, -1):
         if bm[i]:
-            for bit in range(7, -1, -1):
+            # HFS numbers bits MSB-first within each byte.  Scan from the
+            # *last* allocation block toward the first (LSB to MSB here).
+            for bit in range(0, 8):
                 if bm[i] & (1 << bit):
                     idx = i * 8 + (7 - bit)
-                    return idx if idx < nbits else nbits - 1
+                    if idx < nbits:
+                        return idx
     return -1
 
 

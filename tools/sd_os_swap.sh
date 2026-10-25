@@ -47,7 +47,8 @@ JT_OUT=${JT_OUT:-/tmp/jtag_out}
 # Large custom images can legitimately exceed the historical 30-minute
 # bound (the stock 7.5.3 used prefix is much smaller).  Keep the safe default
 # for normal UI swaps while allowing an operator to raise it deliberately.
-SD_WRITE_TIMEOUT=${SD_WRITE_TIMEOUT:-1800}
+# Leave SD_WRITE_TIMEOUT unset here so the image-size-based default below
+# actually applies. An early 1800-second default cut large restores short.
 JTAG_LEASE_TTL=${JTAG_LEASE_TTL:-2400}
 
 _ready () {
