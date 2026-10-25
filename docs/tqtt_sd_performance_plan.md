@@ -28,24 +28,28 @@ errors after 2,736 SCSI-to-SD completions. The tests and remaining integrity
 work are recorded below. `TQTT_NATIVE_SD=0` retains the old SPI path for
 diagnostics, and `TQTT_NATIVE_SD_HS=0` selects native 25 MHz.
 
-The earlier full Mac used one-bit SPI. At a 200 MHz core clock the SCSI transport's
-`HS_HALF=4` produces a 25 MHz SD clock, or 3.125 MB/s raw bus capacity.
-The boot transfer also uses 25 MHz. The 50 MHz SCSI setting had produced CRC
-failures on the earlier board/card path, so the current RTL conservatively
-scales the divider; TQTT's 50 MHz reliability has not been established.
+The earlier full Mac used one-bit SPI. At a 200 MHz core clock the SCSI
+transport's `HS_HALF=4` produced a 25 MHz SD clock, or 3.125 MB/s raw bus
+capacity. Its boot transfer also used 25 MHz. A 50 MHz SPI setting had
+produced CRC failures on that earlier path. The current native four-bit path
+is distinct: the 25/50 MHz read-only probe comparison and the Mac boot and
+Speedometer run below established basic operation at negotiated 50 MHz.
+Large byte-exact readback and sustained read/write throughput remain open.
 
-Earlier same-card measurements in `rtl/soc/vhdd_readahead.v` were about
+Earlier same-card SPI measurements in `rtl/soc/vhdd_readahead.v` were about
 13.6 single-block SCSI reads/s against 3,800 sectors/s for a long CMD18
 transfer. The roughly 70 ms per-command gap dominated the raw clock rate.
-The current full image has a two-way, 32-block adaptive read-ahead cache,
-but its actual TQTT Mac-visible throughput has not been measured. Do not use
-the cache's simulated projections as a hardware result.
+The current full image has a two-way, 32-block adaptive read-ahead cache.
+Its Speedometer disk rating below is a Mac-visible relative result, not a
+sustained MB/s measurement. Do not use the cache's simulated projections as
+a hardware result.
 
 MacBench's disk suite has historically failed on this system, including
 before TQTT. Its error 5050 is not a TQTT regression signal. Use a separately
-validated Mac-visible disk workload for throughput and integrity. A Finder
-file duplication on the current TQTT image also reported a disk error; read
-the card back and check the volume before assigning a cause to that failure.
+validated Mac-visible disk workload for throughput and integrity. An earlier
+Finder duplication reported a disk error; a later duplication and launch
+succeeded on the 200 MHz native image, as recorded below. Neither result
+proves byte-exact integrity of the copied forks.
 
 On 2026-10-24, the TQTT provisioning image read the card with repeated CRC32
 checks. The card's Apple partition map describes a 2,252,896-block image,
