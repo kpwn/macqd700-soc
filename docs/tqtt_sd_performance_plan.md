@@ -98,8 +98,9 @@ an isolated write-path reproduction and HFS consistency check.
    plus CRC handling. An isolated generator run produced a 246 KB core and
    CSR map.
    The standalone probes now use the generated core with direct TQTT pins.
-   Full-Mac integration still needs a native boot reader and connections to
-   the SCSI and PRAM consumers; no native card transfer has been measured.
+   An experimental full SoC variant connects native boot and SCSI. PRAM and
+   JTAG card provisioning still need native transports; no native card
+   transfer has been measured on hardware.
 
    A standalone native probe is now in progress on branch
    `codex/tqtt-native-sd-20261025`. It vendors the generated LiteSDCard
@@ -152,13 +153,12 @@ an isolated write-path reproduction and HFS consistency check.
    with read and write FIFOs. Its focused test checks ordered one- and
    32-sector reads and writes, read completion only after the final byte
    reaches the SCSI side, FIFO backpressure, partial-read error propagation,
-   and a core-side reset abort (`make tb-sd-native-bridge`). The wrapper is
-   not yet connected to the card controller or full Mac top. Boot must use a
-   native block reader and an AXI
-   clock crossing to copy the ROM into DDR; the current `boot_fsm` performs
-   SPI-only initialization and cannot be left active on the same card.
+   and a core-side reset abort (`make tb-sd-native-bridge`). The experimental
+   TQTT full SoC variant connects this wrapper to SCSI and the shared card
+   backend. The optional native `boot_fsm` source uses a second FIFO CDC and
+   the existing AXI ROM writer to copy the ROM into DDR.
    A one-outstanding `sd_native_csr_master` now provides bounded Wishbone
-   CSR transactions for the future hardware command sequencer. Its test
+   CSR transactions for the hardware command sequencer. Its test
    covers reads, writes, bus errors, timeouts, and reset cancellation
    (`make tb-sd-native-csr`). `sd_native_command` builds on it to write a
    command argument/type/send sequence, poll the card event with a bound,
@@ -167,9 +167,10 @@ an isolated write-path reproduction and HFS consistency check.
    `sd_native_init` sequences native 3.3 V SDHC/SDXC initialization through
    four-bit default-speed mode and decodes CSD v2 capacity. Its unit test
    exercises OCR retries and voltage, CSD, and CSR failures
-   (`make tb-sd-native-init`). These modules are not yet connected to the
-   full Mac top. `sd_native_init_controller` connects the init FSM,
-   command engine, and CSR master to one LiteSDCard Wishbone port; its
+   (`make tb-sd-native-init`). The experimental full SoC variant instantiates
+   these modules through `sd_native_backend`. `sd_native_init_controller`
+   connects the init FSM, command engine, and CSR master to one LiteSDCard
+   Wishbone port; its
    integration test checks the real CSR transaction order and failure paths
    (`make tb-sd-native-init-controller`). The small TQTT hardware image
    `make fpga-tqtt-sd-native-autoinit-probe-bitstream` routed at 100 MHz with
@@ -201,7 +202,8 @@ an isolated write-path reproduction and HFS consistency check.
    (WNS +5.519 ns, WHS +0.022 ns, DRC zero errors) in the separate
    `build/tqtt_sd_native_engine_probe_backend` output directory, SHA-256
    `88d70d4bf4fe48dc38e69cc79df65e755d791e2fe8887ffadf988f8a781f40a2`.
-   It is not the image loaded in SRAM. The engine is not in the full Mac top.
+   It is not the image loaded in SRAM. The experimental full SoC variant uses
+   the same backend source, without physical card validation yet.
    `boot_fsm` now has an optional `TQTT_NATIVE_SD` byte-stream source that
    retains its existing AXI ROM writer and RAM/VRAM zeroing. It requests the
    ROM in at most 32-sector chunks, back-pressures the byte stream when its
@@ -209,9 +211,9 @@ an isolated write-path reproduction and HFS consistency check.
    capacity failure. `make tb-sd-boot-native` checks a 40-sector two-chunk
    copy under AXI response delay, all 5,120 output words, byte-stream stalls,
    and both failure guards. The existing SPI boot suite still passes 12/12.
-   The native boot interface is not yet connected to the full SoC; it needs
-   the 100 MHz storage-to-core CDC and exclusive access to the one card
-   backend during ROM load. `sd_native_owner_mux` now handles the boot-to-SCSI
+   The experimental full SoC variant connects native boot across the 100 MHz
+   storage-to-core CDC and gives it exclusive access to the backend during
+   ROM load. `sd_native_owner_mux` now handles the boot-to-SCSI
    ownership change and rejects requests from the inactive side; its focused
    test checks both byte-stream directions and in-flight owner retention
    (`make tb-sd-native-owner`). `sd_native_scsi_chunker` now translates SCSI
