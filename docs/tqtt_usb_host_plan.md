@@ -104,3 +104,11 @@ OHCI reference: <https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Libr
 
 No full-SoC USB host RTL or PMOD pin constraints are connected yet. The
 hardware port, core, CDC, HID mapping, and hub stack each need validation.
+
+The report-to-ADB keyboard converter now lives in
+`rtl/mac/usb_hid_adb_keyboard.v`. It compares complete six-key HID snapshots,
+emits make/break events with a ready/valid handshake, releases held keys on
+disconnect, ignores rollover reports, and avoids duplicate key events. The
+`tb-usb-hid-adb-keyboard` regression covers those behaviors and backpressure.
+It is not yet clock-crossed from the 60 MHz host or connected to the Mac ADB
+injector; hardware enumeration and Mac-visible USB typing remain pending.

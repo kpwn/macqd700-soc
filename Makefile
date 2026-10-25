@@ -1307,6 +1307,16 @@ tb-sd-provision-native:
 		$(TB_DIR)/tb_sd_bulk_native.sv
 	$(SD_BULK_NATIVE_BUILD)/Vtb_sd_bulk_native
 
+USB_HID_ADB_BUILD := $(BUILD_DIR)/tb_usb_hid_adb_keyboard
+.PHONY: tb-usb-hid-adb-keyboard
+tb-usb-hid-adb-keyboard:
+	@mkdir -p $(USB_HID_ADB_BUILD)
+	$(VERILATOR) --binary --timing --top-module tb_usb_hid_adb_keyboard \
+		-Wno-TIMESCALEMOD -Wno-UNUSED -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		--Mdir $(USB_HID_ADB_BUILD) $(RTL_DIR)/mac/usb_hid_adb_keyboard.v \
+		$(TB_DIR)/tb_usb_hid_adb_keyboard.sv
+	$(USB_HID_ADB_BUILD)/Vtb_usb_hid_adb_keyboard
+
 tb-sd-provision: $(SDPROV_BUILD)/Vtb_sd_provision_top
 	@echo "Running sd_provision bulk-writer unit tb..."
 	$(SDPROV_BUILD)/Vtb_sd_provision_top
@@ -9453,7 +9463,7 @@ ALL_TBS := \
 	tb-rtc tb-q700-eth-sonic tb-q700-eth-sonic-engine tb-q700-sonic-tx tb-q700-sonic-rx tb-q700-eth-stream-share tb-q700-toggle-rx tb-q700-toggle-rx-mut tb-asc tb-audio-i2s tb-audio-pwm tb-adb tb-adb-inject \
 	tb-iwm tb-scsi-c96-probe tb-scsi-c96-register tb-scsi-c96-inquiry tb-scsi-c96-read6 tb-scsi-c96-cmdout-drain tb-scsi-c96-nondma-trailing tb-turboscsi tb-pb-scsi tb-async-fifo tb-axi-async-bridge tb-glue \
 	tb-scsi-c96-mame-chunk tb-scsi-c96-sm43-chunk tb-scsi-dual tb-scsi-trace-ring tb-sonic-trace-ring tb-scsi-trace-pb \
-	tb-sd-provision tb-sd-provision-native tb-sd-jtag-writer tb-vhdd-ctrl \
+	tb-sd-provision tb-sd-provision-native tb-sd-jtag-writer tb-vhdd-ctrl tb-usb-hid-adb-keyboard \
 	tb-dma-ctrl tb-dma-engine tb-dma-l2c tb-axil-null-slave tb-axil-split2 \
 	tb-pram-sd tb-pram-sd-populated tb-pram-sd-autoload tb-pram-sd-native \
 	tb-l2c-pri8 tb-l2c tb-l2c-stress tb-l2c-collision tb-l2c-bypass-all tb-l2c-chain tb-l2c-chain-off \
