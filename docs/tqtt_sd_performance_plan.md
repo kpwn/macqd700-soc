@@ -100,6 +100,24 @@ an isolated write-path reproduction and HFS consistency check.
    Integration still needs a block-command bridge for the existing boot and
    SCSI consumers and direct TQTT IO constraints. The generated core has not
    been integrated or tested here.
+
+   A standalone native probe is now in progress on branch
+   `codex/tqtt-native-sd-20261025`. It vendors the generated LiteSDCard
+   2024.12 core and places a VIO-controlled Wishbone master in front of its
+   CSRs and a 16 KiB local RAM on its DMA bus. `make
+   fpga-tqtt-sd-native-probe-bitstream` builds it. The read-only host script
+   `tools/tqtt_sd_native_read_probe.tcl` initializes a card in native mode,
+   selects four-bit bus width, optionally switches to 50 MHz after checking
+   CMD6 status, then reads up to 32 sectors with CRC32 and hardware DMA
+   cycle timing. This is a probe, not yet the full Mac storage transport.
+   The corrected Vivado route on 2026-10-25 met the 100 MHz fabric constraint
+   with WNS +2.897 ns and WHS +0.017 ns, and bitstream DRC had zero errors.
+   The artifact is `build/tqtt_sd_native_probe/tqtt_sd_native_probe.bit`,
+   SHA-256 `60edf295fc267c204b0b83fb52a0bf3f0875928219dafed4dda888df4d2104d9`.
+   No native-mode card measurement has been made.
+   The card must be physically power-cycled after any SPI-mode image before
+   native-mode hardware testing; FPGA reconfiguration alone does not reset
+   the card's protocol selection.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest

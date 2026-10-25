@@ -3769,6 +3769,13 @@ fpga-tqtt-sdmin-50mhz-bitstream:
 	  SDMIN_BUILD_DIR=$(BUILD_DIR)/vivado_sdmin_tqtt_50 \
 	  fpga-sdmin-bitstream
 
+.PHONY: fpga-tqtt-sd-native-probe-bitstream
+TQTT_SD_NATIVE_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_sd_native_probe
+fpga-tqtt-sd-native-probe-bitstream:
+	@mkdir -p $(TQTT_SD_NATIVE_PROBE_BUILD_DIR)
+	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_sd_native_probe.tcl -tclargs $(TQTT_SD_NATIVE_PROBE_BUILD_DIR)' \
+	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — native SD probe pending"; fi; exit $$status; }
+
 .PHONY: fpga-tqtt-eth-probe-bitstream
 .PHONY: fpga-tqtt-ddr4-probe-bitstream
 TQTT_DDR4_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_ddr4_probe
