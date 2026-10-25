@@ -21,7 +21,7 @@ ltx="$engine_dir/tqtt_sd_native_engine_probe.ltx"
 
 # ROM, first HDD sectors, a previously changed filesystem region, and widely
 # separated card areas. The runner checks card capacity before every read.
-cases=(0:1 0:32 8192:32 95410:32 250000:32 500000:32 1000000:32 2000000:32)
+cases=(0:1 0:32 8192:32 90000:32 95410:32 250000:32 500000:32 1000000:32 2000000:32)
 summary="$out_dir/summary.tsv"
 printf 'lba\tblocks\trepeat\tcrc32\tdma_cycles\tMB_per_s\tlog\n' > "$summary"
 

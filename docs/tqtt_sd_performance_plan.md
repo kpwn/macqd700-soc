@@ -194,8 +194,9 @@ an isolated write-path reproduction and HFS consistency check.
    `NATIVE_SD_CARD_POWER_CYCLED=1` to check card initialization, 1..32
    sectors, CRC32, and DMA timing. After the first read succeeds,
    `NATIVE_SD_CARD_POWER_CYCLED=1 tools/tqtt_sd_native_engine_matrix.sh`
-   repeats eight read-only cases across the card, checks each CRC32 pair,
-   and records the engine's DMA cycles and MB/s.
+   repeats nine read-only cases across the card, checks each CRC32 pair,
+   and records the engine's DMA cycles and MB/s. LBA 90000 is an additional
+   32-sector anchor within the previously audited `shd.hda` region.
    The same read-only engine probe can also be built with
    `make TQTT_NATIVE_SD_HS=1 fpga-tqtt-sd-native-engine-probe-bitstream`.
    Its separate `build/tqtt_sd_native_engine_probe_hs` output negotiates
@@ -205,6 +206,14 @@ an isolated write-path reproduction and HFS consistency check.
    `NATIVE_SD_EXPECT_HS=1` to reject a silent fallback to 25 MHz. Load the
    matching bitstream and LTX before the matrix. The physical card must be
    power-cycled before the first native test; neither build step does so.
+   Compare the two `summary.tsv` files with
+   `python3 tools/tqtt_sd_native_matrix_compare.py <25-summary.tsv> <50-summary.tsv>`.
+   Every same-range CRC must agree across speeds; the report gives the
+   32-sector throughput ratio. Add `--image /home/qwertyoruiop/shd.hda` to
+   annotate host-image CRC matches. Image differences are advisory because
+   Mac OS can update the disk after provisioning; cross-speed differences
+   are a transfer-integrity failure. The reported DMA MB/s excludes JTAG
+   startup and is not Mac-visible filesystem throughput.
    The High Speed probe build completed on 2026-10-25 with WNS/WHS/WPWS
    +5.127/+0.019/+4.458 ns, zero failing timing endpoints, and zero
    bitstream DRC errors. Its bitstream SHA-256 is
