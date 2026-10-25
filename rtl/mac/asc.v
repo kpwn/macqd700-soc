@@ -452,6 +452,7 @@ module asc #(
     // 0x808 writes are ignored (R_BATMANCONTROL on real silicon).
     reg [7:0] rate_reg;
     reg [7:0] clock_reg;
+    reg [7:0] batman_reg;
     reg [7:0] volume_reg;    // R_VOLUME — writable + readable, but NOT
                              //   applied to audio output (MAME emits
                              //   raw signed sample; off-chip codec
@@ -584,7 +585,7 @@ module asc #(
     always @(posedge clk) begin
         if (rst) begin
             rate_cnt <= RATE_DEFAULT;
-        end else if (pb_wr && pb_addr == 12'h808) begin
+        end else if (!IS_ORIGINAL_ASC && pb_wr && pb_addr == 12'h808) begin
             rate_cnt <= (pb_wdata == 8'd0) ? RATE_DEFAULT : pb_wdata;
         end else if (phi2_tick && sample_active) begin
             if (rate_cnt <= 8'd1)
@@ -861,6 +862,7 @@ module asc #(
             // chime plays at 22 kHz / full scale without ROM programming.
             rate_reg     <= RATE_DEFAULT;
             clock_reg    <= 8'h00;
+            batman_reg   <= 8'h00;
             volume_reg   <= 8'hFF;
             playreca_reg <= 8'h00;          // playback mode enabled
             playreca_written <= 1'b0;       // sticky: set on first 0x80A write
@@ -1098,7 +1100,10 @@ module asc #(
                     // R_BATMANCONTROL (0x08) — Sonora ignores; tb backdoor
                     // accepts the write into rate_reg (Q700 ROM doesn't
                     // touch 0x808).
-                    8'h08: rate_reg <= pb_wdata;
+                    8'h08: begin
+                        if (IS_ORIGINAL_ASC) batman_reg <= pb_wdata;
+                        else                 rate_reg <= pb_wdata;
+                    end
                     // R_PLAYRECA (0x0A).
                     8'h0A: begin
                         playreca_reg     <= pb_wdata;
@@ -1659,7 +1664,8 @@ module asc #(
                         // R_BATMANCONTROL — Sonora reads 0; we expose
                         // rate_reg as the tb backdoor (Q700 ROM doesn't
                         // touch 0x808).
-                        8'h08: pb_rdata_reg <= rate_reg;
+                        8'h08: pb_rdata_reg <= IS_ORIGINAL_ASC
+                                                   ? batman_reg : rate_reg;
                         // R_PLAYRECA.
                         8'h0A: pb_rdata_reg <= playreca_reg;
                         // R_TEST — readable scratch.
