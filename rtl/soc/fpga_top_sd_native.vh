@@ -181,7 +181,12 @@
 
     wire [15:0] native_dma_words;
     wire [3:0] native_cmd_event;
-    sd_native_backend u_native_card (
+`ifdef TQTT_NATIVE_SD_HS
+    localparam integer NATIVE_SD_HIGH_SPEED = 1;
+`else
+    localparam integer NATIVE_SD_HIGH_SPEED = 0;
+`endif
+    sd_native_backend #(.HIGH_SPEED(NATIVE_SD_HIGH_SPEED)) u_native_card (
         .clk(video_ref_clk), .rst(native_rst),
         .ready(native_ready), .init_error(native_init_error),
         .card_num_lbas(native_card_num_lbas), .rca(native_rca),

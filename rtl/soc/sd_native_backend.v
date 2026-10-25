@@ -4,7 +4,9 @@
 // module on a 100 MHz clock, independent of the CPU's 100/200 MHz setting.
 // A fresh card power cycle is required when switching from the SPI backend.
 `default_nettype none
-module sd_native_backend (
+module sd_native_backend #(
+    parameter integer HIGH_SPEED = 0
+) (
     input  wire        clk,
     input  wire        rst,
     output wire        ready,
@@ -32,6 +34,7 @@ module sd_native_backend (
     inout  wire        sd_cmd,
     inout  wire [3:0]  sd_dat
 );
+    wire init_ready, init_error_w;
     wire [3:0] init_cmd_event;
     wire init_cmd_timeout;
     wire [29:0] init_wb_adr, block_wb_adr;
@@ -46,7 +49,7 @@ module sd_native_backend (
     wire wb_ack, wb_err;
 
     sd_native_init_controller u_init (
-        .clk(clk), .rst(rst), .ready(ready), .error(init_error),
+        .clk(clk), .rst(rst), .ready(init_ready), .error(init_error_w),
         .card_num_lbas(card_num_lbas), .rca(rca),
         .debug_phase(init_phase), .debug_cmd_event(init_cmd_event),
         .debug_cmd_timeout(init_cmd_timeout),
@@ -57,15 +60,29 @@ module sd_native_backend (
         .wb_sel(init_wb_sel), .wb_stb(init_wb_stb), .wb_we(init_wb_we)
     );
 
+    wire hs_done, hs_error, hs_session_active;
+    wire [29:0] hs_wb_adr;
+    wire [1:0] hs_wb_bte;
+    wire [2:0] hs_wb_cti;
+    wire hs_wb_cyc, hs_wb_stb, hs_wb_we;
+    wire [31:0] hs_wb_dat_w;
+    wire [3:0] hs_wb_sel;
+    wire hs_dma_ack, hs_dma_err;
+    wire [31:0] hs_dma_dat_r;
     wire [29:0] block_dma_adr;
     wire block_dma_ack, block_dma_cyc, block_dma_stb, block_dma_we;
     wire [31:0] block_dma_dat_r, block_dma_dat_w;
     wire block_dma_err;
     wire [3:0] block_dma_sel;
+    assign ready = init_ready && (HIGH_SPEED == 0 || hs_done);
+    assign init_error = init_error_w || (HIGH_SPEED != 0 && hs_error);
+    assign card_session_active = block_card_session_active ||
+                                 (HIGH_SPEED != 0 && hs_session_active);
+    wire block_card_session_active;
     sd_native_block_engine u_block (
         .clk(clk), .rst(rst || !ready),
         .cmd_type(cmd_type), .lba(lba), .block_count(block_count), .go(go),
-        .busy(busy), .card_session_active(card_session_active),
+        .busy(busy), .card_session_active(block_card_session_active),
         .done(done), .error(error),
         .rd_valid(rd_valid), .rd_data(rd_data), .rd_ready(rd_ready),
         .wr_ready(wr_ready), .wr_data(wr_data), .wr_avail(wr_avail),
@@ -84,14 +101,52 @@ module sd_native_backend (
         .wb_dma_we(block_dma_we)
     );
 
-    wire [29:0] wb_adr = ready ? block_wb_adr : init_wb_adr;
-    wire [1:0] wb_bte = ready ? block_wb_bte : init_wb_bte;
-    wire [2:0] wb_cti = ready ? block_wb_cti : init_wb_cti;
-    wire wb_cyc = ready ? block_wb_cyc : init_wb_cyc;
-    wire [31:0] wb_dat_w = ready ? block_wb_dat_w : init_wb_dat_w;
-    wire [3:0] wb_sel = ready ? block_wb_sel : init_wb_sel;
-    wire wb_stb = ready ? block_wb_stb : init_wb_stb;
-    wire wb_we = ready ? block_wb_we : init_wb_we;
+    generate if (HIGH_SPEED != 0) begin : g_high_speed
+        sd_native_hs_switch u_hs (
+            .clk(clk), .rst(rst || !init_ready),
+            .done(hs_done), .error(hs_error), .high_speed_active(),
+            .card_session_active(hs_session_active),
+            .wb_ctrl_adr(hs_wb_adr), .wb_ctrl_bte(hs_wb_bte),
+            .wb_ctrl_cti(hs_wb_cti), .wb_ctrl_cyc(hs_wb_cyc),
+            .wb_ctrl_dat_r(wb_dat_r), .wb_ctrl_dat_w(hs_wb_dat_w),
+            .wb_ctrl_ack(wb_ack), .wb_ctrl_err(wb_err),
+            .wb_ctrl_sel(hs_wb_sel), .wb_ctrl_stb(hs_wb_stb),
+            .wb_ctrl_we(hs_wb_we),
+            .wb_dma_ack(hs_dma_ack), .wb_dma_adr(block_dma_adr),
+            .wb_dma_cyc(block_dma_cyc), .wb_dma_dat_r(hs_dma_dat_r),
+            .wb_dma_dat_w(block_dma_dat_w), .wb_dma_err(hs_dma_err),
+            .wb_dma_sel(block_dma_sel), .wb_dma_stb(block_dma_stb),
+            .wb_dma_we(block_dma_we)
+        );
+    end else begin : g_default_speed
+        assign hs_done = 1'b1;
+        assign hs_error = 1'b0;
+        assign hs_session_active = 1'b0;
+        assign hs_wb_adr = 30'b0;
+        assign hs_wb_bte = 2'b0;
+        assign hs_wb_cti = 3'b0;
+        assign hs_wb_cyc = 1'b0;
+        assign hs_wb_dat_w = 32'b0;
+        assign hs_wb_sel = 4'b0;
+        assign hs_wb_stb = 1'b0;
+        assign hs_wb_we = 1'b0;
+        assign hs_dma_ack = 1'b0;
+        assign hs_dma_err = 1'b0;
+        assign hs_dma_dat_r = 32'b0;
+    end endgenerate
+
+    wire hs_owns = HIGH_SPEED != 0 && init_ready && !hs_done;
+    wire [29:0] wb_adr = ready ? block_wb_adr : hs_owns ? hs_wb_adr : init_wb_adr;
+    wire [1:0] wb_bte = ready ? block_wb_bte : hs_owns ? hs_wb_bte : init_wb_bte;
+    wire [2:0] wb_cti = ready ? block_wb_cti : hs_owns ? hs_wb_cti : init_wb_cti;
+    wire wb_cyc = ready ? block_wb_cyc : hs_owns ? hs_wb_cyc : init_wb_cyc;
+    wire [31:0] wb_dat_w = ready ? block_wb_dat_w : hs_owns ? hs_wb_dat_w : init_wb_dat_w;
+    wire [3:0] wb_sel = ready ? block_wb_sel : hs_owns ? hs_wb_sel : init_wb_sel;
+    wire wb_stb = ready ? block_wb_stb : hs_owns ? hs_wb_stb : init_wb_stb;
+    wire wb_we = ready ? block_wb_we : hs_owns ? hs_wb_we : init_wb_we;
+    wire sd_dma_ack = hs_owns ? hs_dma_ack : block_dma_ack;
+    wire sd_dma_err = hs_owns ? hs_dma_err : block_dma_err;
+    wire [31:0] sd_dma_dat_r = hs_owns ? hs_dma_dat_r : block_dma_dat_r;
     wire irq, sd_cmd_dir, sd_dat0_dir, sd_dat13_dir;
     litesdcard_core u_sd (
         .clk(clk), .rst(rst), .irq(irq), .sdcard_cd(1'b0),
@@ -103,10 +158,10 @@ module sd_native_backend (
         .wb_ctrl_cyc(wb_cyc), .wb_ctrl_dat_r(wb_dat_r),
         .wb_ctrl_dat_w(wb_dat_w), .wb_ctrl_err(wb_err),
         .wb_ctrl_sel(wb_sel), .wb_ctrl_stb(wb_stb), .wb_ctrl_we(wb_we),
-        .wb_dma_ack(block_dma_ack), .wb_dma_adr(block_dma_adr),
+        .wb_dma_ack(sd_dma_ack), .wb_dma_adr(block_dma_adr),
         .wb_dma_bte(), .wb_dma_cti(), .wb_dma_cyc(block_dma_cyc),
-        .wb_dma_dat_r(block_dma_dat_r), .wb_dma_dat_w(block_dma_dat_w),
-        .wb_dma_err(block_dma_err), .wb_dma_sel(block_dma_sel),
+        .wb_dma_dat_r(sd_dma_dat_r), .wb_dma_dat_w(block_dma_dat_w),
+        .wb_dma_err(sd_dma_err), .wb_dma_sel(block_dma_sel),
         .wb_dma_stb(block_dma_stb), .wb_dma_we(block_dma_we)
     );
 endmodule
