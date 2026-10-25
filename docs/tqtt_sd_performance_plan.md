@@ -319,9 +319,23 @@ an isolated write-path reproduction and HFS consistency check.
    incomplete global-clock guidance trees, but completed routing and passed
    final timing and DRC. This image has not been loaded; card power cycling,
    native integrity tests, and High Speed negotiation readback remain pending.
-   Native PRAM passed simulation and real-MIG RTL elaboration but is not in
-   the bitstreams listed above. JTAG bulk provisioning still needs a native
-   path before the SPI transport can be replaced. Keep the RK SPI board path.
+   A full 100 MHz TQTT image with native PRAM, negotiated High Speed SD,
+   HDMI audio, fan control, Ethernet, and reduced CPU debug completed from
+   staging commit `a415ee0` and CPU commit `4736fadf` on 2026-10-25.
+   Its routed checkpoint is
+   `/var/tmp/tqtt_native_pram_hs_100/vivado/checkpoints/route.dcp`
+   (SHA-256 `d1c28c9254c98ac5baeb40c447c285db07379cdaa811e7b05c9e9f91e469a1b6`),
+   blank bitstream SHA-256
+   `fcf4dfaced948b346e0b2fe3dff3d1cad086559e369422d0c752af89d7537cf5`,
+   and local ADB-patched bitstream SHA-256
+   `0878531c94f59982e4a56bef3f7bab2965ed5eb0edacd27bae16fdc51395c663`.
+   Final WNS/WHS/WPWS were +0.021/+0.003/+0.236 ns, with zero failing
+   pulse-width endpoints and zero bitstream DRC errors. Incremental route
+   reported eleven incomplete global-clock guidance trees but completed
+   routing and passed final timing and DRC. This image has not been loaded;
+   native card integrity, actual High Speed selection, and PRAM persistence
+   all still need hardware checks. JTAG bulk provisioning also needs a
+   native path before replacing the SPI transport. Keep the RK SPI path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest
