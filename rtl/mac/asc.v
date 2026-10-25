@@ -3,38 +3,14 @@
 // See THIRD_PARTY_NOTICES.md and LICENSES/MAME-BSD-3-Clause.txt.
 // asc.v — Apple Sound Chip — Quadra 700 audio block
 //
-// CHIP-VARIANT NOTE (memory: project_q700_easc_not_sonora.md):
-// The Q700 ships an **EASC** (Enhanced Apple Sound Chip, 343S1036),
-// NOT Sonora (343S1065).  MAME models them as separate devices —
-// `asc_easc_device` (asc.cpp:1419-1771) for Q700 (machine_config at
-// macquadra700.cpp:805) and `asc_sonora_device` (asc.cpp:910-1117) for
-// the LC III generation.  This RTL implements a hybrid that supports
-// both the Sonora-style FIFO playback path used by the Sound Manager
-// AND the EASC/first-gen ASC wavetable mode (R_MODE = 2) used by the
-// Q700 boot ROM's startup-chime synthesis loop.  The wavetable path
-// follows the canonical first-gen `asc_base_device::sound_stream_update`
-// case 2 (asc.cpp:248-282): 4 voices, each reading from a 512-byte
-// slot in the FIFO ram at offsets 0 / 0x200 / 0x400 / 0x600, indexed
-// by `(phase[v] >> 15) & 0x1ff` with a 24-bit phase counter advanced
-// by a 24-bit increment register per sample tick.
+// The Quadra 700 uses EASC version 0xB0. A live MAME Q700 trace shows
+// the boot ROM enabling FIFO mode and 4:1 CD-XA decoding (F08/F28=0x82)
+// for its startup chime. The Sound Manager also uses the FIFO path.
+// EASC_VERSION selects this behavior in the TQTT product build. The
+// version-zero original ASC and legacy Sonora behavior remain selectable
+// for regression tests; their wavetable path is separate from Q700 EASC.
 //
-// R_VERSION (0x800) returns **0xB0** per MAME's
-// `asc_easc_device::get_version()` (asc.cpp:1768-1771: `u8
-// asc_easc_device::get_version() { return 0xb0; }`) — directly returned
-// by `asc_base_device::read` at asc.cpp:312-313 (`case R_VERSION: return
-// get_version();`).  Earlier doc claims that "MAME returns 0x00 due to
-// a `umask32` quirk" were INCORRECT — MAME's bus dispatcher passes the
-// 8-bit handler's byte through unmodified; the prior diagnostic captured
-// 0x00 because of a separate ROM-trace tooling issue, not a MAME quirk.
-// The ROM's `tstb (R_VERSION); BEQ no_asc_path` therefore takes the
-// non-zero branch (BEQ NOT taken), falls through to the chime
-// synthesis path at 0x408070CE+, and writes MODE=2 (wavetable) to
-// activate the engine.  See `docs/asc_q700_rom_trace.md` for the
-// updated capture; the "no-ASC simple-init path that boots cleanly"
-// claim is now retired — the ROM takes the chime path on both MAME
-// and our RTL.
-//
-// FIFO storage write semantics in wave mode (R_MODE = 2):
+// Original ASC FIFO storage write semantics in wave mode (R_MODE = 2):
 // We follow the first-gen ASC's `asc_device::write` (asc.cpp:669-742)
 // which performs **direct-addressed** writes when not in FIFO mode —
 // `m_fifo[0][offset] = data;` (asc.cpp:700) for offsets 0..0x3FF, and
@@ -64,9 +40,7 @@
 //   +0x000 .. +0x3FF   FIFO A data   (write fills in FIFO mode at wrptr;
 //                                       direct-addressed in wave mode)
 //   +0x400 .. +0x7FF   FIFO B data   (same dual-mode write semantics)
-//   +0x800             Version               (RO; current readback is 0x00
-//                                              for boot-path stability —
-//                                              upstream MAME returns 0xB0)
+//   +0x800             Version               (RO; 0xB0 in EASC build)
 //   +0x801             Mode                  (writeable: 0=off, 1=FIFO,
 //                                              2=wavetable; reads back the
 //                                              programmed value)
@@ -116,14 +90,14 @@
 //   +0xF06 .. +0xF07   FIFO A volume L/R      (R/W; latched, per-ch split TBD)
 //   +0xF08             FIFO A control         (R/W; bit 7 enables SRC)
 //   +0xF09             FIFO A IRQ control    (bit 0=disable)
-//   +0xF10             FIFO A CD-XA decoder   (R/W; latched-stub)
+//   +0xF10..F17        FIFO A CD-XA predictor coefficients
 //   +0xF20 .. +0xF21   FIFO B write-pointer   (RO live, hi/lo split)
 //   +0xF22 .. +0xF23   FIFO B read-pointer    (RO live, hi/lo split)
 //   +0xF24 .. +0xF25   FIFO B SRC step        (R/W; 16.16 advance)
 //   +0xF26 .. +0xF27   FIFO B volume L/R      (R/W; latched, per-ch split TBD)
 //   +0xF28             FIFO B control         (R/W; bit 7 enables SRC)
 //   +0xF29             FIFO B IRQ control    (bit 0=disable)
-//   +0xF30             FIFO B CD-XA decoder   (R/W; latched-stub)
+//   +0xF30..F37        FIFO B CD-XA predictor coefficients
 //
 // Sample-rate clocking:
 //   The ROM wavetable uses the existing phi2 divider (~22.4 kHz).  The
@@ -207,7 +181,8 @@ module asc #(
     // Zero retains the historical phi2 divider for standalone tests.
     // The Q700 integration supplies EASC's 44.1 kHz FIFO output rate.
     parameter integer FIFO_SAMPLE_HZ = 0,
-    parameter integer ORIGINAL_ASC_FIFO = 0
+    parameter integer ORIGINAL_ASC_FIFO = 0,
+    parameter integer EASC_VERSION = 0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -304,7 +279,8 @@ module asc #(
     // reset values) is in place and exercised by tb-asc scenarios
     // 40-43.  Iter 5 should diagnose the post-MacsBug frontier and
     // re-attempt the flip when the additional gating is identified.
-    localparam [7:0] VERSION_USE = VERSION_EASC;
+    localparam [7:0] VERSION_USE = EASC_VERSION
+                                 ? VERSION_EASC_REAL : VERSION_EASC;
     localparam       IS_EASC     = (VERSION_USE == VERSION_EASC_REAL);
     localparam       IS_ORIGINAL_ASC = ORIGINAL_ASC_FIFO && !IS_EASC;
 
@@ -508,19 +484,42 @@ module asc #(
     //              both halves; the per-channel split is deferred but
     //              the registers are software-visible.
     // R_FIFOA/B_CTRL — bit 7 enables SRC; bits[1:0] select CD-XA decode
-    //              mode (0=PCM, 1=2:1, 2=4:1, 3=8:1).  CD-XA decode is
-    //              deferred; those mode bits are latched only.
-    // R_CDXA_A/B — real Sonora performs CD-XA ADPCM decode through this
-    //              register; we stub as a single latched byte (interface-
-    //              compatible, decode side-effect deferred).
+    //              mode. EASC implements PCM (0) and ROM-used 4:1 (2).
+    // R_CDXA_A/B — eight predictor coefficient bytes per channel.
     reg [7:0] r_srca_h, r_srca_l;
     reg [7:0] r_vola_l, r_vola_r;
     reg [7:0] r_fifoa_ctrl;
-    reg [7:0] r_cdxa_a;
+    reg [7:0] r_cdxa_a [0:7];
     reg [7:0] r_srcb_h, r_srcb_l;
     reg [7:0] r_volb_l, r_volb_r;
     reg [7:0] r_fifob_ctrl;
-    reg [7:0] r_cdxa_b;
+    reg [7:0] r_cdxa_b [0:7];
+    integer xa_reset_idx;
+    reg [15:0] xa_s0_a, xa_s1_a, xa_s0_b, xa_s1_b;
+    reg [7:0] xa_param_a, xa_param_b, xa_byte_a, xa_byte_b;
+    reg [4:0] xa_pos_a, xa_pos_b;
+    reg xa_subpos_a, xa_subpos_b;
+    reg [15:0] xa_sample_a, xa_sample_b;
+
+    // MAME's 4:1 CD-XA decoder uses a signed 8-bit coefficient pair,
+    // 16-bit predictor history, and saturation after each sample.
+    function automatic [15:0] cdxa_predict;
+        input [15:0] raw;
+        input [3:0] shift;
+        input [7:0] k0, k1;
+        input [15:0] s0, s1;
+        reg signed [31:0] value;
+        reg signed [31:0] prediction;
+        begin
+            prediction = ($signed(k0) * $signed(s0))
+                       + ($signed(k1) * $signed(s1)) + 32;
+            value = ($signed(raw) >>> ((shift > 12) ? 12 : shift))
+                  + (prediction >>> 6);
+            if (value > 32767) cdxa_predict = 16'h7fff;
+            else if (value < -32768) cdxa_predict = 16'h8000;
+            else cdxa_predict = value[15:0];
+        end
+    endfunction
     // Shadow latches for WRPTRA/B + RDPTRA/B writes.  Real silicon
     // accepts the byte (MAME's base latches it into m_regs[]), but the
     // live pointer surfaces on read — so the shadow only matters if a
@@ -648,13 +647,36 @@ module asc #(
             end
         end
     end
-    wire fa_sample_pop = sample_tick && fifo_active && fa_src_advance
-                       && (fa_count > 11'd0);
+    wire fa_cdxa4 = IS_EASC && r_fifoa_ctrl[1:0] == 2'd2;
+    wire fb_cdxa4 = IS_EASC && r_fifob_ctrl[1:0] == 2'd2;
+    wire [1:0] fa_pop_want = fa_cdxa4
+                            ? ((xa_pos_a == 0) ? 2'd2
+                               : (xa_subpos_a ? 2'd0 : 2'd1)) : 2'd1;
+    wire [1:0] fb_pop_want = fb_cdxa4
+                            ? ((xa_pos_b == 0) ? 2'd2
+                               : (xa_subpos_b ? 2'd0 : 2'd1)) : 2'd1;
+    wire fa_decode_tick = sample_tick && fifo_active && fa_src_advance;
+    wire fb_decode_tick = sample_tick && fifo_active && fb_src_advance
+                          && (!IS_ORIGINAL_ASC || stereo_mode);
+    wire [1:0] fa_pop_count = fa_decode_tick
+                            ? ((fa_count >= fa_pop_want) ? fa_pop_want
+                               : ((fa_count != 0) ? 2'd1 : 2'd0)) : 2'd0;
+    wire [1:0] fb_pop_count = fb_decode_tick
+                            ? ((fb_count >= fb_pop_want) ? fb_pop_want
+                               : ((fb_count != 0 && fb_pop_want != 0)
+                                  ? 2'd1 : 2'd0)) : 2'd0;
+    wire fa_sample_pop = fa_pop_count != 0;
+    // pop_fifo() updates status after each byte.  A CD-XA block-start
+    // sample pops its parameter and data bytes, so status reflects the
+    // second pop's pre-decrement capacity (including an empty second
+    // pop when only one byte remained).
+    wire [10:0] fa_status_cap = (fa_pop_want == 2 && fa_count != 0)
+                                ? fa_count - 11'd1 : fa_count;
+    wire [10:0] fb_status_cap = (fb_pop_want == 2 && fb_count != 0)
+                                ? fb_count - 11'd1 : fb_count;
     // EASC/Sonora FIFO mode consumes both FIFO channels.  The channel
     // control stereo bit affects presentation, not whether FIFO B drains.
-    wire fb_sample_pop = sample_tick && fifo_active
-                       && (!IS_ORIGINAL_ASC || stereo_mode) && fb_src_advance
-                       && (fb_count > 11'd0);
+    wire fb_sample_pop = fb_pop_count != 0;
     // FIFO mode pushes at the write-pointer; cap saturates at 1024.
     wire fa_cpu_push = fifo_active && pb_wr && pb_addr[11:10] == 2'b00
                      && ((fa_count < 11'd1024) || fa_sample_pop);
@@ -718,6 +740,15 @@ module asc #(
     reg [7:0] fa_pf_fwd_data;    // write data held for the forward mux
     reg       fa_pf_fwd_q;       // previous edge wrote the byte at fa_rp
     wire [7:0] fa_prefetch = fa_pf_fwd_q ? fa_pf_fwd_data : fa_pf_dout;
+    // A duplicate BRAM provides the second byte at CD-XA block boundaries:
+    // the first sample consumes both a parameter byte and a data byte.
+    // Both reads stay synchronous, preserving the inferred BRAM ports.
+    reg [7:0] fifo_a_cdxa [0:1023];
+    reg [7:0] fa_next_dout, fa_next_fwd_data;
+    reg fa_next_fwd_q;
+    wire [9:0] fa_rp_next = fa_rp + 10'd1;
+    wire [7:0] fa_next_prefetch = fa_next_fwd_q
+                                ? fa_next_fwd_data : fa_next_dout;
 
     // ── FIFO A main array — true dual port ────────────────────────────
     // Port A: CPU write, else CPU readback.  Port B: free-running
@@ -732,13 +763,19 @@ module asc #(
         fa_pf_fwd_data <= pb_wdata;
         fa_pf_fwd_q    <= fa_mem_we && (fa_mem_waddr == fa_rp);
     end
+    always @(posedge clk) begin
+        if (fa_mem_we) fifo_a_cdxa[fa_mem_waddr] <= pb_wdata;
+        fa_next_dout <= fifo_a_cdxa[fa_rp_next];
+        fa_next_fwd_data <= pb_wdata;
+        fa_next_fwd_q <= fa_mem_we && (fa_mem_waddr == fa_rp_next);
+    end
 
     // Sample register: loads on a pop, holds on an underflow tick — the
     // "hold previous sample" semantics MAME's stale-rdptr read produces.
     always @(posedge clk) begin
         if (rst)
             sample_a_raw <= 8'h80;      // silent centre until first sample
-        else if (fa_sample_pop)
+        else if (fa_sample_pop && !fa_cdxa4)
             sample_a_raw <= fa_prefetch;
     end
 
@@ -788,6 +825,12 @@ module asc #(
     reg [7:0] fb_pf_fwd_data;
     reg       fb_pf_fwd_q;
     wire [7:0] fb_prefetch = fb_pf_fwd_q ? fb_pf_fwd_data : fb_pf_dout;
+    reg [7:0] fifo_b_cdxa [0:1023];
+    reg [7:0] fb_next_dout, fb_next_fwd_data;
+    reg fb_next_fwd_q;
+    wire [9:0] fb_rp_next = fb_rp + 10'd1;
+    wire [7:0] fb_next_prefetch = fb_next_fwd_q
+                                ? fb_next_fwd_data : fb_next_dout;
 
     always @(posedge clk) begin
         if (fb_mem_we)
@@ -799,11 +842,17 @@ module asc #(
         fb_pf_fwd_data <= pb_wdata;
         fb_pf_fwd_q    <= fb_mem_we && (fb_mem_waddr == fb_rp);
     end
+    always @(posedge clk) begin
+        if (fb_mem_we) fifo_b_cdxa[fb_mem_waddr] <= pb_wdata;
+        fb_next_dout <= fifo_b_cdxa[fb_rp_next];
+        fb_next_fwd_data <= pb_wdata;
+        fb_next_fwd_q <= fb_mem_we && (fb_mem_waddr == fb_rp_next);
+    end
 
     always @(posedge clk) begin
         if (rst)
             sample_b_raw <= 8'h80;
-        else if (fb_sample_pop)
+        else if (fb_sample_pop && !fb_cdxa4)
             sample_b_raw <= fb_prefetch;
     end
 
@@ -830,16 +879,35 @@ module asc #(
 
     wire [11:0] fa_count_delta = {1'b0, fa_count}
                                + (fa_cpu_push ? 12'd1 : 12'd0)
-                               - (fa_sample_pop ? 12'd1 : 12'd0);
+                               - {10'd0, fa_pop_count};
     wire [11:0] fb_count_delta = {1'b0, fb_count}
                                + (fb_cpu_push ? 12'd1 : 12'd0)
-                               - (fb_sample_pop ? 12'd1 : 12'd0);
+                               - {10'd0, fb_pop_count};
     wire [10:0] fa_count_next = (fa_count_delta > 12'd1024)
                               ? 11'd1024 : fa_count_delta[10:0];
     wire [10:0] fb_count_next = (fb_count_delta > 12'd1024)
                               ? 11'd1024 : fb_count_delta[10:0];
     wire fa_next_above = (fa_count_next >= 11'd512);
     wire fb_next_above = (fb_count_next >= 11'd512);
+
+    wire [7:0] xa_param_a_now = (xa_pos_a == 0) ? fa_prefetch : xa_param_a;
+    wire [7:0] xa_param_b_now = (xa_pos_b == 0) ? fb_prefetch : xa_param_b;
+    wire [7:0] xa_byte_a_now = (xa_pos_a == 0) ? fa_next_prefetch
+                              : (xa_subpos_a ? xa_byte_a : fa_prefetch);
+    wire [7:0] xa_byte_b_now = (xa_pos_b == 0) ? fb_next_prefetch
+                              : (xa_subpos_b ? xa_byte_b : fb_prefetch);
+    wire [3:0] xa_nibble_a = xa_subpos_a ? xa_byte_a_now[7:4]
+                           : xa_byte_a_now[3:0];
+    wire [3:0] xa_nibble_b = xa_subpos_b ? xa_byte_b_now[7:4]
+                           : xa_byte_b_now[3:0];
+    wire [2:0] xa_coeff_a = {xa_param_a_now[5:4], 1'b0};
+    wire [2:0] xa_coeff_b = {xa_param_b_now[5:4], 1'b0};
+    wire [15:0] xa_decoded_a = cdxa_predict({xa_nibble_a, 12'b0},
+        xa_param_a_now[3:0], r_cdxa_a[xa_coeff_a + 3'd1],
+        r_cdxa_a[xa_coeff_a], xa_s0_a, xa_s1_a);
+    wire [15:0] xa_decoded_b = cdxa_predict({xa_nibble_b, 12'b0},
+        xa_param_b_now[3:0], r_cdxa_b[xa_coeff_b + 3'd1],
+        r_cdxa_b[xa_coeff_b], xa_s0_b, xa_s1_b);
 
     // ── CPU write / read path + pointer + count updates ───────────────
     always @(posedge clk) begin
@@ -875,13 +943,23 @@ module asc #(
             r_vola_l          <= 8'h00;
             r_vola_r          <= 8'h00;
             r_fifoa_ctrl      <= 8'h00;
-            r_cdxa_a          <= 8'h00;
             r_srcb_h          <= 8'h00;
             r_srcb_l          <= 8'h00;
             r_volb_l          <= 8'h00;
             r_volb_r          <= 8'h00;
             r_fifob_ctrl      <= 8'h00;
-            r_cdxa_b          <= 8'h00;
+            for (xa_reset_idx = 0; xa_reset_idx < 8;
+                 xa_reset_idx = xa_reset_idx + 1) begin
+                r_cdxa_a[xa_reset_idx] <= 8'h00;
+                r_cdxa_b[xa_reset_idx] <= 8'h00;
+            end
+            xa_s0_a <= 0; xa_s1_a <= 0;
+            xa_s0_b <= 0; xa_s1_b <= 0;
+            xa_param_a <= 0; xa_param_b <= 0;
+            xa_byte_a <= 0; xa_byte_b <= 0;
+            xa_pos_a <= 0; xa_pos_b <= 0;
+            xa_subpos_a <= 0; xa_subpos_b <= 0;
+            xa_sample_a <= 0; xa_sample_b <= 0;
             r_wrptra_h_shadow <= 8'h00;
             r_wrptra_l_shadow <= 8'h00;
             r_rdptra_h_shadow <= 8'h00;
@@ -919,6 +997,12 @@ module asc #(
             wt_incr[3]   <= 24'h0;
             irq_q        <= 1'b0;
         end else begin
+            // EASC off-mode stream updates mark FIFO B half full.  The
+            // Q700 ROM observes 0x0c (this bit plus MODE's empty bit)
+            // at the start of its CD-XA FIFO service loop.
+            if (IS_EASC && !fifo_active
+                && ((FIFO_SAMPLE_HZ == 0) ? phi2_tick : fifo_rate_tick))
+                fifostat[STAT_BIT_HALF_FULL_B] <= 1'b1;
             // ─── FIFO write (CPU push) ────────────────────────────────
             // FIFO A: pb_addr 0x000..0x3FF
             // FIFO B: pb_addr 0x400..0x7FF
@@ -1219,9 +1303,9 @@ module asc #(
             // ─── EASC extended-register writes (0xF00..0xF3F) ────────
             // MAME's asc_base_device::write latches every byte landing
             // in this window into m_regs[offset-0x800].  We mirror that
-            // shadowing behavior for the registers we model; CD-XA and
-            // shadowed pointer writes are accepted but functionally
-            // inert (no live pointer or ADPCM decoder is moved).  F09
+            // shadowing behavior for the registers we model. CD-XA
+            // coefficient writes update the decoder; shadowed pointer
+            // writes remain functionally inert. F09
             // and F29 are handled by the dedicated lines above and
             // intentionally skipped here.
             if (pb_wr && pb_addr[11:8] == 4'hF) begin
@@ -1237,7 +1321,9 @@ module asc #(
                     8'h07: r_vola_r     <= pb_wdata;
                     8'h08: r_fifoa_ctrl <= pb_wdata;
                     // 0x09 = R_FIFOA_IRQCTRL — handled above, do not touch.
-                    8'h10: r_cdxa_a     <= pb_wdata;
+                    8'h10, 8'h11, 8'h12, 8'h13,
+                    8'h14, 8'h15, 8'h16, 8'h17:
+                        r_cdxa_a[pb_addr[2:0]] <= pb_wdata;
                     // FIFO B side
                     8'h20: r_wrptrb_h_shadow <= pb_wdata;
                     8'h21: r_wrptrb_l_shadow <= pb_wdata;
@@ -1249,7 +1335,9 @@ module asc #(
                     8'h27: r_volb_r     <= pb_wdata;
                     8'h28: r_fifob_ctrl <= pb_wdata;
                     // 0x29 = R_FIFOB_IRQCTRL — handled above, do not touch.
-                    8'h30: r_cdxa_b     <= pb_wdata;
+                    8'h30, 8'h31, 8'h32, 8'h33,
+                    8'h34, 8'h35, 8'h36, 8'h37:
+                        r_cdxa_b[pb_addr[2:0]] <= pb_wdata;
                     default: ;
                 endcase
             end
@@ -1327,7 +1415,7 @@ module asc #(
                 // FIFO A pop or hold-last-sample-on-underflow (FIFO mode).
                 if (fa_sample_pop) begin
                     // sample_a_raw is loaded by the FIFO A port block.
-                    fa_rp        <= fa_rp + 10'd1;
+                    fa_rp        <= fa_rp + {8'd0, fa_pop_count};
                 end else if (fifo_active && fa_src_advance) begin
                     // Underflow: hold previous sample_a_raw (matches
                     // MAME's m_last_left = smpll where smpll = stale
@@ -1339,10 +1427,29 @@ module asc #(
                 // stream loop drains B unconditionally — no chan_ctl gate.
                 if (fb_sample_pop) begin
                     // sample_b_raw is loaded by the FIFO B port block.
-                    fb_rp        <= fb_rp + 10'd1;
+                    fb_rp        <= fb_rp + {8'd0, fb_pop_count};
                 end else if (fifo_active && fb_src_advance
                              && (!IS_ORIGINAL_ASC || stereo_mode)) begin
                     fb_underflow_sticky <= 1'b1;
+                end
+
+                if (fa_decode_tick && fa_cdxa4) begin
+                    xa_sample_a <= xa_decoded_a;
+                    xa_s1_a <= xa_s0_a;
+                    xa_s0_a <= xa_decoded_a;
+                    xa_param_a <= xa_param_a_now;
+                    xa_byte_a <= xa_byte_a_now;
+                    xa_pos_a <= (xa_pos_a == 5'd27) ? 5'd0 : xa_pos_a + 5'd1;
+                    xa_subpos_a <= !xa_subpos_a;
+                end
+                if (fb_decode_tick && fb_cdxa4) begin
+                    xa_sample_b <= xa_decoded_b;
+                    xa_s1_b <= xa_s0_b;
+                    xa_s0_b <= xa_decoded_b;
+                    xa_param_b <= xa_param_b_now;
+                    xa_byte_b <= xa_byte_b_now;
+                    xa_pos_b <= (xa_pos_b == 5'd27) ? 5'd0 : xa_pos_b + 5'd1;
+                    xa_subpos_b <= !xa_subpos_b;
                 end
 
                 // Wave mode: advance phase counters and, in the same
@@ -1403,27 +1510,27 @@ module asc #(
                     // (asc.cpp:1490-1523 calls pop_fifo for each).
                     if (fifo_active) begin
                         // Channel A
-                        if (fa_src_advance && fa_count <= 11'h1ff) begin
+                        if (fa_src_advance && fa_status_cap <= 11'h1ff) begin
                             fifostat[STAT_BIT_HALF_FULL_A] <= 1'b1;
                             if (!fa_irqen[0])
                                 irq_q <= 1'b1;
                         end else if (fa_src_advance) begin
                             fifostat[STAT_BIT_HALF_FULL_A] <= 1'b0;
                         end
-                        if (fa_src_advance && fa_count == 11'h0)
+                        if (fa_src_advance && fa_status_cap == 11'h0)
                             fifostat[STAT_BIT_EMPTY_OR_FULL_A] <= 1'b1;
                         else if (fa_src_advance)
                             fifostat[STAT_BIT_EMPTY_OR_FULL_A] <= 1'b0;
 
                         // Channel B
-                        if (fb_src_advance && fb_count <= 11'h1ff) begin
+                        if (fb_src_advance && fb_status_cap <= 11'h1ff) begin
                             fifostat[STAT_BIT_HALF_FULL_B] <= 1'b1;
                             if (!fb_irqen[0])
                                 irq_q <= 1'b1;
                         end else if (fb_src_advance) begin
                             fifostat[STAT_BIT_HALF_FULL_B] <= 1'b0;
                         end
-                        if (fb_src_advance && fb_count == 11'h0)
+                        if (fb_src_advance && fb_status_cap == 11'h0)
                             fifostat[STAT_BIT_EMPTY_OR_FULL_B] <= 1'b1;
                         else if (fb_src_advance)
                             fifostat[STAT_BIT_EMPTY_OR_FULL_B] <= 1'b0;
@@ -1547,11 +1654,13 @@ module asc #(
     reg sample_tick_q;
     reg wave_active_q;
     reg stereo_q;
+    reg xa_a_q, xa_b_q;
     always @(posedge clk) begin
         if (rst) begin
             sample_tick_q <= 1'b0;
             wave_active_q <= 1'b0;
             stereo_q      <= 1'b0;
+            xa_a_q <= 1'b0; xa_b_q <= 1'b0;
         end else begin
             sample_tick_q <= sample_tick;
             // Latch mode-class + stereo flag together with the sample
@@ -1559,7 +1668,9 @@ module asc #(
             // the CPU writes 0x801 / 0x802 between the tick and the
             // settle cycle.
             wave_active_q <= wave_active;
-            stereo_q      <= stereo_mode;
+            stereo_q      <= stereo_mode || IS_EASC;
+            xa_a_q <= fa_cdxa4;
+            xa_b_q <= fb_cdxa4;
         end
     end
 
@@ -1581,9 +1692,10 @@ module asc #(
                     audio_pcm_l      <= wt_mix_pcm;
                     audio_pcm_r      <= wt_mix_pcm;
                 end else if (stereo_q) begin
-                    audio_sample_out <= {a_pack, b_pack};
-                    audio_pcm_l      <= a_pcm16;
-                    audio_pcm_r      <= b_pcm16;
+                    audio_sample_out <= {xa_a_q ? xa_sample_a[15:8] : a_pack,
+                                         xa_b_q ? xa_sample_b[15:8] : b_pack};
+                    audio_pcm_l      <= xa_a_q ? xa_sample_a : a_pcm16;
+                    audio_pcm_r      <= xa_b_q ? xa_sample_b : b_pcm16;
                 end else begin
                     audio_sample_out <= {a_pack, a_pack};
                     audio_pcm_l      <= a_pcm16;
@@ -1694,10 +1806,9 @@ module asc #(
                     // WRPTRA/RDPTRA/WRPTRB/RDPTRB return the LIVE FIFO
                     // pointers split into hi/lo bytes (per task brief —
                     // MAME shadows them in m_regs[] only; we surface
-                    // actual state).  All other ext-block registers
-                    // return their last-written latch.  CD-XA stub
-                    // returns the latched byte; real silicon would
-                    // return ADPCM filter coefficients here.
+                    // actual state). All other ext-block registers
+                    // return their last-written latch, including all
+                    // CD-XA predictor coefficient bytes.
                     case (pb_addr)
                         // FIFO A side
                         12'hF00: pb_rdata_reg <= {6'b000000, fa_wp[9:8]};
@@ -1710,7 +1821,9 @@ module asc #(
                         12'hF07: pb_rdata_reg <= r_vola_r;
                         12'hF08: pb_rdata_reg <= r_fifoa_ctrl;
                         12'hF09: pb_rdata_reg <= IS_ORIGINAL_ASC ? 8'h00 : fa_irqen;
-                        12'hF10: pb_rdata_reg <= r_cdxa_a;
+                        12'hF10, 12'hF11, 12'hF12, 12'hF13,
+                        12'hF14, 12'hF15, 12'hF16, 12'hF17:
+                            pb_rdata_reg <= r_cdxa_a[pb_addr[2:0]];
                         // FIFO B side
                         12'hF20: pb_rdata_reg <= {6'b000000, fb_wp[9:8]};
                         12'hF21: pb_rdata_reg <= fb_wp[7:0];
@@ -1722,7 +1835,9 @@ module asc #(
                         12'hF27: pb_rdata_reg <= r_volb_r;
                         12'hF28: pb_rdata_reg <= r_fifob_ctrl;
                         12'hF29: pb_rdata_reg <= IS_ORIGINAL_ASC ? 8'h00 : fb_irqen;
-                        12'hF30: pb_rdata_reg <= r_cdxa_b;
+                        12'hF30, 12'hF31, 12'hF32, 12'hF33,
+                        12'hF34, 12'hF35, 12'hF36, 12'hF37:
+                            pb_rdata_reg <= r_cdxa_b[pb_addr[2:0]];
                         default: pb_rdata_reg <= 8'h00;
                     endcase
                 end
