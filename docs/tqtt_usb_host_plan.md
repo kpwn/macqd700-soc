@@ -162,3 +162,18 @@ This does not meet the 200 MHz timing gate and has not been loaded on hardware.
 No physical USB-A front end is wired to PMOD0 yet. The next hardware gate is a standalone
 host probe with a known keyboard or mouse, followed by a timing-clean
 full-SoC image and Mac input.
+
+A second route from the same 200 MHz USB-enabled placement used
+`AlternateCLBRouting` and ended at WNS −0.049 ns (177 failing setup
+endpoints), WHS +0.005 ns (zero hold failures), and zero pulse-width
+failures. Its bus-skew report has 38 constraints with minimum slack
++2.089 ns. The checkpoint is
+`/var/tmp/tqtt_usb_full_200_altclb/checkpoints/route.dcp`; the blank
+bitstream is `/var/tmp/tqtt_usb_full_200_altclb/fpga_top.blank.bit`
+(SHA-256
+`3b71d83bf0b018396272326fc90add6abb531a1148d066d4be562970f287b379`).
+Separate post-route `AggressiveFanoutOpt` and `Explore` passes from this
+checkpoint did not improve WNS or WHS. The image remains offline because
+its 200 MHz setup constraint is not met. The worst path runs from a CPU
+translated-address register to a D-cache BRAM address input; the USB clock
+and peripheral paths are not the limiting group.
