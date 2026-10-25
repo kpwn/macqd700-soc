@@ -255,11 +255,16 @@ module fpga_top #(
     input  wire        uart_rtl_0_rxd,
     output wire        uart_rtl_0_txd,
 
-    // ── SD card (SPI) ────────────────────────────────────────────────
+    // ── SD card ──────────────────────────────────────────────────────
     output wire        sd_clk,
+`ifdef TQTT_NATIVE_SD
+    inout  wire        sd_cmd,
+    inout  wire [3:0]  sd_dat,
+`else
     output wire        sd_mosi,
     input  wire        sd_miso,
     output wire        sd_cs_n,
+`endif
 
 `ifdef TQTT_BOARD
     // Direct TMDS HDMI on the TQTT board.
@@ -415,7 +420,11 @@ module fpga_top #(
 `include "fpga_top_ddr.vh"
 `include "fpga_top_peripherals.vh"
 `include "fpga_top_debug_ctrl.vh"
+`ifdef TQTT_NATIVE_SD
+`include "fpga_top_sd_native.vh"
+`else
 `include "fpga_top_sd.vh"
+`endif
 `include "fpga_top_video.vh"
 `include "fpga_top_debug_vio.vh"
 

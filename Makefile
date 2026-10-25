@@ -871,6 +871,16 @@ $(SD_NATIVE_CHUNKER_BUILD)/Vtb_sd_native_scsi_chunker: $(RTL_DIR)/soc/sd_native_
 		-Wno-TIMESCALEMOD -Wno-UNUSED -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
 		--Mdir $(SD_NATIVE_CHUNKER_BUILD) $^
 
+SD_NATIVE_RESET_BUILD := $(BUILD_DIR)/tb_sd_native_reset_guard
+.PHONY: tb-sd-native-reset
+tb-sd-native-reset: $(SD_NATIVE_RESET_BUILD)/Vtb_sd_native_reset_guard
+	$(SD_NATIVE_RESET_BUILD)/Vtb_sd_native_reset_guard
+
+$(SD_NATIVE_RESET_BUILD)/Vtb_sd_native_reset_guard: $(RTL_DIR)/soc/sd_native_reset_guard.v $(TB_DIR)/tb_sd_native_reset_guard.sv
+	@mkdir -p $(SD_NATIVE_RESET_BUILD)
+	$(VERILATOR) --binary --timing --top-module tb_sd_native_reset_guard \
+		-Wno-TIMESCALEMOD -Wno-UNUSED --Mdir $(SD_NATIVE_RESET_BUILD) $^
+
 $(SDBOOT_BUILD)/Vtb_sd_boot_top: $(SDBOOT_RTL) $(TB_DIR)/tb_sd_boot.cpp
 	@mkdir -p $(SDBOOT_BUILD)
 	$(VERILATOR) --cc --exe --build --assert \
@@ -3303,6 +3313,7 @@ CPU_DEBUG_PROFILE ?= full
 BOARD ?= rk
 TQTT_HDMI_AUDIO ?= $(if $(filter tqtt,$(BOARD)),1,0)
 TQTT_FAN_AUTO ?= 0
+TQTT_NATIVE_SD ?= 0
 ifneq ($(filter $(BOARD),rk tqtt),$(BOARD))
 $(error BOARD must be rk or tqtt, got '$(BOARD)')
 endif
@@ -3310,6 +3321,7 @@ VIVADO_RUN_ENV := PCIE_TEST_DIR=$(PCIE_TEST_DIR) INCREMENTAL_REF_DCP=$(INCREMENT
 VIVADO_RUN_ENV += BOARD=$(BOARD)
 VIVADO_RUN_ENV += TQTT_HDMI_AUDIO=$(TQTT_HDMI_AUDIO)
 VIVADO_RUN_ENV += TQTT_FAN_AUTO=$(TQTT_FAN_AUTO)
+VIVADO_RUN_ENV += TQTT_NATIVE_SD=$(TQTT_NATIVE_SD)
 # CPU socket select for synth/impl — same CPU=stub|m68k knob as the
 # Verilator flow (see "CPU build select" above); consumed by vivado.tcl.
 VIVADO_RUN_ENV += CPU=$(CPU)
@@ -3891,8 +3903,8 @@ check-tqtt-ddr-map:
 tqtt-full: check-tqtt-ddr-map
 	$(MAKE) tqtt-ddr4-mig
 	$(MAKE) BOARD=tqtt TARGET_FREQ_MHZ=200 CORE_CLK_HZ=200000000 CORE_MMCM=1 \
-	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced \
-	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,)$(if $(filter 1,$(TQTT_FAN_AUTO)),_fan_auto,) impl-split
+	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced TQTT_NATIVE_SD=$(TQTT_NATIVE_SD) \
+	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,)$(if $(filter 1,$(TQTT_FAN_AUTO)),_fan_auto,)$(if $(filter 1,$(TQTT_NATIVE_SD)),_native_sd,) impl-split
 
 .PHONY: test-tqtt-fan-thermal
 test-tqtt-fan-thermal:
@@ -3907,8 +3919,8 @@ test-tqtt-fan-thermal:
 tqtt-full-100: check-tqtt-ddr-map
 	$(MAKE) tqtt-ddr4-mig
 	$(MAKE) BOARD=tqtt TARGET_FREQ_MHZ=100 CORE_CLK_HZ=100000000 CORE_MMCM=1 \
-	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced \
-	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt_100$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,)$(if $(filter 1,$(TQTT_FAN_AUTO)),_fan_auto,) impl-split
+	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced TQTT_NATIVE_SD=$(TQTT_NATIVE_SD) \
+	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt_100$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,)$(if $(filter 1,$(TQTT_FAN_AUTO)),_fan_auto,)$(if $(filter 1,$(TQTT_NATIVE_SD)),_native_sd,) impl-split
 
 .PHONY: fpga-100mhz-jtag-bitstream
 fpga-100mhz-jtag-bitstream:
@@ -4972,7 +4984,7 @@ $(SD_NATIVE_BLOCK_BUILD)/Vsd_native_block_engine: $(RTL_DIR)/soc/sd_native_block
 		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
 		-Mdir $(SD_NATIVE_BLOCK_BUILD) \
 		--top-module sd_native_block_engine \
-		-GPOLL_TIMEOUT_CYCLES=200000 -GEVENT_TIMEOUT_CYCLES=64 \
+		-GPOLL_TIMEOUT_CYCLES=100000 -GEVENT_TIMEOUT_CYCLES=64 \
 		-GCSR_TIMEOUT_CYCLES=16 \
 		$(RTL_DIR)/soc/sd_native_block_engine.v \
 		$(RTL_DIR)/soc/sd_native_command.v \

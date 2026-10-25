@@ -16,6 +16,10 @@ module sd_native_block_engine #(
     input  wire [15:0] block_count,
     input  wire        go,
     output wire        busy,
+    // A card command may be open. Preserve the controller across a debug
+    // reset until CMD12/data completion; the staged write RAM is already
+    // full before this interval begins.
+    output wire        card_session_active,
     output reg         done,
     output reg         error,
     output wire        rd_valid,
@@ -77,6 +81,10 @@ module sd_native_block_engine #(
     wire multi = cmd_type_q == 3'd2 || cmd_type_q == 3'd4;
     wire [14:0] total_bytes = {blocks_q[5:0], 9'b0};
     assign busy = state != S_IDLE;
+    assign card_session_active = state == S_CMD || state == S_CMD_WAIT ||
+                                 state == S_DATA || state == S_DATA_WAIT ||
+                                 state == S_DMA || state == S_DMA_WAIT ||
+                                 state == S_STOP || state == S_STOP_WAIT;
     assign wr_ready = state == S_FILL && wr_avail;
     assign rd_valid = state == S_STREAM && rd_ready && byte_index < total_bytes;
 
@@ -253,15 +261,18 @@ module sd_native_block_engine #(
             error <= 0;
         end else begin
             done <= 0;
-            if ((state == S_DATA || state == S_DATA_WAIT ||
-                 state == S_DMA || state == S_DMA_WAIT) &&
+            if (((state == S_DATA || state == S_DATA_WAIT ||
+                  state == S_DMA || state == S_DMA_WAIT) ||
+                 (state == S_FILL && !wr_ready) ||
+                 (state == S_STREAM && !rd_valid)) &&
                 poll_timer == POLL_LAST) begin
                 state <= S_IDLE;
                 done <= 1;
                 error <= 1;
             end else begin
                 if (state == S_DATA || state == S_DATA_WAIT ||
-                    state == S_DMA || state == S_DMA_WAIT)
+                    state == S_DMA || state == S_DMA_WAIT ||
+                    state == S_FILL || state == S_STREAM)
                     poll_timer <= poll_timer + 1'b1;
                 case (state)
                     S_IDLE: if (go) begin
@@ -276,14 +287,18 @@ module sd_native_block_engine #(
                             blocks_q <= block_count;
                             byte_index <= 0;
                             cfg_step <= 0;
+                            poll_timer <= 0;
                             state <= cmd_type >= 3'd3 ? S_FILL : S_CFG;
                         end
                     end
-                    S_FILL: if (wr_ready) begin
-                        byte_index <= byte_index + 1'b1;
-                        if (byte_index + 1'b1 == total_bytes) begin
-                            cfg_step <= 0;
-                            state <= S_CFG;
+                    S_FILL: begin
+                        if (wr_ready) begin
+                            poll_timer <= 0;
+                            byte_index <= byte_index + 1'b1;
+                            if (byte_index + 1'b1 == total_bytes) begin
+                                cfg_step <= 0;
+                                state <= S_CFG;
+                            end
                         end
                     end
                     S_CFG: if (direct_csr_ready) state <= S_CFG_WAIT;
@@ -322,6 +337,7 @@ module sd_native_block_engine #(
                             state <= multi ? S_STOP : writing ? S_IDLE : S_STREAM;
                             if (!multi && writing) done <= 1;
                             byte_index <= 0;
+                            poll_timer <= 0;
                         end else state <= S_DMA;
                     end
                     S_STOP: if (!command_busy) state <= S_STOP_WAIT;
@@ -330,9 +346,13 @@ module sd_native_block_engine #(
                             state <= S_IDLE; done <= 1; error <= 1;
                         end else if (writing) begin
                             state <= S_IDLE; done <= 1;
-                        end else state <= S_STREAM;
+                        end else begin
+                            state <= S_STREAM;
+                            poll_timer <= 0;
+                        end
                     end
                     S_STREAM: if (rd_valid) begin
+                        poll_timer <= 0;
                         byte_index <= byte_index + 1'b1;
                         if (byte_index + 1'b1 == total_bytes) begin
                             state <= S_IDLE;

@@ -107,16 +107,27 @@ set_property -dict {PACKAGE_PIN F15 IOSTANDARD LVCMOS18} [get_ports {led[2]}]
 set_property -dict {PACKAGE_PIN D15 IOSTANDARD LVCMOS18} [get_ports {led[3]}]
 set_property -dict {PACKAGE_PIN E15 IOSTANDARD LVCMOS18} [get_ports fan_pwm]
 set_property -dict {PACKAGE_PIN G17 IOSTANDARD LVCMOS18} [get_ports fan_fb]
-# SD SPI: J8 DAT3 is active-low chip select.
-set_property -dict {PACKAGE_PIN AE15 IOSTANDARD LVCMOS33} [get_ports sd_clk]
-set_property -dict {PACKAGE_PIN AD15 IOSTANDARD LVCMOS33} [get_ports sd_mosi]
-set_property -dict {PACKAGE_PIN AF13 IOSTANDARD LVCMOS33 PULLUP TRUE} [get_ports sd_miso]
-set_property -dict {PACKAGE_PIN AF14 IOSTANDARD LVCMOS33 PULLUP TRUE} [get_ports sd_cs_n]
-# Keep the physical SPI pads in timing analysis, as on the RK board.
-# These are FPGA latency allocations; card round-trip timing is separate.
-set sd_spi_tx_q [get_pins -hier -filter {NAME =~ */spi_clk_reg/Q || NAME =~ */spi_mosi_reg/Q || NAME =~ */spi_cs_n_reg/Q}]
-set_max_delay -datapath_only 4.000 -from $sd_spi_tx_q -to [get_ports {sd_clk sd_mosi sd_cs_n}]
-set_max_delay -datapath_only 3.000 -from [get_ports sd_miso]
+# J8 supports either the legacy SPI pins or the native four-bit pins.
+if {[info exists ::env(TQTT_NATIVE_SD)] && $::env(TQTT_NATIVE_SD) eq "1"} {
+    set_property PACKAGE_PIN AE15 [get_ports sd_clk]
+    set_property PACKAGE_PIN AD15 [get_ports sd_cmd]
+    set_property PACKAGE_PIN AF13 [get_ports {sd_dat[0]}]
+    set_property PACKAGE_PIN AE13 [get_ports {sd_dat[1]}]
+    set_property PACKAGE_PIN AF15 [get_ports {sd_dat[2]}]
+    set_property PACKAGE_PIN AF14 [get_ports {sd_dat[3]}]
+    set_property IOSTANDARD LVCMOS33 [get_ports {sd_clk sd_cmd sd_dat[*]}]
+    set_property PULLUP TRUE [get_ports {sd_cmd sd_dat[*]}]
+} else {
+    set_property -dict {PACKAGE_PIN AE15 IOSTANDARD LVCMOS33} [get_ports sd_clk]
+    set_property -dict {PACKAGE_PIN AD15 IOSTANDARD LVCMOS33} [get_ports sd_mosi]
+    set_property -dict {PACKAGE_PIN AF13 IOSTANDARD LVCMOS33 PULLUP TRUE} [get_ports sd_miso]
+    set_property -dict {PACKAGE_PIN AF14 IOSTANDARD LVCMOS33 PULLUP TRUE} [get_ports sd_cs_n]
+    # Keep the physical SPI pads in timing analysis, as on the RK board.
+    # These are FPGA latency allocations; card round-trip timing is separate.
+    set sd_spi_tx_q [get_pins -hier -filter {NAME =~ */spi_clk_reg/Q || NAME =~ */spi_mosi_reg/Q || NAME =~ */spi_cs_n_reg/Q}]
+    set_max_delay -datapath_only 4.000 -from $sd_spi_tx_q -to [get_ports {sd_clk sd_mosi sd_cs_n}]
+    set_max_delay -datapath_only 3.000 -from [get_ports sd_miso]
+}
 # Direct TMDS, qualified by the standalone HDMI probe.
 set_property PACKAGE_PIN T25 [get_ports tmds_clk_p]
 set_property PACKAGE_PIN U25 [get_ports tmds_clk_n]

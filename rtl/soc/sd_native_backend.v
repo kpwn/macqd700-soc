@@ -17,6 +17,7 @@ module sd_native_backend (
     input  wire [15:0] block_count,
     input  wire        go,
     output wire        busy,
+    output wire        card_session_active,
     output wire        done,
     output wire        error,
     output wire        rd_valid,
@@ -64,7 +65,8 @@ module sd_native_backend (
     sd_native_block_engine u_block (
         .clk(clk), .rst(rst || !ready),
         .cmd_type(cmd_type), .lba(lba), .block_count(block_count), .go(go),
-        .busy(busy), .done(done), .error(error),
+        .busy(busy), .card_session_active(card_session_active),
+        .done(done), .error(error),
         .rd_valid(rd_valid), .rd_data(rd_data), .rd_ready(rd_ready),
         .wr_ready(wr_ready), .wr_data(wr_data), .wr_avail(wr_avail),
         .debug_dma_words(debug_dma_words),
