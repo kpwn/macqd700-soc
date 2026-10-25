@@ -149,9 +149,10 @@ an isolated write-path reproduction and HFS consistency check.
    12,288 ordered bytes at the four-cycle rate, including reader stalls and
    an interrupted-transfer reset (`make tb-sd-native-fifo`).
    `sd_scsi_native_bridge` now wraps the established request/reset crossing
-   with read and write FIFOs. Its focused test checks ordered 512-byte reads
-   and writes, read completion only after the final byte reaches the SCSI
-   side, and FIFO backpressure (`make tb-sd-native-bridge`). The wrapper is
+   with read and write FIFOs. Its focused test checks ordered one- and
+   32-sector reads and writes, read completion only after the final byte
+   reaches the SCSI side, FIFO backpressure, partial-read error propagation,
+   and a core-side reset abort (`make tb-sd-native-bridge`). The wrapper is
    not yet connected to the card controller or full Mac top. Boot must use a
    native block reader and an AXI
    clock crossing to copy the ROM into DDR; the current `boot_fsm` performs
