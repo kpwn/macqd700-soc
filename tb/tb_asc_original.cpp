@@ -50,6 +50,9 @@ int main() {
     for(int i=0;i<20;i++) write8(0x400,uint8_t(i));
     samples(20);
     ok &= check("mono ignores B FIFO",read8(0xF23),0);
+    write8(0x801,0);
+    ok &= check("mode change resets A read pointer",read8(0xF03),0);
+    ok &= check("mode change resets A write pointer",read8(0xF01),0);
 
     reset();
     write8(0x802,2); // original R_CONTROL stereo bit
