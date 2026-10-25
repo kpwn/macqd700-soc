@@ -344,8 +344,15 @@ an isolated write-path reproduction and HFS consistency check.
    reported eleven incomplete global-clock guidance trees but completed
    routing and passed final timing and DRC. This image has not been loaded;
    native card integrity, actual High Speed selection, and PRAM persistence
-   all still need hardware checks. JTAG bulk provisioning also needs a
-   native path before replacing the SPI transport. Keep the RK SPI path.
+   all still need hardware checks. Keep the RK SPI path.
+   A separate native-mode TQTT JTAG provisioner is now built at
+   `build/sd_provision_tqtt_native/sd_provision_top.bit` (SHA-256
+   `e268eb9972404f1b21b12f12bc04ff0e1bc946c97b7224eaa864439d4b7c4255`).
+   It retains the existing JTAG commands and uses 32-sector native batches.
+   Post-route WNS/WHS/WPWS are +5.804/+0.018/+4.458 ns; bitstream DRC has
+   zero errors. SPI provisioning regression and native two-sector writer
+   round trip pass. The native image has not been loaded or used to write
+   a card; physical read-only integrity checks remain the prerequisite.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest

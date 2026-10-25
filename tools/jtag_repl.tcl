@@ -1882,6 +1882,7 @@ proc sdp_err_name {cause} {
         4  { return "data-response bad (write rejected)" }
         5  { return "busy timeout" }
         6  { return "unsupported cmd" }
+        13 { return "native transport error" }
         14 { return "bad BLKCNT" }
         15 { return "card not ready" }
         default { return "cause=$cause" }
@@ -2390,11 +2391,11 @@ proc sd_fast_status {} {
     set st   [sdp_rd $::SDP_OFF_STATUS]
     set crc  [sdp_rd $::SDP_OFF_CRC32]
     set cause [expr {($st >> 4) & 0xF}]
-    return [format "ident=OK caps: v%d stage_sectors=%d | busy=%d done=%d error=%d (%s) card_ready=%d init_error=%d | crc32=0x%08X" \
+    return [format "ident=OK caps: v%d stage_sectors=%d | busy=%d done=%d error=%d (%s) card_ready=%d init_error=%d native_high_speed=%d | crc32=0x%08X" \
         [expr {($caps >> 16) & 0xFFFF}] [expr {$caps & 0xFFFF}] \
         [expr {$st & 1}] [expr {($st >> 1) & 1}] [expr {($st >> 2) & 1}] \
         [sdp_err_name $cause] \
-        [expr {($st >> 8) & 1}] [expr {($st >> 9) & 1}] $crc]
+        [expr {($st >> 8) & 1}] [expr {($st >> 9) & 1}] [expr {($st >> 10) & 1}] $crc]
 }
 
 proc dbg_rd {off}      { return [rd [expr {$::DBG_BASE + $off}] $::axi_dbg] }

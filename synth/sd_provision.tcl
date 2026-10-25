@@ -35,6 +35,8 @@ set synth_dir $proj_root/synth
 set part      "xcku5p-ffvb676-2-i"
 set board     [expr {[info exists ::env(BOARD)] ? $::env(BOARD) : "rk"}]
 if {$board ni {rk tqtt}} {error "BOARD must be rk or tqtt"}
+set native_sd [expr {[info exists ::env(TQTT_NATIVE_SD_PROVISION)] && $::env(TQTT_NATIVE_SD_PROVISION) eq "1"}]
+if {$native_sd && $board ne "tqtt"} {error "native SD provisioning requires BOARD=tqtt"}
 
 file mkdir $output_dir
 file mkdir $output_dir/reports
@@ -111,8 +113,23 @@ read_verilog [list \
     $rtl_dir/soc/sd_provision_core.v \
     $rtl_dir/soc/sd_provision_top.v \
 ]
+if {$native_sd} {
+    read_verilog [list \
+        $proj_root/third_party/litesdcard/litesdcard_core.v \
+        $rtl_dir/soc/sd_native_csr_master.v \
+        $rtl_dir/soc/sd_native_command.v \
+        $rtl_dir/soc/sd_native_init.v \
+        $rtl_dir/soc/sd_native_init_controller.v \
+        $rtl_dir/soc/sd_native_block_engine.v \
+        $rtl_dir/soc/sd_native_hs_switch.v \
+        $rtl_dir/soc/sd_native_backend.v \
+        $rtl_dir/soc/sd_native_provision_core.v \
+    ]
+}
 
-if {$board eq "tqtt"} {
+if {$native_sd} {
+    read_xdc $synth_dir/tqtt_sd_provision_native.xdc
+} elseif {$board eq "tqtt"} {
     read_xdc $synth_dir/tqtt_sd_provision.xdc
 } else {
     read_xdc $synth_dir/sd_provision.xdc
@@ -124,6 +141,7 @@ if {$board eq "tqtt"} {
 puts "=== SYNTHESIS (sd_provision_top) ==="
 set defines [list PROV_JTAG_AXI]
 if {$board eq "tqtt"} {lappend defines TQTT_BOARD}
+if {$native_sd} {lappend defines TQTT_NATIVE_PROVISION}
 synth_design -top sd_provision_top -part $part \
     -verilog_define $defines -flatten_hierarchy rebuilt
 

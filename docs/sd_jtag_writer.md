@@ -45,6 +45,15 @@ image, stages batches in BRAM, writes them with CMD25, and reads them back
 with CMD18 for CRC32 verification. Leave verification enabled. The dedicated
 provisioning engine is distinct from the Mac's runtime CMD24 storage path.
 
+For TQTT native four-bit mode, build `make sd-provision-native-impl` and load
+`build/sd_provision_tqtt_native/sd_provision_top.bit`. This variant uses the
+same JTAG commands with 32-sector staging batches. `sd-fast-status` reports
+`native_high_speed=1` only when the card negotiated the 50 MHz mode. The
+native bitstream has not yet passed physical card validation; first power
+cycle or reseat a card previously used in SPI mode, then run the read-only
+native integrity matrix before any card write. Keep the existing SPI
+provisioning image available for RK.
+
 `sd-read <card-lba> <nsectors> <outfile> [noreread]` dumps the card to a host
 file for byte-diffing against an image (needs CAPS version 2, i.e. the
 `GO_READ` op, CTRL `0x5DB00003`). Each 256-sector batch is CMD18-read into the

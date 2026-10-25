@@ -44,11 +44,16 @@ module sd_provision_top (
 
     output wire [3:0] led,
 
-    // SD card SPI pins.
+    // SD card pins.
     output wire       sd_clk,
+`ifdef TQTT_NATIVE_PROVISION
+    inout  wire       sd_cmd,
+    inout  wire [3:0] sd_dat
+`else
     output wire       sd_mosi,
     input  wire       sd_miso,
     output wire       sd_cs_n
+`endif
 );
 
     // ──────────────────────────────────────────────────────────────────
@@ -262,6 +267,9 @@ module sd_provision_top (
     wire init_error;
     wire writer_busy;
 
+`ifdef TQTT_NATIVE_PROVISION
+    sd_native_provision_core u_core (
+`else
     sd_provision_core #(
         .STAGE_SECTORS (256),
         // 100 MHz core clock → 200 kHz init, 12.5 MHz fast, 25 MHz HS.
@@ -269,6 +277,7 @@ module sd_provision_top (
         .SPI_FAST_HALF (4),
         .SPI_HS_HALF   (2)
     ) u_core (
+`endif
         .clk        (core_clk),
         .rst        (core_rst),
 
@@ -295,9 +304,14 @@ module sd_provision_top (
         .s_rready   (jaxi_rready),
 
         .sd_clk     (sd_clk),
+`ifdef TQTT_NATIVE_PROVISION
+        .sd_cmd     (sd_cmd),
+        .sd_dat     (sd_dat),
+`else
         .sd_mosi    (sd_mosi),
         .sd_miso    (sd_miso),
         .sd_cs_n    (sd_cs_n),
+`endif
 
         .card_ready (card_ready),
         .init_error (init_error),

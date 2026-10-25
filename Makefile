@@ -1297,6 +1297,16 @@ SDPROV_CORE_RTL := \
 SDPROV_BUILD := $(BUILD_DIR)/sd_provision_tb
 
 .PHONY: tb-sd-provision
+SD_BULK_NATIVE_BUILD := $(BUILD_DIR)/tb_sd_bulk_native
+.PHONY: tb-sd-provision-native
+tb-sd-provision-native:
+	@mkdir -p $(SD_BULK_NATIVE_BUILD)
+	$(VERILATOR) --binary --timing --top-module tb_sd_bulk_native \
+		-Wno-TIMESCALEMOD -Wno-UNUSED -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		--Mdir $(SD_BULK_NATIVE_BUILD) $(RTL_DIR)/board/sd_bulk_writer.v \
+		$(TB_DIR)/tb_sd_bulk_native.sv
+	$(SD_BULK_NATIVE_BUILD)/Vtb_sd_bulk_native
+
 tb-sd-provision: $(SDPROV_BUILD)/Vtb_sd_provision_top
 	@echo "Running sd_provision bulk-writer unit tb..."
 	$(SDPROV_BUILD)/Vtb_sd_provision_top
@@ -1349,6 +1359,14 @@ sd-provision-impl:
 	@mkdir -p $(SDPROV_VIVADO_DIR)
 	@touch $(VIVADO_LOCK)
 	flock -n -E 75 $(VIVADO_LOCK) -c 'BOARD=$(BOARD) $(VIVADO) -mode batch -source $(SYNTH_DIR)/sd_provision.tcl -tclargs full_impl $(SDPROV_VIVADO_DIR)' \
+	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
+
+SDPROV_NATIVE_DIR := $(BUILD_DIR)/sd_provision_tqtt_native
+.PHONY: sd-provision-native-synth sd-provision-native-impl
+sd-provision-native-synth sd-provision-native-impl:
+	@mkdir -p $(SDPROV_NATIVE_DIR)
+	@touch $(VIVADO_LOCK)
+	flock -n -E 75 $(VIVADO_LOCK) -c 'BOARD=tqtt TQTT_NATIVE_SD_PROVISION=1 $(VIVADO) -mode batch -source $(SYNTH_DIR)/sd_provision.tcl -tclargs $(if $(filter sd-provision-native-impl,$@),full_impl,synth_only) $(SDPROV_NATIVE_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — fall back to sim work"; fi; exit $$status; }
 
 # tb-scaler removed: rtl/board/video_phy/scaler.v was deleted (superseded
@@ -9435,7 +9453,7 @@ ALL_TBS := \
 	tb-rtc tb-q700-eth-sonic tb-q700-eth-sonic-engine tb-q700-sonic-tx tb-q700-sonic-rx tb-q700-eth-stream-share tb-q700-toggle-rx tb-q700-toggle-rx-mut tb-asc tb-audio-i2s tb-audio-pwm tb-adb tb-adb-inject \
 	tb-iwm tb-scsi-c96-probe tb-scsi-c96-register tb-scsi-c96-inquiry tb-scsi-c96-read6 tb-scsi-c96-cmdout-drain tb-scsi-c96-nondma-trailing tb-turboscsi tb-pb-scsi tb-async-fifo tb-axi-async-bridge tb-glue \
 	tb-scsi-c96-mame-chunk tb-scsi-c96-sm43-chunk tb-scsi-dual tb-scsi-trace-ring tb-sonic-trace-ring tb-scsi-trace-pb \
-	tb-sd-provision tb-sd-jtag-writer tb-vhdd-ctrl \
+	tb-sd-provision tb-sd-provision-native tb-sd-jtag-writer tb-vhdd-ctrl \
 	tb-dma-ctrl tb-dma-engine tb-dma-l2c tb-axil-null-slave tb-axil-split2 \
 	tb-pram-sd tb-pram-sd-populated tb-pram-sd-autoload tb-pram-sd-native \
 	tb-l2c-pri8 tb-l2c tb-l2c-stress tb-l2c-collision tb-l2c-bypass-all tb-l2c-chain tb-l2c-chain-off \

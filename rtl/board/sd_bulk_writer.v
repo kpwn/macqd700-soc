@@ -64,7 +64,8 @@
 `default_nettype none
 
 module sd_bulk_writer #(
-    parameter integer STAGE_SECTORS = 256      // 128 KiB staging BRAM
+    parameter integer STAGE_SECTORS = 256,     // 128 KiB staging BRAM
+    parameter integer NATIVE_TRANSPORT = 0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -106,6 +107,22 @@ module sd_bulk_writer #(
     output wire        spi_cs_n_in,
     output wire        spi_fast_mode,
     output wire        spi_hs_mode,
+
+    // Optional four-bit block backend; max 32 sectors per request.
+    output wire [2:0]  native_cmd_type,
+    output wire [31:0] native_lba,
+    output wire [15:0] native_block_count,
+    output wire        native_go,
+    input  wire        native_busy,
+    input  wire        native_done,
+    input  wire        native_error,
+    input  wire        native_high_speed,
+    input  wire        native_rd_valid,
+    input  wire [7:0]  native_rd_data,
+    output wire        native_rd_ready,
+    input  wire        native_wr_ready,
+    output wire [7:0]  native_wr_data,
+    output wire        native_wr_avail,
 
     output wire        writer_busy
 );
@@ -274,7 +291,7 @@ module sd_bulk_writer #(
     always @(*) begin
         case (rd_reg)
             REG_LBA:    rd_reg_value = lba_q;
-            REG_STATUS: rd_reg_value = {22'd0, init_error, card_ready,
+            REG_STATUS: rd_reg_value = {21'd0, native_high_speed, init_error, card_ready,
                                         err_cause_q, 1'b0, error_q,
                                         done_sticky_q, writer_busy};
             REG_BLKCNT: rd_reg_value = {16'd0, blkcnt_q};
@@ -472,6 +489,30 @@ module sd_bulk_writer #(
     // ──────────────────────────────────────────────────────────────────
     // sd_ctrl — CMD25 (bulk write) / CMD18 (CRC verify) data transport.
     // ──────────────────────────────────────────────────────────────────
+    assign native_cmd_type = mode_write_q ? CT_CMD25 : CT_CMD18;
+    assign native_lba = lba_q;
+    assign native_block_count = blkcnt_q;
+    assign native_go = (NATIVE_TRANSPORT != 0) && ctrl_go_q;
+    assign native_rd_ready = 1'b1;
+    assign native_wr_data = bdata_q;
+    // Port B has a two-cycle synchronous prefetch pipeline. The native
+    // engine can take a byte every clock, so hold AVAIL until bdata_q has
+    // captured the next byte. SPI pacing hid this latency implicitly.
+    assign native_wr_avail = (NATIVE_TRANSPORT != 0) && mode_write_q &&
+                             !bpend0_q && !bpend1_q;
+
+    generate if (NATIVE_TRANSPORT != 0) begin : g_native_transport
+        assign ctrl_busy = native_busy;
+        assign ctrl_done = native_done;
+        assign ctrl_error = native_error;
+        assign ctrl_err_cause = native_error ? 4'hD : 4'h0;
+        assign ctrl_wr_ready = native_wr_ready;
+        assign ctrl_wr_valid_unused = 1'b0;
+        assign ctrl_rd_valid = native_rd_valid;
+        assign ctrl_rd_data = native_rd_data;
+        assign spi_cmd_valid = 1'b0;
+        assign spi_cmd_data = 8'b0;
+    end else begin : g_spi_transport
     sd_ctrl u_sd_ctrl (
         .clk           (clk),
         .rst           (rst),
@@ -512,6 +553,7 @@ module sd_bulk_writer #(
         .dbg_block_idx(/* unused */),
         .dbg_last_poll_cnt(/* unused */)
     );
+    end endgenerate
 
     // verilator lint_off UNUSED
     wire _unused = &{1'b0, s_awlen, ctrl_wr_valid_unused,
