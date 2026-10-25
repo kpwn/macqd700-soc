@@ -195,8 +195,11 @@ an isolated write-path reproduction and HFS consistency check.
    sectors, CRC32, and DMA timing. The original engine probe was loaded in
    FPGA SRAM on 2026-10-25; Vivado detected its VIO and its automatic init
    reported an error before the card was reseated. This is not a native card
-   transfer result. The script pulses the probe's soft reset after the card
-   power cycle so initialization can be retried. The current source factors
+   transfer result. It was reloaded after the audio hardware test using
+   `tools/tqtt_sd_native_engine_load.tcl`; this loader issues no card
+   command and leaves the SPI flash untouched. The read script pulses the
+   probe's soft reset after the card power cycle so initialization can be
+   retried. The current source factors
    that same init, block RAM, and LiteSDCard wiring into `sd_native_backend`
    for reuse in the full Mac. The refactored probe also routed at 100 MHz
    (WNS +5.519 ns, WHS +0.022 ns, DRC zero errors) in the separate
