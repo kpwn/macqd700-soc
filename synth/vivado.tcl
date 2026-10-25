@@ -1608,6 +1608,24 @@ if {$board eq "tqtt"} {
         error "TQTT TMDS pixel-clock synchronizer not found: $pixel_sync_input"
     }
     set_false_path -to $pixel_sync_input
+    # The TMDS word is registered on pclk and loaded by shift_word only
+    # after pixel_meta -> pixel_sync -> pixel_start has traversed the x5
+    # domain. Even if pixel_meta samples the new pclk level on the very
+    # same edge, the load is at least TWO x5 rising edges after the word
+    # changes. The default related-clock check assumes the first x5 edge
+    # and forces this stable symbol bus into a 2.694 ns window it never
+    # uses. Keep the ordinary same-edge hold check with -end; the x5
+    # clock has a different period from pclk. This adds no video latency.
+    set pixel_clk [get_clocks -quiet -of_objects \
+        [get_pins -quiet u_video/u_mmcm/u_bufg_pclk/O]]
+    set serializer_word_d [get_pins -quiet -hier -filter \
+        {NAME =~ */u_serializer/shift_word_reg*/D}]
+    if {[llength $pixel_clk] != 1 || [llength $serializer_word_d] < 30} {
+        error "TQTT TMDS word transfer geometry changed: pclk=$pixel_clk inputs=[llength $serializer_word_d]"
+    }
+    set_multicycle_path -setup 2 -from $pixel_clk -to $serializer_word_d
+    set_multicycle_path -hold 1 -end -from $pixel_clk -to $serializer_word_d
+    puts "=== TQTT TMDS WORD: two x5 cycles for [llength $serializer_word_d] shift inputs ==="
     if {$tqtt_hdmi_audio} {
         set audio_clk_reg [get_pins -hier -filter {NAME =~ *audio_clk_div_reg/C}]
         set audio_clk_bufg [get_pins -hier -filter {NAME =~ *u_audio_bufg/O}]

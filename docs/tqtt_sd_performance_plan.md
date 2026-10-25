@@ -563,3 +563,28 @@ The 15 changed sectors were restored from the reference image and each
 immediately verified. A second full-volume comparison of 95,411 sectors
 reported zero mismatches
 (`/var/tmp/tqtt_native_diff_after_credit_repair_95411.log`).
+
+The fixed image from commit `de0c3f8` is
+`/var/tmp/tqtt_native_credit_reserve2_100/vivado/fpga_top.local.bit`
+(local ADB firmware; SHA-256
+`481d006cb099ff1429e435c33e154c86feb6de4ddbbb3693f5a8176eef7eff5c`).
+It keeps the same 100 MHz CPU, 50 MHz four-bit SD, HDMI audio, fan control,
+and Ethernet configuration. Final WNS/WHS/WPWS are +0.012/+0.001/0.000 ns,
+with zero failing endpoints and zero bitstream DRC errors. JTAG loaded it
+with VIO probes as build ID `0xDE0C3F8D`. The Mac reached the System 7
+desktop and its unclean-shutdown dialog, passing the prior LBA 46700 write
+wedge. At the desktop the SCSI probe read 2077 completions, zero SD errors,
+zero CHECK CONDITIONs, and an idle backend.
+
+The native provisioner then compared all 95,411 disk sectors to the clean
+source image. Eight 32-sector batches differed. Every changed batch was
+read twice and saved under
+`/var/tmp/tqtt_native_credit_reserve2_100/card_post_boot/`; the full scan
+is `/var/tmp/tqtt_native_credit_reserve2_100/card_after_boot_diff.log`.
+The changed sectors were overlaid on a copy of the clean image, which
+mounted as an HFS volume with a current modification date and a readable
+System Folder and Finder. These sectors include normal Mac OS writeback;
+they were preserved on the card. This proves a successful boot and
+navigable volume after native writes, but does not by itself prove every
+changed byte is correct. The byte-exact regression and native block-engine
+test supply the complementary data-path evidence.
