@@ -33,6 +33,8 @@ int main() {
     ok &= check("original version",read8(0x800),0);
     ok &= check("original reset mode",read8(0x801),0);
     ok &= check("original reset status",read8(0x804),0);
+    ok &= check("original A IRQ control reads zero",read8(0xF09),0);
+    ok &= check("original B IRQ control reads zero",read8(0xF29),0);
     write8(0x807,3);
     ok &= check("clock register readback",read8(0x807),3);
     write8(0x012,0x5a); // direct-addressed FIFO RAM in mode 0
