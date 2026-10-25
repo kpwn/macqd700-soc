@@ -179,3 +179,14 @@ The native High Speed probe remained asserted. The fan probe reported ADC code
 635 (about 35.6 °C), duty 140/255, and tach 3,780 RPM. HDMI capture still
 showed a live Finder desktop. These are continued-run health checks, not a
 power-on boot test or a sustained disk integrity workload.
+
+A bitstream-only rewrite of the same routed 200 MHz checkpoint with SPIx4,
+51 MHz configuration rate, and compression passed Vivado bitstream DRC with
+zero errors. Its blank `.bit` shrank from 15,431,259 to 12,690,253 bytes.
+`updatemem` accepted the compressed file and produced the local ADB-patched
+`/var/tmp/tqtt_c96_waitfix_200_bootopt/vivado/fpga_top.local.bit` (12,720,849
+bytes, SHA-256
+`1c57d1e2903f0aa5b8780169b40fbc7fa054be32540df482f0451e2cae08b931`).
+This candidate has not yet been loaded or flashed. The configuration settings
+may shorten flash boot, but a flash write still needs a separate reboot of
+the FPGA target image; they do not make readback verification a boot test.

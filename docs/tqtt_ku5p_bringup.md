@@ -368,10 +368,19 @@ the earlier DDR, SD, HDMI, or GMII probes, which used T24/U24 instead.
 AMD's [DS922 recommended operating conditions](https://docs.amd.com/r/en-US/ds922-kintex-ultrascale-plus/Recommended-Operating-Conditions)
 limit HP-bank VCCO to 1.9 V and input voltage to VCCO + 0.2 V.
 
-Close the 200 MHz core timing and run full Mac benchmarks and storage integrity
-checks. Confirm full-Mac HDMI audio and bring up physical USB/ADB/serial.
-RK remains selectable as `BOARD=rk` until the TQTT full image passes these
-checks.
+The integrated 200 MHz image booted Mac OS, ran Speedometer, copied and
+launched an application from the native High Speed SD card, carried HDMI
+audio, and maintained fan temperature control. The known-good routed image
+has WNS/WHS -0.052/+0.003 ns. A second route using
+`AlternateCLBRouting` from the same placement ended at -0.048/+0.001 ns,
+with 296 failing core setup endpoints and zero hold or pulse-width failures;
+it was not loaded because it did not close timing or materially improve the
+working image. Its routed checkpoint and report are under
+`/var/tmp/tqtt_c96_waitfix_200_altclb/vivado/`.
+
+Close 200 MHz core timing, verify unattended SPI power-on boot, complete a
+byte-exact large-file SD readback, and bring up physical USB/ADB/serial.
+RK remains selectable as `BOARD=rk` until these TQTT checks pass.
 
 Board pin facts were checked against the TQTT XCKU5P schematic and example
 constraints at <https://github.com/joshheyse/tqtt-ku5p>. No vendor example
