@@ -3,8 +3,8 @@
 # The reference clock is 100 MHz. Differential mate pins are paired by Vivado.
 
 # Boot from the board's configuration SPI flash.  The standalone TQTT probes
-# already use SPIx4 at 51 MHz; keep the full Mac image on the same qualified
-# configuration settings.  Compression reduces the time spent in configuration
+# already use SPIx4 at 51 MHz; keep the full Mac image on the same settings.
+# Compression reduces the time spent in configuration
 # before the Mac design can drive HDMI, LEDs, and the fan.
 set_property BITSTREAM.GENERAL.COMPRESS TRUE [current_design]
 set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
