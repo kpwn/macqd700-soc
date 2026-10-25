@@ -1,5 +1,21 @@
 # Board-specific SD pin and timing checks after routing.
-if {[info exists ::env(TQTT_NATIVE_SD)] && $::env(TQTT_NATIVE_SD) eq "1"} {
+# A resumed route opens a checkpoint in a fresh Vivado process, where the
+# original build environment may be absent.  The routed top-level ports are
+# authoritative: native SD has sd_cmd; SPI has sd_mosi/sd_cs_n.  When the
+# environment is provided, reject a mismatch rather than checking the wrong
+# interface and producing a misleading timing error.
+set native_sd_ports [get_ports -quiet sd_cmd]
+if {[llength $native_sd_ports] > 1} {error "multiple sd_cmd ports"}
+set native_sd_mode [expr {[llength $native_sd_ports] == 1}]
+if {[info exists ::env(TQTT_NATIVE_SD)]} {
+    if {$::env(TQTT_NATIVE_SD) ni {0 1}} {
+        error "TQTT_NATIVE_SD must be 0 or 1"
+    }
+    if {$::env(TQTT_NATIVE_SD) != $native_sd_mode} {
+        error "TQTT_NATIVE_SD=$::env(TQTT_NATIVE_SD) disagrees with routed SD ports"
+    }
+}
+if {$native_sd_mode} {
     foreach {sd_port sd_pin} {
         sd_clk AE15
         sd_cmd AD15
