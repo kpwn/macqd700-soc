@@ -440,3 +440,9 @@ one- and 32-sector reads and writes. Hardware validation remains pending:
 the corrected probe must produce `0x575b1d17` and `0x777639f1` at LBA 0,
 then the full Mac must boot without the reset-vector wedge. No native-SD
 card writes are authorized by these read-only results.
+
+The next full native image reuses the otherwise zero `vio_boot_crc` probe
+for four saturating read handshake counts after CPU reset: CPU-D AR, CPU-D R,
+DDR-port AR, DDR-port R (one byte each, high to low). If the reset-vector
+wedge persists, these counts identify whether the response disappeared
+before or after the DDR port without another synthesis cycle.

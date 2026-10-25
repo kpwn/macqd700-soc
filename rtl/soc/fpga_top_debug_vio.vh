@@ -284,11 +284,39 @@
 
     // Boot and SCSI share this fixed-width probe. A SCSI failure takes
     // precedence after ROM loading so CRC mismatches retain both operands.
+`ifdef TQTT_NATIVE_SD
+    // Native ROM boot already has card-side CRC checking, while the legacy
+    // SPI CRC operands are tied low. Count each CPU-D and DDR-port read
+    // handshake after CPU reset to localize a reset-vector response stall.
+    // Byte lanes, high to low: CPU AR, CPU R, DDR AR, DDR R. Saturating.
+    reg [7:0] native_cpu_ar_count, native_cpu_r_count;
+    reg [7:0] native_ddr_ar_count, native_ddr_r_count;
+    always @(posedge core_clk) begin
+        if (cpu_rst) begin
+            native_cpu_ar_count <= 0;
+            native_cpu_r_count <= 0;
+            native_ddr_ar_count <= 0;
+            native_ddr_r_count <= 0;
+        end else begin
+            if (cpu_d_arvalid && cpu_d_arready && !(&native_cpu_ar_count))
+                native_cpu_ar_count <= native_cpu_ar_count + 1'b1;
+            if (cpu_d_rvalid && cpu_d_rready_xbar && !(&native_cpu_r_count))
+                native_cpu_r_count <= native_cpu_r_count + 1'b1;
+            if (s0_arvalid && s0_arready && !(&native_ddr_ar_count))
+                native_ddr_ar_count <= native_ddr_ar_count + 1'b1;
+            if (s0_rvalid && s0_rready && !(&native_ddr_r_count))
+                native_ddr_r_count <= native_ddr_r_count + 1'b1;
+        end
+    end
+    wire [31:0] vio_boot_crc = {native_cpu_ar_count, native_cpu_r_count,
+                                native_ddr_ar_count, native_ddr_r_count};
+`else
     wire [31:0] vio_boot_crc = scsi_sd_err_sticky_r ?
                                {scsi_sd_err_crc_calc_r,
                                 scsi_sd_err_crc_recv_r} :
                                {boot_dbg_rd_crc_calc,
                                 boot_dbg_rd_crc_recv};
+`endif
 
     always @(posedge pb_clk) begin
         if (pb_full_rst_bank[2]) begin
