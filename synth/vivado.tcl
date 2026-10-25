@@ -1156,6 +1156,11 @@ if {$enable_pcie_xdma} {
 # budget; the physical input clocks stay at their board frequencies.
 if {$board eq "tqtt"} {
     read_xdc $synth_dir/tqtt_fpga_top.xdc
+    if {$tqtt_native_sd} {
+        read_xdc $synth_dir/tqtt_sd_native.xdc
+    } else {
+        read_xdc $synth_dir/tqtt_sd_spi.xdc
+    }
 } else {
     read_xdc $synth_dir/fpga_top.xdc
     if {!$use_sim_model} {

@@ -43,6 +43,14 @@ module sd_async_byte_fifo #(
     assign rd_empty = rd_gray == wr_gray_rd_b;
     assign rd_data = mem[rd_bin[ADDR_W-1:0]];
 
+    // The data array has no reset requirement: cleared pointers make old
+    // contents unreachable, including any write made while reset is high.
+    // Keep its write port outside the asynchronous pointer-reset process so
+    // Vivado can infer memory instead of flops.
+    always @(posedge wr_clk) begin
+        if (wr_take) mem[wr_bin[ADDR_W-1:0]] <= wr_data;
+    end
+
     always @(posedge wr_clk or posedge arst) begin
         if (arst) begin
             wr_bin <= 0;
@@ -53,7 +61,6 @@ module sd_async_byte_fifo #(
             rd_gray_wr_a <= rd_gray;
             rd_gray_wr_b <= rd_gray_wr_a;
             if (wr_take) begin
-                mem[wr_bin[ADDR_W-1:0]] <= wr_data;
                 wr_bin <= wr_bin_next;
                 wr_gray <= (wr_bin_next >> 1) ^ wr_bin_next;
             end
