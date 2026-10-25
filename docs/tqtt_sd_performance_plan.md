@@ -418,3 +418,25 @@ The manual probe's cycle counter includes JTAG-driven command and polling
 delays; its 3.18 MiB/s figure at 50 MHz is not a sustained card bandwidth
 measurement. Use the automatic engine's cycle counter for raw block-path
 throughput and Mac benchmarks for user-visible throughput.
+
+## Byte-lane correction, 2026-10-25
+
+The first full native-SD Mac image (`13b25de`, build ID `0x13B25DE3`)
+initialized the card and copied 2048 ROM sectors, but the CPU wedged on its
+first reset-vector read. JTAG read `0x02860D42` at ROM base, whereas the
+working SPI image read `0x420D8602`. The saved ROM image also begins with
+bytes `42 0D 86 02`. The old one-sector native probe CRC `0x1df5ba99`
+matches CRC32 of the saved ROM's first 512 bytes **after reversing every
+four-byte group**; the original-order CRC is `0x575b1d17`. Likewise, the
+old 32-sector native CRC `0x3f0eb0b8` matches the reversed-byte stream, not
+the original-order CRC `0x777639f1`. Thus the earlier repeated CRC matrix
+proved repeatability but did not prove correct byte order or data integrity.
+
+LiteSDCard DMA places the first card byte in the low byte lane of each
+Wishbone word. `sd_native_block_engine` now emits read bytes from lanes
+7:0, 15:8, 23:16, then 31:24 and packs write bytes into those same lanes.
+The directed block-engine simulation uses that bus convention and passes
+one- and 32-sector reads and writes. Hardware validation remains pending:
+the corrected probe must produce `0x575b1d17` and `0x777639f1` at LBA 0,
+then the full Mac must boot without the reset-vector wedge. No native-SD
+card writes are authorized by these read-only results.

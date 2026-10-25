@@ -104,10 +104,11 @@ module sd_native_block_engine #(
     wire [11:0] fetch_word_addr = fetch_byte_index[13:2];
     always @(*) begin
         case (byte_index[1:0])
-            2'd0: rd_data = stream_word[31:24];
-            2'd1: rd_data = stream_word[23:16];
-            2'd2: rd_data = stream_word[15:8];
-            default: rd_data = stream_word[7:0];
+            // LiteSDCard DMA packs the earliest card byte in bits [7:0].
+            2'd0: rd_data = stream_word[7:0];
+            2'd1: rd_data = stream_word[15:8];
+            2'd2: rd_data = stream_word[23:16];
+            default: rd_data = stream_word[31:24];
         endcase
     end
 
@@ -122,7 +123,7 @@ module sd_native_block_engine #(
     wire [11:0] ram_waddr = dma_write_word ? wb_dma_adr[11:0] :
                              byte_index[13:2];
     wire [31:0] ram_wdata = dma_write_word ? wb_dma_dat_w :
-                            {write_accum[31:8], wr_data};
+                            {wr_data, write_accum[23:0]};
     always @(posedge clk) begin
         if (ram_we) ram[ram_waddr] <= ram_wdata;
         wb_dma_dat_r <= ram[wb_dma_adr[11:0]];
@@ -138,9 +139,9 @@ module sd_native_block_engine #(
             if (go && state == S_IDLE) debug_dma_words <= 0;
             if (wr_ready) begin
                 case (byte_index[1:0])
-                    2'd0: write_accum[31:24] <= wr_data;
-                    2'd1: write_accum[23:16] <= wr_data;
-                    2'd2: write_accum[15:8] <= wr_data;
+                    2'd0: write_accum[7:0] <= wr_data;
+                    2'd1: write_accum[15:8] <= wr_data;
+                    2'd2: write_accum[23:16] <= wr_data;
                     default: begin end
                 endcase
             end

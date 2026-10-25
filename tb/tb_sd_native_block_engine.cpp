@@ -26,8 +26,9 @@ static bool inject_data_event_error = false;
 
 static uint32_t pattern_word(int index) {
     uint32_t b = uint32_t(index * 4);
-    return ((b & 255) << 24) | (((b + 1) & 255) << 16) |
-           (((b + 2) & 255) << 8) | ((b + 3) & 255);
+    // LiteSDCard Wishbone DMA uses the low byte lane for the first card byte.
+    return (b & 255) | (((b + 1) & 255) << 8) |
+           (((b + 2) & 255) << 16) | (((b + 3) & 255) << 24);
 }
 
 static void tick() {
