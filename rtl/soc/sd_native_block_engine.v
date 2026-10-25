@@ -77,6 +77,7 @@ module sd_native_block_engine #(
     reg [14:0] byte_index;
     reg [31:0] write_accum;
     reg [POLL_W-1:0] poll_timer;
+    reg transfer_failed;
     wire writing = cmd_type_q == 3'd3 || cmd_type_q == 3'd4;
     wire multi = cmd_type_q == 3'd2 || cmd_type_q == 3'd4;
     wire [14:0] total_bytes = {blocks_q[5:0], 9'b0};
@@ -257,6 +258,7 @@ module sd_native_block_engine #(
             cfg_step <= 0;
             byte_index <= 0;
             poll_timer <= 0;
+            transfer_failed <= 0;
             done <= 0;
             error <= 0;
         end else begin
@@ -266,9 +268,17 @@ module sd_native_block_engine #(
                  (state == S_FILL && !wr_ready) ||
                  (state == S_STREAM && !rd_valid)) &&
                 poll_timer == POLL_LAST) begin
-                state <= S_IDLE;
-                done <= 1;
-                error <= 1;
+                if (multi && (state == S_DATA || state == S_DATA_WAIT ||
+                              state == S_DMA || state == S_DMA_WAIT)) begin
+                    // A multi-block command may still own the card. Try a
+                    // bounded CMD12 before reporting the transfer error.
+                    transfer_failed <= 1;
+                    state <= S_STOP;
+                end else begin
+                    state <= S_IDLE;
+                    done <= 1;
+                    error <= 1;
+                end
             end else begin
                 if (state == S_DATA || state == S_DATA_WAIT ||
                     state == S_DMA || state == S_DMA_WAIT ||
@@ -288,6 +298,7 @@ module sd_native_block_engine #(
                             byte_index <= 0;
                             cfg_step <= 0;
                             poll_timer <= 0;
+                            transfer_failed <= 0;
                             state <= cmd_type >= 3'd3 ? S_FILL : S_CFG;
                         end
                     end
@@ -314,7 +325,12 @@ module sd_native_block_engine #(
                     S_CMD: if (!command_busy) state <= S_CMD_WAIT;
                     S_CMD_WAIT: if (command_done) begin
                         if (command_error) begin
-                            state <= S_IDLE; done <= 1; error <= 1;
+                            if (multi) begin
+                                transfer_failed <= 1;
+                                state <= S_STOP;
+                            end else begin
+                                state <= S_IDLE; done <= 1; error <= 1;
+                            end
                         end else begin
                             poll_timer <= 0;
                             state <= S_DATA;
@@ -323,7 +339,12 @@ module sd_native_block_engine #(
                     S_DATA: if (direct_csr_ready) state <= S_DATA_WAIT;
                     S_DATA_WAIT: if (direct_csr_rsp_valid) begin
                         if (direct_csr_rsp_error || direct_csr_rsp_rdata[3:1] != 0) begin
-                            state <= S_IDLE; done <= 1; error <= 1;
+                            if (multi) begin
+                                transfer_failed <= 1;
+                                state <= S_STOP;
+                            end else begin
+                                state <= S_IDLE; done <= 1; error <= 1;
+                            end
                         end else if (direct_csr_rsp_rdata[0]) begin
                             poll_timer <= 0;
                             state <= S_DMA;
@@ -332,7 +353,12 @@ module sd_native_block_engine #(
                     S_DMA: if (direct_csr_ready) state <= S_DMA_WAIT;
                     S_DMA_WAIT: if (direct_csr_rsp_valid) begin
                         if (direct_csr_rsp_error) begin
-                            state <= S_IDLE; done <= 1; error <= 1;
+                            if (multi) begin
+                                transfer_failed <= 1;
+                                state <= S_STOP;
+                            end else begin
+                                state <= S_IDLE; done <= 1; error <= 1;
+                            end
                         end else if (direct_csr_rsp_rdata[0]) begin
                             state <= multi ? S_STOP : writing ? S_IDLE : S_STREAM;
                             if (!multi && writing) done <= 1;
@@ -342,7 +368,7 @@ module sd_native_block_engine #(
                     end
                     S_STOP: if (!command_busy) state <= S_STOP_WAIT;
                     S_STOP_WAIT: if (command_done) begin
-                        if (command_error) begin
+                        if (command_error || transfer_failed) begin
                             state <= S_IDLE; done <= 1; error <= 1;
                         end else if (writing) begin
                             state <= S_IDLE; done <= 1;

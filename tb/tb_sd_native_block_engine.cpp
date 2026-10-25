@@ -20,6 +20,7 @@ static std::vector<int> commands;
 static bool failed = false;
 static int cycles = 0;
 static int stall_after_bytes = -1;
+static bool inject_data_event_error = false;
 
 static uint32_t pattern_word(int index) {
     uint32_t b = uint32_t(index * 4);
@@ -88,7 +89,11 @@ static void tick() {
         } else if (csr_addr == 0x101c) {
             next_csr_data = 1;
         } else if (csr_addr == 0x1020 || csr_addr == 0x0810 || csr_addr == 0x2010) {
-            next_csr_data = dma_active && dma_index >= transfer_words ? 1 : 0;
+            if (csr_addr == 0x1020 && inject_data_event_error) {
+                next_csr_data = 2; // LiteSDCard data CRC/error event.
+                dma_active = false;
+            } else
+                next_csr_data = dma_active && dma_index >= transfer_words ? 1 : 0;
         }
     }
     dut.clk = 1;
@@ -112,7 +117,8 @@ static void tick() {
     ++cycles;
 }
 
-static bool run(bool write, int blocks, bool expect_stall = false) {
+static bool run(bool write, int blocks, bool expect_stall = false,
+                bool inject_error = false) {
     csr_ack_pending = false;
     csr_data_pending = 0;
     command_word = 0;
@@ -128,6 +134,7 @@ static bool run(bool write, int blocks, bool expect_stall = false) {
     failed = false;
     cycles = 0;
     stall_after_bytes = expect_stall ? 5 : -1;
+    inject_data_event_error = inject_error;
     dut.rst = 1;
     dut.go = 0;
     dut.cmd_type = write ? (blocks > 1 ? 4 : 3) : (blocks > 1 ? 2 : 1);
@@ -140,6 +147,20 @@ static bool run(bool write, int blocks, bool expect_stall = false) {
     tick();
     dut.go = 0;
     for (int i = 0; i < 200000 && !dut.done && !failed; ++i) tick();
+    if (inject_error) {
+        const std::vector<int> expected_error_commands = blocks > 1 ?
+            std::vector<int>{write ? 25 : 18, 12} :
+            std::vector<int>{write ? 24 : 17};
+        if (!dut.done || !dut.error || failed || dut.card_session_active ||
+            commands != expected_error_commands) {
+            std::fprintf(stderr,
+                         "data error stop mismatch: write=%d blocks=%d done=%d error=%d card_active=%d commands=%zu cycles=%d\n",
+                         write, blocks, int(dut.done), int(dut.error),
+                         int(dut.card_session_active), commands.size(), cycles);
+            return false;
+        }
+        return true;
+    }
     if (expect_stall) {
         if (!dut.done || !dut.error || failed || dut.card_session_active ||
             (write && !commands.empty()) ||
@@ -193,7 +214,9 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     if (!run(false, 1) || !run(true, 1) ||
         !run(false, 32) || !run(true, 32) ||
-        !run(true, 1, true) || !run(false, 1, true)) return 1;
-    std::puts("PASS native SD block engine: 1/32-sector read/write, DMA RAM, ordered bytes, CMD12, stalled-stream aborts");
+        !run(true, 1, true) || !run(false, 1, true) ||
+        !run(false, 1, false, true) || !run(true, 1, false, true) ||
+        !run(false, 2, false, true) || !run(true, 2, false, true)) return 1;
+    std::puts("PASS native SD block engine: 1/32-sector read/write, DMA RAM, ordered bytes, CMD12, stalled-stream aborts, error-stop recovery");
     return 0;
 }
