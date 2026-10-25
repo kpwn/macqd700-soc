@@ -31,20 +31,40 @@
     assign core_mmcm_locked = 1'b1;
 `elsif TQTT_BOARD
     // TQTT's DDR 100 MHz pair belongs to MIG. The separate 50 MHz board
-    // oscillator supplies all fabric clocks from one 1000 MHz MMCM VCO.
+    // oscillator supplies all fabric clocks from one MMCM VCO. When the
+    // optional USB host is present, 1500 MHz also yields an exact 60 MHz
+    // output without cascading a second MMCM from the video BUFG. That
+    // cascade cannot satisfy the KU5P dedicated clock placement rule.
     wire tqtt_fabric_clk;
     wire tqtt_core_unbuf, tqtt_pb_unbuf, tqtt_video_unbuf, tqtt_eth_unbuf;
     wire eth_ref_clk125;
     wire tqtt_clkfb;
+`ifdef TQTT_USB_HOST
+    wire tqtt_usb_unbuf;
+    localparam real TQTT_FABRIC_MULT = 30.0; // 50 MHz * 30 = 1500 MHz VCO
+    localparam real TQTT_CORE_DIV =
+        (CORE_CLK_HZ == 100_000_000) ? 15.0 : 7.5;
+`else
+    localparam real TQTT_FABRIC_MULT = 20.0; // existing 1000 MHz VCO
+    localparam real TQTT_CORE_DIV =
+        (CORE_CLK_HZ == 100_000_000) ? 10.0 : 5.0;
+`endif
     IBUF u_tqtt_fabric_ibuf (.I(fabric_clk_50), .O(tqtt_fabric_clk));
     MMCME4_BASE #(
         .BANDWIDTH("OPTIMIZED"), .CLKIN1_PERIOD(20.000),
-        .DIVCLK_DIVIDE(1), .CLKFBOUT_MULT_F(20.000),
-        .CLKOUT0_DIVIDE_F((CORE_CLK_HZ == 100_000_000) ? 10.000 : 5.000),
+        .DIVCLK_DIVIDE(1), .CLKFBOUT_MULT_F(TQTT_FABRIC_MULT),
+        .CLKOUT0_DIVIDE_F(TQTT_CORE_DIV),
                                      // 100 MHz bring-up or 200 MHz target
+`ifdef TQTT_USB_HOST
+        .CLKOUT1_DIVIDE(30),        // 50 MHz peripheral bus
+        .CLKOUT2_DIVIDE(15),        // 100 MHz video reference
+        .CLKOUT3_DIVIDE(12),        // 125 MHz GMII transmit / MAC
+        .CLKOUT4_DIVIDE(25),        // 60 MHz USB host
+`else
         .CLKOUT1_DIVIDE(20),        // 50 MHz peripheral bus
         .CLKOUT2_DIVIDE(10),        // 100 MHz video reference
         .CLKOUT3_DIVIDE(8),         // 125 MHz GMII transmit / MAC
+`endif
         .STARTUP_WAIT("FALSE")
     ) u_tqtt_fabric_mmcm (
         .CLKIN1(tqtt_fabric_clk), .CLKFBIN(tqtt_clkfb),
@@ -53,7 +73,11 @@
         .CLKOUT1(tqtt_pb_unbuf), .CLKOUT1B(),
         .CLKOUT2(tqtt_video_unbuf), .CLKOUT2B(),
         .CLKOUT3(tqtt_eth_unbuf), .CLKOUT3B(),
+`ifdef TQTT_USB_HOST
+        .CLKOUT4(tqtt_usb_unbuf), .CLKOUT5(), .CLKOUT6(),
+`else
         .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
+`endif
         .LOCKED(core_mmcm_locked), .PWRDWN(1'b0), .RST(tqtt_reset)
     );
     BUFG u_tqtt_core_bufg (.I(tqtt_core_unbuf), .O(sys_clk));

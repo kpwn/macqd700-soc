@@ -141,7 +141,21 @@ keyboard CDC, mouse CDC, and ADB injector test targets also passed:
 `make tb-usb-hid-adb-keyboard tb-usb-hid-adb-keyboard-cdc
 tb-usb-hid-adb-mouse-cdc tb-adb-inject`.
 
-This checkpoint has not been placed or routed. Synthesis timing estimates
-are not evidence of 200 MHz closure, and no physical USB-A front end is wired
-to PMOD0 yet. The next hardware gate is the standalone host probe with a
-known keyboard or mouse, followed by a routed full-SoC image and Mac input.
+The initial implementation could not place the cascaded USB MMCM fed by the
+video BUFG (`[Place 30-718]`). The USB-enabled TQTT clock option now derives
+60 MHz USB directly from the board's 50 MHz fabric input in the existing
+fabric MMCM, using a 1500 MHz VCO; the 200 MHz core, 50 MHz peripheral bus,
+100 MHz video, and 125 MHz Ethernet outputs retain their frequencies. The
+USB-disabled option keeps its original 1000 MHz VCO configuration.
+
+The revised 200 MHz full-SoC implementation placed and routed. Its post-route
+timing report at `/var/tmp/tqtt_usb_full_200_impl/reports/timing_route.rpt`
+shows WNS −0.100 ns across 350 failing setup endpoints, WHS +0.007 ns with
+zero hold failures, and no pulse-width failures. The worst setup path is
+inside the CPU, from `LsEuPlugin_logic_alignedSendPtr_reg[0]` to a D-cache
+BRAM address input. The routed checkpoint is
+`/var/tmp/tqtt_usb_full_200_impl/checkpoints/route.dcp`. This does not meet
+the 200 MHz timing gate and has not been loaded on hardware. No physical
+USB-A front end is wired to PMOD0 yet. The next hardware gate is a standalone
+host probe with a known keyboard or mouse, followed by a timing-clean
+full-SoC image and Mac input.

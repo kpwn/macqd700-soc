@@ -1,21 +1,9 @@
 // Optional single-port TQTT USB HID host on PMOD0/J1. Included after the
 // peripheral island so pb_clk and pb_full_rst_bank are available. The USB-A
 // connector, 5 V VBUS, data resistors, and protection are external hardware.
-    wire usb_clk_unbuf, usb_clk, usb_clkfb, usb_mmcm_locked;
-    MMCME4_BASE #(
-        .CLKIN1_PERIOD(10.0), .DIVCLK_DIVIDE(5),
-        .CLKFBOUT_MULT_F(60.0), .CLKOUT0_DIVIDE_F(20.0),
-        .BANDWIDTH("OPTIMIZED"), .STARTUP_WAIT("FALSE")
-    ) u_usb_mmcm (
-        .CLKIN1(video_ref_clk), .CLKFBIN(usb_clkfb),
-        .CLKFBOUT(usb_clkfb), .CLKFBOUTB(),
-        .CLKOUT0(usb_clk_unbuf), .CLKOUT0B(),
-        .CLKOUT1(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(),
-        .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
-        .RST(!core_mmcm_locked || tqtt_reset), .PWRDWN(1'b0),
-        .LOCKED(usb_mmcm_locked)
-    );
-    BUFG u_usb_clk_bufg (.I(usb_clk_unbuf), .O(usb_clk));
+    wire usb_clk;
+    wire usb_mmcm_locked = core_mmcm_locked && !tqtt_reset;
+    BUFG u_usb_clk_bufg (.I(tqtt_usb_unbuf), .O(usb_clk));
     reg [7:0] usb_reset_count = 0;
     always @(posedge usb_clk) begin
         if (!usb_mmcm_locked) usb_reset_count <= 0;
