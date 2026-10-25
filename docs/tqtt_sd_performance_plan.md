@@ -117,7 +117,11 @@ an isolated write-path reproduction and HFS consistency check.
    No native-mode card measurement has been made.
    The card must be physically power-cycled after any SPI-mode image before
    native-mode hardware testing; FPGA reconfiguration alone does not reset
-   the card's protocol selection.
+   the card's protocol selection. To avoid removing a card while Mac OS is
+   using it, first load the native probe into FPGA SRAM, then reseat the
+   card. Run the host script with `NATIVE_SD_NO_PROGRAM=1` to attach to that
+   already loaded probe; it will initialize the reseated card and perform
+   read-only transfers.
 
    For full-Mac integration, TQTT already has a 100 MHz `video_ref_clk`
    from its fabric MMCM at both 100 and 200 MHz CPU settings. That can clock
