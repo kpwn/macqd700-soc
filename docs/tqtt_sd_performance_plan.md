@@ -694,3 +694,15 @@ run are still required. The 200 MHz image was subsequently written and
 readback-verified in TQTT SPI flash, then booted with Vivado's explicit
 `boot_hw_device` command. See [the flash boot diagnosis](spi_flash.md#200-mhz-tqtt-flash-boot-diagnosis-2026-10-25).
 Unattended power-on boot remains unverified.
+
+On the flash-booted 200 MHz image, Finder successfully duplicated the
+`Speedometer 4.02` application on `FPGA HD` using Command-D. The open folder
+rose from three to four items and available space fell from about 537 MB to
+536.3 MB, with no disk-error dialog. Finder then launched the new
+`Speedometer 4.02 copy`; it reached the [Hardware Information screen](evidence/2026-10-25-tqtt-200mhz-speedometer-copy-runs.jpg)
+and returned to Finder after Command-Q. The live native-SD probe afterward
+reported High Speed active, 2,736 SCSI-to-SD completions, zero SD errors,
+zero CHECK CONDITIONs, and no medium-not-present indication. This is a
+larger Mac-visible copy and executable/resource-fork use than the earlier
+one-sector MacTCP DNR regression. It does not provide a byte-exact readback
+of the copied forks or a sustained MB/s measurement.
