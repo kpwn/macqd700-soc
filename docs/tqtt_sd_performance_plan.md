@@ -130,6 +130,12 @@ an isolated write-path reproduction and HFS consistency check.
    hardware smoke test: `NATIVE_SD_NO_PROGRAM=1 NATIVE_SD_SMOKE_ONLY=1`
    exercised a VIO-to-Wishbone scratch write/read roundtrip on the FPGA.
    This verifies the debug/control path only, not native SD signaling.
+   To inspect the loaded engine probe without resetting it or sending a card
+   command, run `tools/tqtt_sd_native_engine_status.tcl` with its matching
+   `.ltx`. On 2026-10-25 the probe was still loaded, but repeated status
+   samples alternated between `0x70` and `0x00` and card capacity stayed
+   zero. Those samples do not establish a reliable native card result.
+   Physical card reseating and the guarded read matrix remain pending.
    After reseating the card while the native probe is loaded, run the
    read-only comparison matrix with
    `NATIVE_SD_CARD_POWER_CYCLED=1 tools/tqtt_sd_native_matrix.sh`.
