@@ -683,6 +683,7 @@ over JTAG as build ID `0x8D3A363A`; reset and HDMI probes read `0x2e` and
 DAFB video was live at 640x480 with no framebuffer-reader misses. The native
 SD High Speed probe read 1, with 2,498 SCSI completions, zero SD errors,
 zero CHECK CONDITIONs, and no medium-not-present indication. This is a
-boot and basic storage-health check; a Mac-visible disk benchmark, large
+boot and basic storage-health check; the owner also confirmed the Mac booted
+normally on the monitor. A Mac-visible disk benchmark, large
 file copy/readback, HDMI audio check, and longer 200 MHz stability run are
 still required. SPI flash remains on the verified 100 MHz image.
