@@ -307,6 +307,10 @@ DMA, driver, and transmit paths. The Mac's Netscape browser then fetched
 `GET / HTTP/1.0` from `192.168.42.11` with status 200. This validates a
 real TCP and HTTP application path through the full SoC as well.
 
+On 2026-10-25, the owner reported an active IRC connection from the Mac on
+the currently loaded 200 MHz TQTT image. This adds a current-image,
+interactive network check to the earlier DHCP, ping, and HTTP capture.
+
 For the current 640x480 Mac mode, run the MJPEG server with
 `FPGA_VIDEO_WIDTH=1280 FPGA_VIDEO_HEIGHT=720 FPGA_VIDEO_FPS=60
 FPGA_VIDEO_CROP=auto FPGA_VIDEO_SRC_W=640 FPGA_VIDEO_SRC_H=480`. Capturing
