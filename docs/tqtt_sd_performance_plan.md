@@ -446,3 +446,14 @@ for four saturating read handshake counts after CPU reset: CPU-D AR, CPU-D R,
 DDR-port AR, DDR-port R (one byte each, high to low). If the reset-vector
 wedge persists, these counts identify whether the response disappeared
 before or after the DDR port without another synthesis cycle.
+
+The corrected full TQTT image from commit `7ad1dfa` is at
+`/var/tmp/tqtt_native_bytes_fixed_full_100/vivado/fpga_top.local.bit`
+(local ADB firmware; SHA-256
+`a70b8ed4c104e228e1923421030c6128f4c804f316cfb2ae258249c1f24c3e90`).
+It uses a 100 MHz CPU, 50 MHz four-bit native SD, HDMI audio, automatic fan,
+and Ethernet. Final route timing is WNS +0.015 ns, WHS +0.010 ns, WPWS
++0.073 ns with zero failing endpoints; bitstream DRC reported zero errors.
+JTAG loaded it as build `0x7AD1DFA7` on 2026-10-25. The first native init
+failed after switching from a SPI-mode image, so hardware byte-order and
+full-Mac boot checks are pending a physical card power cycle and hard reset.
