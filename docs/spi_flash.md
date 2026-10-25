@@ -47,3 +47,40 @@ not a separate physical power-cycle test.
 
 This local verification used a firmware-patched image. Published bitstreams
 exclude Apple firmware.
+
+## TQTT-KU5P
+
+The TQTT board's FT232H cable (VID:PID `0403:6014`, tested serial
+`210251A08870`) uses openFPGALoader's `digilent_ad` cable profile. The RK
+board's `digilent` profile fails before erase on TQTT. Check the cable serial
+with `--scan-usb` and the FPGA ID with `--detect` before writing. Stop the
+JTAG REPL and the specific Vivado `hw_server` process that owns the cable,
+under the JTAG lease, then run:
+
+```sh
+openFPGALoader -c digilent_ad --ftdi-serial 210251A08870 \
+  --freq 6000000 --fpga-part xcku5p-ffvb676 --detect
+openFPGALoader -c digilent_ad --ftdi-serial 210251A08870 \
+  --freq 6000000 --fpga-part xcku5p-ffvb676 \
+  -f --verify /absolute/path/to/fpga_top.local.bit
+```
+
+The tested board reported FPGA IDCODE `0x04a62093` and Micron flash JEDEC
+`0x20bb18` (128 Mbit, 16 MiB). This differs from the 256 Mbit configuration
+flash named in the available schematic. Check that the entire bitstream fits
+the detected device; the tested image ended at `0x00ec0000`.
+
+**Readback verification does not prove a flash boot.** On 2026-10-25, the
+verified flash write left FPGA `DONE=0`; `openFPGALoader -r` did not bring it
+up. After restoring `hw_server`, Vivado's `boot_hw_device [current_hw_device]`
+completed after about 50 seconds with `DONE=1`. Reattach the REPL with
+`JTAG_REPL_NO_PROGRAM=1` and the matching `.ltx`, then run `refresh` to bind
+the debug cores and check `build-id`, `perf live`, and video. Do not use a
+normal SRAM programming attach when verifying flash boot.
+
+The tested 200 MHz TQTT image had SHA-256
+`6ad31b3e181ee0eba1c8037aa0854b395134a620a023b6d784d6726622970db5`.
+Readback passed, a flash boot reported build ID `0xB9BE30AF`, the CPU retired
+instructions, and Mac OS appeared on HDMI capture. This image has a routed
+setup timing miss of 0.296 ns, manual fan PWM, and no HDMI audio. A fresh
+integrated image is still required after SD and audio work.

@@ -100,6 +100,45 @@ an isolated write-path reproduction and HFS consistency check.
    Integration still needs a block-command bridge for the existing boot and
    SCSI consumers and direct TQTT IO constraints. The generated core has not
    been integrated or tested here.
+
+   A standalone native probe is now in progress on branch
+   `codex/tqtt-native-sd-20261025`. It vendors the generated LiteSDCard
+   2024.12 core and places a VIO-controlled Wishbone master in front of its
+   CSRs and a 16 KiB local RAM on its DMA bus. `make
+   fpga-tqtt-sd-native-probe-bitstream` builds it. The read-only host script
+   `tools/tqtt_sd_native_read_probe.tcl` initializes a card in native mode,
+   selects four-bit bus width, optionally switches to 50 MHz after checking
+   CMD6 status, then reads up to 32 sectors with CRC32 and hardware DMA
+   cycle timing. This is a probe, not yet the full Mac storage transport.
+   The corrected Vivado route on 2026-10-25 met the 100 MHz fabric constraint
+   with WNS +2.897 ns and WHS +0.017 ns, and bitstream DRC had zero errors.
+   The artifact is `build/tqtt_sd_native_probe/tqtt_sd_native_probe.bit`,
+   SHA-256 `60edf295fc267c204b0b83fb52a0bf3f0875928219dafed4dda888df4d2104d9`.
+   No native-mode card measurement has been made.
+   The card must be physically power-cycled after any SPI-mode image before
+   native-mode hardware testing; FPGA reconfiguration alone does not reset
+   the card's protocol selection. To avoid removing a card while Mac OS is
+   using it, first load the native probe into FPGA SRAM, then reseat the
+   card. Run the host script with `NATIVE_SD_NO_PROGRAM=1` to attach to that
+   already loaded probe; it will initialize the reseated card and perform
+   read-only transfers. After native-mode testing, power-cycle the card
+   again before booting the current SPI-mode Mac image; reloading the FPGA
+   alone does not return a native-mode card to SPI mode.
+
+   Before any card power cycle, the loaded probe passed a card-independent
+   hardware smoke test: `NATIVE_SD_NO_PROGRAM=1 NATIVE_SD_SMOKE_ONLY=1`
+   exercised a VIO-to-Wishbone scratch write/read roundtrip on the FPGA.
+   This verifies the debug/control path only, not native SD signaling.
+
+   For full-Mac integration, TQTT already has a 100 MHz `video_ref_clk`
+   from its fabric MMCM at both 100 and 200 MHz CPU settings. That can clock
+   the native controller without changing its generated timing parameters.
+   `sd_scsi_bridge` can cross the existing 50 MHz peripheral bus into this
+   100 MHz storage domain. Boot must use a native block reader and an AXI
+   clock crossing to copy the ROM into DDR; the current `boot_fsm` performs
+   SPI-only initialization and cannot be left active on the same card.
+   PRAM and JTAG provisioning also need native-mode paths before the SPI
+   transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest
