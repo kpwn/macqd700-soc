@@ -169,11 +169,26 @@ module mode_decode (
     wire       convolution   = reg_config[3];
     wire       interlace     = reg_config[2];
 
+    // Live Q700 832x624 Millions mode programs PCBR=0x3c, HAL=0x119,
+    // HFP=0x459, and a 3328-byte pitch: the Swatch difference is already
+    // 832 pixels and each direct-colour pixel occupies four bytes. Applying
+    // MAME's generic clockdiv=2 multiplication yields 1664 pixels and makes
+    // the valid 3328-byte row look too short, so scanout keeps its old 8bpp
+    // descriptor. A reversible JTAG PCBR=0x1c trial admitted 832x624x24 and
+    // rendered the live Mac desktop correctly. Keep the guest's original
+    // register value/readback and correct only this direct-colour counter
+    // encoding, provided the pitch can actually hold the raw width. The ROM
+    // monitor traces use bit 7 set and retain the MAME arithmetic below.
+    wire direct_colour_full_width = !reg_pcbr[7]
+                                  && (reg_pcbr[6:2] == 5'b01111)
+                                  && (bytes_per_row >= ({20'd0, raw_w_px} << 2));
+
     // All modes with convolution enabled on the Q700 overstate the horizontal
     // resolution by 23 (dafb.cpp:849-852; MAME notes the documentation does
     // not show this and suspects an early-revision chip bug).
     assign src_w_px = convolution ? ((raw_w_px >> clockdiv_log2) - 12'd23)
-                                  : (raw_w_px << clockdiv_log2);
+                    : direct_colour_full_width ? raw_w_px
+                                               : (raw_w_px << clockdiv_log2);
     assign src_h_px = interlace ? (fixed_h_lines << 1) : fixed_h_lines;
 
     // ── Row pitch ─────────────────────────────────────────────────────

@@ -382,6 +382,33 @@ it was not loaded because it did not close timing or materially improve the
 working image. Its routed checkpoint and report are under
 `/var/tmp/tqtt_c96_waitfix_200_altclb/vivado/`.
 
+### 832×624 Millions scanout, 2026-10-25
+
+After restoring `shd.hda`, the 200 MHz USB-enabled trial image (build ID
+`0x68B64905`) booted to Finder but showed vertical stripes when Mac OS
+selected Millions at 832×624. The framebuffer reader reported zero misses.
+The guest's live DAFB registers were PCBR `0x3c`, HAL `0x119`, HFP `0x459`,
+CONFIG `0x11`, and STRIDE `0x340` words = 3328 bytes. The old width decode
+multiplied `(HFP-HAL)=832` by PCBR's generic clock divider of two, producing
+1664 pixels. Four-byte direct-color pixels would then require 6656 bytes per
+row, so the placement gate rejected the new mode as `STRIDE_SHORT` and kept
+the previous 8-bit, 832-byte scanout tuple while Mac OS drew 24-bit pixels.
+
+A reversible live write of PCBR `0x1c` kept the 24-bit depth but selected a
+divider of one. Scanout then committed 832×624, four bytes per pixel, and
+3328 bytes per row, with zero reader misses; the capture card showed a clean
+Finder desktop and the owner confirmed the picture. The source decoder now
+recognizes the guest's PCBR `0x3c` direct-color counter encoding when the row
+pitch can hold the raw width, leaving the guest register value intact. This
+source fix still needs a full 200 MHz build and hardware test; the loaded
+image currently relies on the temporary live PCBR write, which a reset or
+guest mode change can erase.
+`make tb-mode-decode` passed 147,864 checks with seven working negative
+controls, and `make tb-scanout-placement-sync` passed 87 checks including
+832×624 Millions transitions. The production-geometry 24-bit frame scenario
+also rendered every active pixel correctly before the longer optional frame
+sweep was stopped.
+
 Close 200 MHz core timing, verify unattended SPI power-on boot, complete a
 byte-exact large-file SD readback, and bring up physical USB/ADB/serial.
 RK remains selectable as `BOARD=rk` until these TQTT checks pass.

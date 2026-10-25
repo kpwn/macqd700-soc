@@ -484,6 +484,41 @@ int main(int argc, char** argv) {
     printf("  widest src_w_px seen anywhere in pass 5: %d  (%s)\n",
            worst_w, worst_where.c_str());
 
+    // ══ PASS 6: live 832x624 Millions register tuple ═════════════════
+    // This is a measured Q700 driver case outside the ROM sense traces.
+    // With PCBR=0x3c, MAME's generic width multiplication predicts 1664,
+    // but the 3328-byte row contains exactly 832 four-byte pixels. The
+    // board rejected that impossible 1664x624 tuple and displayed stripes
+    // until a reversible PCBR=0x1c trial made it render cleanly. The RTL
+    // must preserve the guest's PCBR=0x3c while using the full-pixel Swatch
+    // counter encoding for this direct-colour mode.
+    printf("\n---- PASS 6: live 832x624 Millions mode ----\n");
+    reset_dut(0x6d);
+    axi_write(0x000, 0x007);  // fb_base = 0x0e00
+    axi_write(0x008, 0x0d0);  // 832 bytes/row at 8bpp
+    axi_write(0x010, 0x011);
+    axi_write(0x140, 0x08b);
+    axi_write(0x144, 0x22b);
+    axi_write(0x15c, 0x052);
+    axi_write(0x160, 0x532);
+    axi_write(0x220, 0x0b8);
+    check(dut->src_w_px == 832 && dut->src_h_px == 624 &&
+          dut->bytes_per_px == 1 && dut->bytes_per_row == 832,
+          "live 832x624 8bpp precursor decodes normally");
+    axi_write(0x008, 0x340);  // 3328 bytes/row = 832 x 4
+    axi_write(0x140, 0x119);
+    axi_write(0x144, 0x459);
+    axi_write(0x220, 0x03c);
+    check(dut->src_w_px == 832 && dut->src_h_px == 624 &&
+          dut->bytes_per_px == 4 && dut->bytes_per_row == 3328 &&
+          dut->lut_depth == 24 && dut->depth_supported,
+          "live PCBR=0x3c admits 832x624 Millions at 3328-byte pitch");
+    axi_write(0x008, 0x400);  // rounded 4096-byte pitch is valid too
+    axi_write(0x220, 0x03c);
+    check(dut->src_w_px == 832 && dut->bytes_per_px == 4 &&
+          dut->bytes_per_row == 4096,
+          "Millions width stays 832 with a padded row pitch");
+
     printf("\n==== tb-mode-decode: pass=%d fail=%d ====\n", passes, failures);
     if (g_selftest && failures == 0) {
         printf("!! MD_SELFTEST=%d perturbed the model and NOTHING went red -- "
