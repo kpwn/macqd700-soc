@@ -824,6 +824,36 @@ INDEX_HTML = b"""<!doctype html><meta charset=utf-8>
  </div>
 </div>
 <script>
+// Safari handles the embedded MJPEG stream. Other browsers can stall on that
+// 60 fps multipart response while /snapshot.jpg stays fresh, so use ordinary
+// JPEG requests there. Direct /stream.mjpg clients still get the full stream.
+const capture = document.getElementById('mjpeg');
+let shownFrameUrl = null;
+async function refreshCapture(){
+  try {
+    const response = await fetch('/snapshot.jpg', {cache:'no-store'});
+    if (!response.ok) throw new Error(`capture HTTP ${response.status}`);
+    const url = URL.createObjectURL(await response.blob());
+    const next = new Image();
+    next.onload = () => {
+      const old = shownFrameUrl;
+      capture.src = url;
+      shownFrameUrl = url;
+      if (old) URL.revokeObjectURL(old);
+      setTimeout(refreshCapture, 125);
+    };
+    next.onerror = () => { URL.revokeObjectURL(url); setTimeout(refreshCapture, 1000); };
+    next.src = url;
+  } catch (_) {
+    setTimeout(refreshCapture, 1000);
+  }
+}
+const ua = navigator.userAgent;
+const safari = /Safari/.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR/.test(ua);
+if (!safari) {
+  capture.src = '/snapshot.jpg';
+  refreshCapture();
+}
 const st = document.getElementById('st');
 const step = () => Math.max(1, Math.min(63, +document.getElementById('step').value || 8));
 async function go(qs){
@@ -1363,6 +1393,10 @@ class MJPEGHandler(http.server.BaseHTTPRequestHandler):
             pass                                   # viewer went away
 
     def log_message(self, fmt, *args):
+        # The control page polls cached JPEGs at 8 fps. Keep one-time actions
+        # in the journal without filling it with routine frame requests.
+        if args and isinstance(args[0], str) and args[0].startswith("GET /snapshot.jpg"):
+            return
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
 
