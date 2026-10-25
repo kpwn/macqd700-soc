@@ -192,10 +192,14 @@ an isolated write-path reproduction and HFS consistency check.
    After physically reseating the card, use the read-only
    `tools/tqtt_sd_native_engine_read.tcl` with
    `NATIVE_SD_CARD_POWER_CYCLED=1` to check card initialization, 1..32
-   sectors, CRC32, and DMA timing. The original engine probe was loaded in
-   FPGA SRAM on 2026-10-25; Vivado detected its VIO and its automatic init
-   reported an error before the card was reseated. This is not a native card
-   transfer result. It was reloaded after the audio hardware test using
+   sectors, CRC32, and DMA timing. After the first read succeeds,
+   `NATIVE_SD_CARD_POWER_CYCLED=1 tools/tqtt_sd_native_engine_matrix.sh`
+   repeats eight read-only cases across the card, checks each CRC32 pair,
+   and records the engine's DMA cycles and MB/s. The original engine probe
+   was loaded in FPGA SRAM on 2026-10-25; Vivado detected its VIO and its
+   automatic init reported an error before the card was reseated. This is
+   not a native card transfer result. It was reloaded after the audio
+   hardware test using
    `tools/tqtt_sd_native_engine_load.tcl`; this loader issues no card
    command and leaves the SPI flash untouched. The read script pulses the
    probe's soft reset after the card power cycle so initialization can be
