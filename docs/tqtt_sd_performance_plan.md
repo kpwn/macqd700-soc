@@ -157,6 +157,11 @@ an isolated write-path reproduction and HFS consistency check.
    native block reader and an AXI
    clock crossing to copy the ROM into DDR; the current `boot_fsm` performs
    SPI-only initialization and cannot be left active on the same card.
+   A one-outstanding `sd_native_csr_master` now provides bounded Wishbone
+   CSR transactions for the future hardware command sequencer. Its test
+   covers reads, writes, bus errors, timeouts, and reset cancellation
+   (`make tb-sd-native-csr`); card initialization and block commands are
+   still controlled only by the host probe script.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
