@@ -1,5 +1,7 @@
 # Read-only native four-bit TQTT SD probe.
-# Run only after SD card power was cycled since any SPI-mode use.
+# Run only after SD card power was cycled since any SPI-mode use. Set
+# NATIVE_SD_NO_PROGRAM=1 to attach to an already loaded native probe; this
+# lets the Mac image be replaced first, then the card safely reseated.
 # Usage: vivado -nojournal -nolog -mode batch -source this_file \
 #   -tclargs <native.bit> <native.ltx> ?start_lba? ?blocks? ?mhz?
 # Blocks must fit the 16 KiB local RAM. This script never writes card data.
@@ -23,8 +25,13 @@ if {[llength $targets] != 1} {error "expected one JTAG target"}
 current_hw_target [lindex $targets 0]
 open_hw_target
 set dev [lindex [get_hw_devices] 0]
-set_property PROGRAM.FILE $bit $dev
-program_hw_devices $dev
+if {![info exists ::env(NATIVE_SD_NO_PROGRAM)] ||
+    $::env(NATIVE_SD_NO_PROGRAM) ne "1"} {
+    set_property PROGRAM.FILE $bit $dev
+    program_hw_devices $dev
+} else {
+    puts "Attaching to existing native SD probe without programming SRAM"
+}
 set_property PROBES.FILE $ltx $dev
 refresh_hw_device -update_hw_probes true $dev
 set vio [lindex [get_hw_vios -quiet] 0]
