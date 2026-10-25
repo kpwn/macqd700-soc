@@ -684,6 +684,10 @@ DAFB video was live at 640x480 with no framebuffer-reader misses. The native
 SD High Speed probe read 1, with 2,498 SCSI completions, zero SD errors,
 zero CHECK CONDITIONs, and no medium-not-present indication. This is a
 boot and basic storage-health check; the owner also confirmed the Mac booted
-normally on the monitor. A Mac-visible disk benchmark, large
-file copy/readback, HDMI audio check, and longer 200 MHz stability run are
-still required. SPI flash remains on the verified 100 MHz image.
+normally on the monitor and reported that audio works. The capture server
+frame in [evidence/2026-10-25-tqtt-200mhz-speedometer.jpg](evidence/2026-10-25-tqtt-200mhz-speedometer.jpg)
+shows Speedometer 4.02 at **Disk 4.279**, CPU 7.530, Graphics 3.346,
+Math 88.666, and overall PR 5.245 (Quadra 605 = 1.0). After that run,
+the live SCSI probe showed 2,928 completions, zero SD errors, and zero
+CHECK CONDITIONs. A large file copy/readback and longer 200 MHz stability
+run are still required. SPI flash remains on the verified 100 MHz image.
