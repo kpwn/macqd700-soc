@@ -232,7 +232,16 @@ if {!$no_incremental && $incremental_ref_dcp ne ""} {
         if {![file exists $ref_dir]} {
             file mkdir $ref_dir
         }
-        file copy -force $output_dir/checkpoints/route.dcp $incremental_ref_dcp
+        set new_route [file normalize $output_dir/checkpoints/route.dcp]
+        if {[file exists $incremental_ref_dcp] &&
+            [file normalize $incremental_ref_dcp] ne $new_route} {
+            # An explicit reference may be another build's only routed
+            # checkpoint. Preserve it before replacing the cache entry.
+            file copy -force $incremental_ref_dcp ${incremental_ref_dcp}.previous
+        }
+        if {[file normalize $incremental_ref_dcp] ne $new_route} {
+            file copy -force $new_route $incremental_ref_dcp
+        }
         puts [format \
             "=== INCREMENTAL: timing met (WNS %.3f, WHS %.3f) — stashed routed DCP to %s ===" \
             $stash_wns $stash_whs $incremental_ref_dcp]
