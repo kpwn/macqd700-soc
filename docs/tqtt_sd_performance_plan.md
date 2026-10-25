@@ -234,8 +234,19 @@ an isolated write-path reproduction and HFS consistency check.
    CMD12 stop attempt before the error is returned; the same test checks
    both read and write error paths. An experimental full-SoC TQTT source
    variant now selects native pins and connects the backend through boot
-   and SCSI FIFO CDCs with `TQTT_NATIVE_SD=1`. It still needs Vivado
-   implementation, hardware read/write integrity tests, and 200 MHz timing.
+   and SCSI FIFO CDCs with `TQTT_NATIVE_SD=1`. A combined 100 MHz TQTT
+   implementation with HDMI audio, automatic fan control, Ethernet, reduced
+   CPU debug, and native SD completed on 2026-10-25. The routed checkpoint is
+   `/var/tmp/tqtt_native_easc_100/vivado/checkpoints/route.dcp` (SHA-256
+   `ca3962c2af20d4a7a382d1f1c515889198ba21115fc98688dcaa8789eb384100`).
+   Its blank bitstream is `/var/tmp/tqtt_native_easc_100/vivado/fpga_top.blank.bit`
+   (SHA-256 `3cac8b977920132ef714c71b99327ede568a6e187608647a5981aec90c137cf5`).
+   Final WNS/WHS/WPWS were +0.005/+0.005/+0.053 ns with zero failing endpoints
+   and zero bitstream DRC errors. The source RTL was staging commit `7540ebe`
+   with CPU commit `4736fadf`; the later build-flow correction changed no RTL.
+   This is an unpatched, unprogrammed image. It still needs native-card
+   read/write integrity tests and 200 MHz timing before replacing the SPI
+   path.
    The full-top Vivado RTL dry-run passed with HDMI audio, fan control, and
    Ethernet selected on 2026-10-25. The SD J8 constraints are separate
    `tqtt_sd_spi.xdc` and `tqtt_sd_native.xdc` files selected by Vivado Tcl;
