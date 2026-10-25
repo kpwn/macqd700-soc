@@ -3776,6 +3776,13 @@ fpga-tqtt-sd-native-probe-bitstream:
 	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_sd_native_probe.tcl -tclargs $(TQTT_SD_NATIVE_PROBE_BUILD_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — native SD probe pending"; fi; exit $$status; }
 
+.PHONY: fpga-tqtt-sd-native-autoinit-probe-bitstream
+TQTT_SD_NATIVE_AUTOINIT_BUILD_DIR ?= $(BUILD_DIR)/tqtt_sd_native_autoinit_probe
+fpga-tqtt-sd-native-autoinit-probe-bitstream:
+	@mkdir -p $(TQTT_SD_NATIVE_AUTOINIT_BUILD_DIR)
+	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_sd_native_autoinit_probe.tcl -tclargs $(TQTT_SD_NATIVE_AUTOINIT_BUILD_DIR)' \
+	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — native SD autoinit probe pending"; fi; exit $$status; }
+
 .PHONY: fpga-tqtt-eth-probe-bitstream
 .PHONY: fpga-tqtt-ddr4-probe-bitstream
 TQTT_DDR4_PROBE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_ddr4_probe
@@ -4885,6 +4892,28 @@ $(SD_NATIVE_INIT_BUILD)/Vsd_native_init: $(RTL_DIR)/soc/sd_native_init.v $(TB_DI
 		-GRETRY_WAIT_CYCLES=2 -GOCR_RETRIES=4 \
 		$(RTL_DIR)/soc/sd_native_init.v \
 		$(TB_DIR)/tb_sd_native_init.cpp \
+		-CFLAGS "-std=c++17"
+
+SD_NATIVE_INIT_CTRL_BUILD := $(BUILD_DIR)/sd_native_init_controller
+.PHONY: tb-sd-native-init-controller
+tb-sd-native-init-controller: $(SD_NATIVE_INIT_CTRL_BUILD)/Vsd_native_init_controller
+	$(SD_NATIVE_INIT_CTRL_BUILD)/Vsd_native_init_controller
+
+$(SD_NATIVE_INIT_CTRL_BUILD)/Vsd_native_init_controller: $(RTL_DIR)/soc/sd_native_init_controller.v $(RTL_DIR)/soc/sd_native_init.v $(RTL_DIR)/soc/sd_native_command.v $(RTL_DIR)/soc/sd_native_csr_master.v $(TB_DIR)/tb_sd_native_init_controller.cpp
+	@mkdir -p $(SD_NATIVE_INIT_CTRL_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Mdir $(SD_NATIVE_INIT_CTRL_BUILD) \
+		--top-module sd_native_init_controller \
+		-GINIT_WAIT_CYCLES=3 -GRETRY_WAIT_CYCLES=2 -GOCR_RETRIES=4 \
+		-GEVENT_TIMEOUT_CYCLES=64 -GCSR_TIMEOUT_CYCLES=8 \
+		$(RTL_DIR)/soc/sd_native_init_controller.v \
+		$(RTL_DIR)/soc/sd_native_init.v \
+		$(RTL_DIR)/soc/sd_native_command.v \
+		$(RTL_DIR)/soc/sd_native_csr_master.v \
+		$(TB_DIR)/tb_sd_native_init_controller.cpp \
 		-CFLAGS "-std=c++17"
 
 # ──────────────────────────────────────────────────────────────────────────────
