@@ -27,7 +27,8 @@ module tb_pram_sd_native;
     wire native_rd_valid = card_active && !card_write && native_rd_ready;
     wire [7:0] native_rd_data = sector[card_idx[8:0]];
 
-    pram_sd #(.NATIVE_TRANSPORT(1), .ARB_WAIT_LOG2(12),
+    pram_sd #(.NATIVE_TRANSPORT(1), .AUTOLOAD_ON_BOOT(1),
+              .ARB_WAIT_LOG2(12),
               .CDC_WAIT_LOG2(8), .DEFAULT_HOLD_LOG2(11)) dut (
         .clk(clk), .rst(rst), .boot_done(1'b1),
         .autoload_pending(autoload_pending),
@@ -107,6 +108,10 @@ module tb_pram_sd_native;
         for (int i = 0; i < 512; i++) sector[i] = 0;
         repeat (4) @(negedge clk);
         rst = 0;
+        wait(autoload_pending);
+        wait(!autoload_pending);
+        if (dut.result_q != 4'd5 || !dut.defaults_q)
+            $fatal(1, "blank native PRAM sector did not select defaults");
         issue(32'h5052_0001); // SAVE
         if ({sector[0], sector[1], sector[2], sector[3]} != 32'h50524d31)
             $fatal(1, "native SAVE sector header differs from SPI format");
@@ -114,11 +119,19 @@ module tb_pram_sd_native;
             if (sector[i+16] != 8'(i ^ 8'h5a))
                 $fatal(1, "native SAVE byte %d: got %h", i, sector[i+16]);
         for (int i = 0; i < 256; i++) live_pram[i] = 0;
-        issue(32'h5052_0002); // LOAD
+        repeat (4) @(negedge clk);
+        rst = 1;
+        repeat (4) @(negedge clk);
+        rst = 0;
+        wait(autoload_pending);
+        wait(!autoload_pending);
+        if (dut.result_q != 0 || dut.defaults_q)
+            $fatal(1, "saved native PRAM sector did not autoload");
         for (int i = 0; i < 256; i++)
             if (live_pram[i] != 8'(i ^ 8'h5a))
-                $fatal(1, "native LOAD byte %d: got %h", i, live_pram[i]);
-        $display("PASS native PRAM SAVE/LOAD sector round trip");
+                $fatal(1, "native autoload byte %d: got %h", i, live_pram[i]);
+        issue(32'h5052_0002); // Manual LOAD still uses the same sector.
+        $display("PASS native PRAM SAVE/LOAD and boot autoload round trip");
         $finish;
     end
     initial begin

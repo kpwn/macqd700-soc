@@ -278,9 +278,10 @@ an isolated write-path reproduction and HFS consistency check.
    A native PRAM transport now shares the block engine with boot and SCSI,
    retaining the SPI build's LBA 8191 sector format, checksum, boot autoload,
    and `0x50A00100` JTAG commands. `make tb-pram-sd-native` checks a full
-   SAVE/LOAD sector round trip; the SPI PRAM tests and native owner-mux test
-   also pass. Native PRAM still needs hardware validation. The JTAG bulk
-   card writer remains disabled in this variant; the default SPI variant
+   SAVE/LOAD sector round trip, blank-sector fallback, and saved-sector
+   autoload before the boot hold releases; the SPI PRAM tests and native
+   owner-mux test also pass. Native PRAM still needs hardware validation.
+   The JTAG bulk card writer remains disabled in this variant; the default SPI variant
    retains it. A reset guard defers controller reset while
    an on-card command is active (`make tb-sd-native-reset`). The negotiated
    50 MHz CMD6 switch now has an opt-in `TQTT_NATIVE_SD_HS=1` implementation.
