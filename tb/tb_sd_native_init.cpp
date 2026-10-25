@@ -12,7 +12,10 @@ static bool cmd_pending = false;
 static bool csr_error_pending = false;
 static uint32_t response_words[4] = {};
 static std::vector<int> commands;
+static std::vector<int> command_cycles;
 static std::vector<uint16_t> csr_addrs;
+static std::vector<int> bus_order;
+static int cycle_number = 0;
 
 static void tick() {
     dut.clk = 0;
@@ -27,9 +30,14 @@ static void tick() {
     const uint16_t csr_addr = dut.csr_req_addr;
     const int cmd = dut.cmd_index;
     uint32_t next_response[4] = {};
-    if (take_csr) csr_addrs.push_back(csr_addr);
+    if (take_csr) {
+        csr_addrs.push_back(csr_addr);
+        if (csr_addr == 0x2804) bus_order.push_back(0x100);
+    }
     if (take_cmd) {
         commands.push_back(cmd);
+        command_cycles.push_back(cycle_number);
+        bus_order.push_back(cmd);
         if (cmd == 8) next_response[0] = mode == 1 ? 0x155 : 0x1aa;
         if (cmd == 41) {
             ++acmd41_count;
@@ -47,6 +55,7 @@ static void tick() {
     csr_error_pending = take_csr && mode == 4 && csr_addr == 0x2804;
     cmd_pending = take_cmd;
     for (int i = 0; i < 4; ++i) response_words[i] = next_response[i];
+    ++cycle_number;
 }
 
 static bool run(int test_mode) {
@@ -56,7 +65,10 @@ static bool run(int test_mode) {
     cmd_pending = false;
     csr_error_pending = false;
     commands.clear();
+    command_cycles.clear();
     csr_addrs.clear();
+    bus_order.clear();
+    cycle_number = 0;
     for (auto &word : response_words) word = 0;
     dut.rst = 1;
     dut.csr_req_ready = 1;
@@ -68,15 +80,22 @@ static bool run(int test_mode) {
         const std::vector<int> expected = {0, 8, 55, 41, 55, 41, 2, 3,
                                            9, 7, 55, 6, 16};
         const std::vector<uint16_t> csr_expected = {0x2804, 0x2808, 0x2804};
+        const std::vector<int> expected_order = {0x100, 0, 8, 55, 41, 55,
+                                                  41, 0x100, 2, 3, 9, 7,
+                                                  55, 6, 16};
         if (!dut.ready || dut.error || dut.rca != 0x12340000 ||
             dut.card_num_lbas != 8388608 || commands != expected ||
-            csr_addrs != csr_expected) {
+            csr_addrs != csr_expected || bus_order != expected_order ||
+            command_cycles[2] - command_cycles[1] < 20 ||
+            command_cycles[3] - command_cycles[2] < 20) {
             std::fprintf(stderr, "init sequence failed: ready=%d error=%d phase=%d rca=%08x lbas=%u cmds=%zu\n",
                          int(dut.ready), int(dut.error), int(dut.debug_phase),
                          dut.rca, dut.card_num_lbas, commands.size());
             for (int cmd : commands) std::fprintf(stderr, " cmd=%d", cmd);
             std::fputc('\n', stderr);
             for (int addr : csr_addrs) std::fprintf(stderr, " csr=%04x", addr);
+            std::fputc('\n', stderr);
+            for (int op : bus_order) std::fprintf(stderr, " op=%x", op);
             std::fputc('\n', stderr);
             return false;
         }

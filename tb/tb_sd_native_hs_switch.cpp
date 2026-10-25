@@ -27,8 +27,8 @@ static void tick() {
     dut.wb_dma_sel = 15;
     dut.wb_dma_adr = dma_step == 0 ? 3 : 4;
     dut.wb_dma_dat_w = dma_step == 0 ?
-        (mode == 1 ? 0u : 0x00020000u) :
-        (mode == 1 ? 0u : 0x01000000u);
+        (mode == 1 ? 0u : 0x00000380u) :
+        (mode == 1 ? 0u : 0x00000001u);
     dut.eval();
     const bool take = !dut.rst && dut.wb_ctrl_cyc && dut.wb_ctrl_stb &&
                       !dut.wb_ctrl_ack && !dut.wb_ctrl_err;

@@ -160,7 +160,6 @@ set ifcond [cmd 8 0x1aa 1]
 if {($ifcond & 0xfff) != 0x1aa} {
     error [format "CMD8 voltage/check pattern mismatch: 0x%08x" $ifcond]
 }
-csr 0x2804 4 ;# 100 MHz / 4 = 25 MHz
 set ready 0
 for {set attempt 0} {$attempt < 1000} {incr attempt} {
     cmd 55 0 1
@@ -169,6 +168,7 @@ for {set attempt 0} {$attempt < 1000} {incr attempt} {
     after 1
 }
 if {!$ready} {error "ACMD41 card never became ready"}
+csr 0x2804 4 ;# Raise to 25 MHz only after ACMD41 reports ready.
 puts [format "OCR=0x%08x" $ocr]
 if {!($ocr & 0x40000000)} {
     error "card lacks block addressing (CCS=0); probe LBA arguments require SDHC/SDXC"
@@ -199,8 +199,13 @@ if {$speed == 50} {
     cmd 6 0x80fffff1 1 1 ;# switch access mode to High Speed
     data_done
     wait_dma
-    set group_support [expr {([ram_word 3] >> 16) & 0xff}]
-    set selected [expr {([ram_word 4] >> 24) & 0x0f}]
+    set switch_words [list]
+    for {set word_index 0} {$word_index < 16} {incr word_index} {
+        lappend switch_words [format %08x [ram_word $word_index]]
+    }
+    puts "CMD6_SWITCH_RAW=[join $switch_words :]"
+    set group_support [expr {([ram_word 3] >> 8) & 0xff}]
+    set selected [expr {[ram_word 4] & 0x0f}]
     if {!(($group_support & 2) && $selected == 1)} {
         error [format "CMD6 did not select High Speed: support=0x%02x selected=%d" \
             $group_support $selected]

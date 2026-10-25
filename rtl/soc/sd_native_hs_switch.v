@@ -209,8 +209,10 @@ module sd_native_hs_switch #(
                 end
                 S_CHECK: begin
                     if (!seen_word3 || !seen_word4) state <= S_FAIL;
-                    else if ((status_word3[23:16] & 8'h02) != 0 &&
-                             status_word4[27:24] == 4'd1) state <= S_DIV;
+                    // LiteSDCard DMA presents each 32-bit status word with
+                    // bytes reversed relative to the card's wire order.
+                    else if ((status_word3[15:8] & 8'h02) != 0 &&
+                             status_word4[3:0] == 4'd1) state <= S_DIV;
                     else state <= S_DONE; // card remains in default-speed mode
                 end
                 S_DIV: if (direct_req_ready) state <= S_DIV_WAIT;

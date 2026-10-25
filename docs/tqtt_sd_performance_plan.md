@@ -371,3 +371,30 @@ an isolated write-path reproduction and HFS consistency check.
 The [SD Association bus-speed table](https://www.sdcard.org/developers/sd-standard-overview/bus-speed-default-speed-high-speed-uhs-sd-express/)
 defines the 12.5 MB/s default-speed and 25 MB/s High Speed ceilings; those
 figures are bus rates, not application throughput.
+
+## Samsung EVO card check, 2026-10-25
+
+After reseating the Samsung EVO card, the read-only manual native probe
+initialized it at 390 kHz through ACMD41, then selected four-bit mode.
+It reports 122,138,624 sectors and RCA `0x59b4`. A 32-sector read at 25 MHz
+returned CRC32 `0x3f0eb0b8`. The CMD6 switch response in LiteSDCard DMA word
+order is `word3=0x00000380`, `word4=0x00000001`: the card supports High Speed
+and selected function 1. The old decoder used incorrect byte lanes, so the
+manual script and `sd_native_hs_switch` now check word3 bits 15:8 and word4
+bits 3:0. A 32-sector read at 50 MHz returned the same CRC32. The 50 MHz
+manual-probe log is `/var/tmp/tqtt_native_50_corrected.log`.
+
+The automatic initializer previously raised the clock to 25 MHz before
+ACMD41 was ready. It now stays at 390 kHz until the card is ready and inserts
+a 4096-cycle gap between commands. With this change, the automatic block
+engine reads one sector at 25 MHz with CRC32 `0x1df5ba99`, matching the
+manual probe. Automatic two- and 32-sector requests still fail, while the
+manual 32-sector path succeeds. VIO samples after those requests are
+incoherent (`status=0x00000747`, zero capacity, shifted RCA), so their error
+location is not established. Do not load the full native Mac image or write
+the card until the automatic multi-block path and integrity matrix pass.
+
+The manual probe's cycle counter includes JTAG-driven command and polling
+delays; its 3.18 MiB/s figure at 50 MHz is not a sustained card bandwidth
+measurement. Measure throughput using the automatic engine after it is
+repaired.

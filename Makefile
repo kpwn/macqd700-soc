@@ -5012,7 +5012,7 @@ $(SD_NATIVE_INIT_BUILD)/Vsd_native_init: $(RTL_DIR)/soc/sd_native_init.v $(TB_DI
 		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
 		-Mdir $(SD_NATIVE_INIT_BUILD) \
 		--top-module sd_native_init -GINIT_WAIT_CYCLES=3 \
-		-GRETRY_WAIT_CYCLES=2 -GOCR_RETRIES=4 \
+		-GRETRY_WAIT_CYCLES=2 -GCMD_GAP_CYCLES=20 -GOCR_RETRIES=4 \
 		$(RTL_DIR)/soc/sd_native_init.v \
 		$(TB_DIR)/tb_sd_native_init.cpp \
 		-CFLAGS "-std=c++17"
@@ -5030,7 +5030,8 @@ $(SD_NATIVE_INIT_CTRL_BUILD)/Vsd_native_init_controller: $(RTL_DIR)/soc/sd_nativ
 		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
 		-Mdir $(SD_NATIVE_INIT_CTRL_BUILD) \
 		--top-module sd_native_init_controller \
-		-GINIT_WAIT_CYCLES=3 -GRETRY_WAIT_CYCLES=2 -GOCR_RETRIES=4 \
+		-GINIT_WAIT_CYCLES=3 -GRETRY_WAIT_CYCLES=2 \
+		-GCMD_GAP_CYCLES=3 -GOCR_RETRIES=4 \
 		-GEVENT_TIMEOUT_CYCLES=64 -GCSR_TIMEOUT_CYCLES=8 \
 		$(RTL_DIR)/soc/sd_native_init_controller.v \
 		$(RTL_DIR)/soc/sd_native_init.v \

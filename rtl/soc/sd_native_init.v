@@ -6,6 +6,7 @@
 module sd_native_init #(
     parameter integer INIT_WAIT_CYCLES = 500000,
     parameter integer RETRY_WAIT_CYCLES = 100000,
+    parameter integer CMD_GAP_CYCLES = 4096,
     parameter integer OCR_RETRIES = 1000
 ) (
     input  wire         clk,
@@ -137,7 +138,10 @@ module sd_native_init #(
                                 state <= S_DELAY;
                             end
                             P_DIV_RUN: begin
-                                phase <= P_CMD55;
+                                // The card stays at identification speed
+                                // until ACMD41 reports ready. Only then can
+                                // the clock rise to the transfer rate.
+                                phase <= P_CMD2;
                                 state <= S_LAUNCH;
                             end
                             default: begin error <= 1; state <= S_HALT; end
@@ -148,18 +152,34 @@ module sd_native_init #(
                         error <= 1;
                         state <= S_HALT;
                     end else case (phase)
-                        P_CMD0: begin phase <= P_CMD8; state <= S_LAUNCH; end
+                        P_CMD0: begin
+                            delay_count <= CMD_GAP_CYCLES - 1;
+                            delay_next_phase <= P_CMD8;
+                            state <= S_DELAY;
+                        end
                         P_CMD8: begin
                             if (cmd_response[11:0] != 12'h1aa) begin
                                 error <= 1; state <= S_HALT;
-                            end else begin phase <= P_DIV_RUN; state <= S_LAUNCH; end
+                            end else begin
+                                delay_count <= CMD_GAP_CYCLES - 1;
+                                delay_next_phase <= P_CMD55;
+                                state <= S_DELAY;
+                            end
                         end
-                        P_CMD55: begin phase <= P_ACMD41; state <= S_LAUNCH; end
+                        P_CMD55: begin
+                            delay_count <= CMD_GAP_CYCLES - 1;
+                            delay_next_phase <= P_ACMD41;
+                            state <= S_DELAY;
+                        end
                         P_ACMD41: begin
                             if (cmd_response[31]) begin
                                 if (!cmd_response[30]) begin
                                     error <= 1; state <= S_HALT;
-                                end else begin phase <= P_CMD2; state <= S_LAUNCH; end
+                                end else begin
+                                    delay_count <= CMD_GAP_CYCLES - 1;
+                                    delay_next_phase <= P_DIV_RUN;
+                                    state <= S_DELAY;
+                                end
                             end else if (ocr_tries == LAST_OCR_TRY) begin
                                 error <= 1; state <= S_HALT;
                             end else begin
@@ -169,26 +189,46 @@ module sd_native_init #(
                                 state <= S_DELAY;
                             end
                         end
-                        P_CMD2: begin phase <= P_CMD3; state <= S_LAUNCH; end
+                        P_CMD2: begin
+                            delay_count <= CMD_GAP_CYCLES - 1;
+                            delay_next_phase <= P_CMD3;
+                            state <= S_DELAY;
+                        end
                         P_CMD3: begin
                             rca <= {cmd_response[31:16], 16'b0};
-                            phase <= P_CMD9; state <= S_LAUNCH;
+                            delay_count <= CMD_GAP_CYCLES - 1;
+                            delay_next_phase <= P_CMD9;
+                            state <= S_DELAY;
                         end
                         P_CMD9: begin
                             if (cmd_response[127:126] != 2'b01 || csd_lbas[32]) begin
                                 error <= 1; state <= S_HALT;
                             end else begin
                                 card_num_lbas <= csd_lbas[31:0];
-                                phase <= P_CMD7; state <= S_LAUNCH;
+                                delay_count <= CMD_GAP_CYCLES - 1;
+                                delay_next_phase <= P_CMD7;
+                                state <= S_DELAY;
                             end
                         end
-                        P_CMD7: begin phase <= P_CMD55_WIDTH; state <= S_LAUNCH; end
-                        P_CMD55_WIDTH: begin phase <= P_ACMD6; state <= S_LAUNCH; end
-                        P_ACMD6: begin phase <= P_CMD16; state <= S_LAUNCH; end
+                        P_CMD7: begin
+                            delay_count <= CMD_GAP_CYCLES - 1;
+                            delay_next_phase <= P_CMD55_WIDTH;
+                            state <= S_DELAY;
+                        end
+                        P_CMD55_WIDTH: begin
+                            delay_count <= CMD_GAP_CYCLES - 1;
+                            delay_next_phase <= P_ACMD6;
+                            state <= S_DELAY;
+                        end
+                        P_ACMD6: begin
+                            delay_count <= CMD_GAP_CYCLES - 1;
+                            delay_next_phase <= P_CMD16;
+                            state <= S_DELAY;
+                        end
                         P_CMD16: begin
-                            phase <= P_READY;
-                            ready <= 1;
-                            state <= S_HALT;
+                            delay_count <= CMD_GAP_CYCLES - 1;
+                            delay_next_phase <= P_READY;
+                            state <= S_DELAY;
                         end
                         default: begin error <= 1; state <= S_HALT; end
                     endcase
@@ -197,7 +237,10 @@ module sd_native_init #(
             S_DELAY: begin
                 if (delay_count == 0) begin
                     phase <= delay_next_phase;
-                    state <= S_LAUNCH;
+                    if (delay_next_phase == P_READY) begin
+                        ready <= 1;
+                        state <= S_HALT;
+                    end else state <= S_LAUNCH;
                 end else delay_count <= delay_count - 1'b1;
             end
             default: begin end
@@ -205,6 +248,7 @@ module sd_native_init #(
     end
 `ifndef SYNTHESIS
     initial if (INIT_WAIT_CYCLES < 1 || RETRY_WAIT_CYCLES < 1 ||
+                CMD_GAP_CYCLES < 1 ||
                 OCR_RETRIES < 1 || OCR_RETRIES > 65536)
         $error("sd_native_init timing/retry parameters invalid");
 `endif

@@ -100,6 +100,8 @@ if {[info exists ::env(NATIVE_SD_EXPECT_HS)]} {
     }
 }
 puts [format "CARD high_speed=%u sd_clk_mhz=%u" $high_speed [expr {$high_speed ? 50 : 25}]]
+puts [format "NATIVE_SD_PRE status=0x%08x crc=0x%08x cycles=%u" \
+    [dict get $snap status] [dict get $snap crc] [dict get $snap cycles]]
 
 set initial_toggle [expr {$status & 1}]
 scan [get_property OUTPUT_VALUE $p_ctrl] %x old_control
@@ -131,6 +133,9 @@ while {1} {
     set snap $again
 }
 set status [dict get $snap status]
+puts [format "NATIVE_SD_POST status=0x%08x crc=0x%08x cycles=%u capacity=%u rca=0x%08x" \
+    $status [dict get $snap crc] [dict get $snap cycles] \
+    [dict get $snap capacity] [dict get $snap rca]]
 set received [expr {$status >> 17}]
 if {$status & 2} {error [format "native SD block error: status=0x%08x" $status]}
 if {$received != $blocks * 512} {
