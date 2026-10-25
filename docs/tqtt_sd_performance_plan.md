@@ -164,8 +164,13 @@ an isolated write-path reproduction and HFS consistency check.
    command argument/type/send sequence, poll the card event with a bound,
    and return all 128 response bits. Its test covers normal completion,
    card errors, event timeout, and CSR error (`make tb-sd-native-command`).
-   Card initialization and DMA block commands are still controlled only by
-   the host probe script.
+   `sd_native_init` sequences native 3.3 V SDHC/SDXC initialization through
+   four-bit default-speed mode and decodes CSD v2 capacity. Its unit test
+   exercises OCR retries and voltage, CSD, and CSR failures
+   (`make tb-sd-native-init`). These modules are not yet connected to the
+   LiteSDCard core in a hardware image; DMA block commands are still
+   controlled only by the host probe script. The negotiated 50 MHz CMD6
+   switch must wait until its 64-byte status can be checked through DMA.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
