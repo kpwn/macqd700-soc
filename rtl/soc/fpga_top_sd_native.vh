@@ -45,7 +45,7 @@
         .card_session_active(native_card_session_active), .rst(native_rst)
     );
 
-    wire native_ready, native_init_error;
+    wire native_ready, native_init_error, native_high_speed_active;
     wire [31:0] native_card_num_lbas, native_rca;
     wire [4:0] native_init_phase;
     (* ASYNC_REG = "TRUE" *) reg [1:0] native_ready_core_sync;
@@ -179,6 +179,13 @@
         .card_wr_avail(card_wr_avail)
     );
 
+    (* ASYNC_REG = "TRUE" *) reg [1:0] native_hs_core_sync;
+    always @(posedge core_clk) begin
+        if (soc_full_rst_bank[5]) native_hs_core_sync <= 2'b00;
+        else native_hs_core_sync <= {native_hs_core_sync[0], native_high_speed_active};
+    end
+    wire core_sd_high_speed_active = native_hs_core_sync[1];
+
     wire [15:0] native_dma_words;
     wire [3:0] native_cmd_event;
 `ifdef TQTT_NATIVE_SD_HS
@@ -189,6 +196,7 @@
     sd_native_backend #(.HIGH_SPEED(NATIVE_SD_HIGH_SPEED)) u_native_card (
         .clk(video_ref_clk), .rst(native_rst),
         .ready(native_ready), .init_error(native_init_error),
+        .high_speed_active(native_high_speed_active),
         .card_num_lbas(native_card_num_lbas), .rca(native_rca),
         .init_phase(native_init_phase),
         .cmd_type(card_cmd_type), .lba(card_lba),

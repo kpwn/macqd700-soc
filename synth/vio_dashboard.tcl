@@ -31,7 +31,7 @@
 #   probe7  32 bits  vio_boot_diag
 #   probe8  32 bits  vio_boot_crc
 #   probe9  68 bits  vio_l2c_stats
-#   probe10  187 bits  vio_scsi_sd
+#   probe10  188 bits  vio_scsi_sd (bit187=native SD High Speed active)
 #   probe11  48 bits  vio_fb_reader_stats
 #   probe12  96 bits  video_dbg_snap
 #   probe13  160 bits  video_dbg_place

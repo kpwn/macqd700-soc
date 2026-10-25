@@ -328,7 +328,7 @@
     // Added 2026-08-19 for the post-boot-fix hang: the ROM's untimed
     // wait-for-INT at 0x40899704 spins forever after `W reg2=0xEE;
     // W reg3=0x10`.  Deliberately a SEPARATE probe rather than widening
-    // vio_scsi_sd: that wire is 187 bits and a Xilinx VIO probe caps at
+    // vio_scsi_sd: that wire is 188 bits and a Xilinx VIO probe caps at
     // 256, so the 81-bit payload would not fit — and keeping it separate
     // leaves every existing vio_scsi_sd bit offset untouched.
     //
@@ -358,7 +358,10 @@
     // Values 3/6/7 in [49:46] are states MAME's xfr_phase can never hold.
     wire [83:0] vio_scsi_c96 = scsi_dbg_c96_state_w;
 
-    wire [186:0] vio_scsi_sd = {
+    // [187] is the actual negotiated native-SD High Speed state. Existing
+    // fields retain their bit positions on both boards.
+    wire [187:0] vio_scsi_sd = {
+        core_sd_high_speed_active,
         scsi_dbg_xfer_lba_w,
         scsi_dbg_xfer_blocks_w,
         scsi_dbg_chk_ok_w,
