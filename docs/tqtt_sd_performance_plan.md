@@ -588,3 +588,29 @@ they were preserved on the card. This proves a successful boot and
 navigable volume after native writes, but does not by itself prove every
 changed byte is correct. The byte-exact regression and native block-engine
 test supply the complementary data-path evidence.
+
+Finder file duplication is still a reproducible hardware failure on this
+image. Duplicating `About System 7.5` (2,336-byte data fork and 19,696-byte
+resource fork), `Finder` (503,994-byte data fork), and `MacTCP DNR`
+(3,659-byte data fork) each raises Finder's "couldn't be written, because a
+disk error occurred" dialog. Creating a new folder succeeds. During the
+`MacTCP DNR` failure, the SCSI trace
+`/var/tmp/tqtt_mactcp_dup_scsi_trace.csv` captured READ(10) and WRITE(10)
+of one sector at LBA 1,142,795, no REQUEST SENSE, and the live probe showed
+2,782 completions, zero SD errors, and zero CHECK CONDITIONs. The trace
+ring filters repeated read values, so its 430 recorded data-port reads do
+**not** imply a short 512-byte transfer. `exc-ring` showed no bus-error
+exception and `fault-snap` was not latched.
+
+A control boot in MAME used a reflink copy of the reconstructed HFS image,
+dismissed the same unclean-shutdown dialog, selected `About System 7.5`,
+and sent Command-D. Its screen capture at 100 emulated seconds shows the
+new `About System 7.5 copy 2`; `hdir` confirms matching 2,336/19,696-byte
+fork lengths on the resulting disk. The control script is
+`/var/tmp/tqtt_mame_control/control.lua`, its trace is
+`/var/tmp/tqtt_mame_control/scsi_dup.csv`, and the result frame is
+`/var/tmp/tqtt_mame_control/snap/macqd700/0004.png`. Thus the HFS image and
+System 7 software can perform this copy; the FPGA's Mac-visible data path
+remains unqualified. MAME's DAFB data-in DMA is not visible as CPU pseudo-DMA
+register reads in that trace, so the MAME and FPGA payload read counts are
+not directly comparable.
