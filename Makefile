@@ -5761,6 +5761,22 @@ $(ASC_BUILD)/Vasc: $(ASC_RTL) $(TB_DIR)/tb_asc.cpp
 		$(TB_DIR)/tb_asc.cpp \
 		-CFLAGS "-std=c++17"
 
+ASC_EASC_BUILD := $(BUILD_DIR)/asc_easc
+.PHONY: tb-asc-easc
+tb-asc-easc: $(ASC_EASC_BUILD)/Vasc
+	$(ASC_EASC_BUILD)/Vasc
+
+$(ASC_EASC_BUILD)/Vasc: $(ASC_RTL) $(TB_DIR)/tb_asc_easc.cpp
+	@mkdir -p $(ASC_EASC_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Wno-WIDTHEXPAND -GEASC_VERSION=1 \
+		-I$(RTL_DIR)/mac -I$(RTL_DIR) -Mdir $(ASC_EASC_BUILD) \
+		--top-module asc $(ASC_RTL) $(TB_DIR)/tb_asc_easc.cpp \
+		-CFLAGS "-std=c++17"
+
 # Production FIFO cadence and per-channel sample-rate conversion.  A 1 MHz
 # clock keeps the fractional 44.1 kHz test short without changing the ratio.
 ASC_FIFO_RATE_BUILD := $(BUILD_DIR)/asc_fifo_rate

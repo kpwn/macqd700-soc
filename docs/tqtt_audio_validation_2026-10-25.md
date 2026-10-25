@@ -24,27 +24,20 @@ errors. `make tb-asc-original` and `make tb-asc` pass. The CPU worktree's
 `make SBT='/home/qwertyoruiop/sbt/bin/sbt --mem 6000' test-fast` gate passed
 with 441 succeeded, zero failed, one canceled, and two ignored.
 
-## Startup chime still needs work
+## Startup chime investigation corrected
 
-The same passing image produces a startup burst from 14.772 to 15.064 s in
-`/var/tmp/tqtt_audio_original_boot.wav` (about 0.292 s). A local MAME Q700
-reference capture, `/var/tmp/mame_q700_boot_audio.wav`, has appreciable
-musical content for roughly 0.60 s. Both contain pitch components near
-261, 522, and 695 Hz, so the ASC sample cadence appears close. The FPGA
-wavetable envelope decays to a flat level by about 0.20 s while MAME's decays
-over roughly 0.60 s. This points to the ROM's CPU-paced chime loop running
-faster on the FPGA; it does not establish a faulty audio sample divider.
+The passing version-zero image produces a 0.292 s startup burst in
+`/var/tmp/tqtt_audio_original_boot.wav`. The earlier 0.60 s MAME Q700
+reference is **not a like-for-like comparison**. A live MAME register trace
+(`/var/tmp/audio_mame_baseline_asc.tsv`) confirms that Q700 detects EASC
+version `0xB0`, configures SRC with `F08/F28=0x82`, and feeds 4-bit CD-XA
+data into both FIFOs. The version-zero RTL takes the separate original ASC
+wavetable path. The prior CPU speed hypothesis and proposed ROM delay patch
+therefore do not explain the difference. A local MAME ROM patch increasing
+the version-zero chime delay table values left the first two seconds of the
+EASC WAV byte-identical.
 
-The ROM writes four wavetable bytes and then delays in the `DBF D4` loop at
-`0x40807118` before eventually writing `R_MODE=0` at `0x40807152`.
-Disassembly shows `D4` loaded from table `D0`; the version-dependent table
-values are 39 at ROM offset `0x71b0` and 43 at `0x71c8`. Increasing these
-local ROM table values could stretch the chime without changing steady-state
-audio. Such a test would need ROM checksum compensation and must stay local to
-the user's ROM dump. The existing simulation-only `chime-delay` patch in
-`tb/models/rom_patch_sets.h` removes the delay and is not a chime fix.
-
-A boot-only CPU throttle limited to the chime routine is another possible
-approach, but it would change CPU/debug clocking or execution control and
-needs a separate design review. Neither approach has been implemented or
-validated. The passing Sound panel branch leaves the chime gap open.
+The EASC path needs its CD-XA decoder, coefficient registers, and correct
+FIFO byte consumption. Work on that path is isolated on
+`codex/tqtt-audio-easc-20261025`; the proven Sound panel image above remains
+the fallback until hardware validation of the new path.
