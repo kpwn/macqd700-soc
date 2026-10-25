@@ -109,6 +109,18 @@ int main() {
     ok &= check("SRC hold is not FIFO underflow", read8(0x810) & 0x10, 0, 0);
 
     reset();
+    write8(0x80A, 1);
+    run(100);
+    ok &= check("half-empty FIFO asserts service IRQ", dut.irq, 1, 1);
+    ok &= check("FIFO status reports service condition", read8(0x804) & 0x04,
+                0x04, 0x04);
+    // MAME EASC/Sonora retains IRQ while HALF_FULL_B is set.  Software
+    // disables that channel's IRQ before acknowledging the next batch.
+    ok &= check("804 read retains asserted half-empty IRQ", dut.irq, 1, 1);
+    write8(0xF29, 1);
+    ok &= check("IRQ control masks and clears service IRQ", dut.irq, 0, 0);
+
+    reset();
     write8(0x801, 2);                // ROM wavetable mode
     ok &= check("wave mode ignores FIFO clock", run(10000), 0, 0);
     int wave_valid = 0;
