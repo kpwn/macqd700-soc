@@ -37,7 +37,30 @@ therefore do not explain the difference. A local MAME ROM patch increasing
 the version-zero chime delay table values left the first two seconds of the
 EASC WAV byte-identical.
 
-The EASC path needs its CD-XA decoder, coefficient registers, and correct
-FIFO byte consumption. Work on that path is isolated on
-`codex/tqtt-audio-easc-20261025`; the proven Sound panel image above remains
-the fallback until hardware validation of the new path.
+The EASC CD-XA path is now implemented on `codex/tqtt-audio-easc-20261025`.
+A volatile 100 MHz TQTT image built from that branch passed routed timing
+(WNS `+0.023 ns`, WHS `+0.010 ns`, WPWS `0.000 ns`, zero failing endpoints)
+and bitstream DRC (zero errors). The ADB-patched test image is
+`/var/tmp/tqtt_audio_easc_100/vivado/fpga_top.local.bit`; its JTAG build ID
+is `0x22D1A7D9`. `make tb-asc-easc`, `make tb-asc-original`, and
+`make tb-asc` pass. SPI flash was not changed.
+
+On hardware, the EASC image reached Finder. The startup chime in
+`/var/tmp/tqtt_audio_easc_boot.wav` has nonzero stereo content from 21.54 to
+22.92 s of the capture (1.38 s). The live MAME EASC baseline
+`/var/tmp/audio_mame_baseline.wav` has a first chime envelope from 0.33 to
+1.69 s (1.36 s). Their gain-normalized averaged 4K-point FFT power spectra
+have cosine similarity 0.99931. The prominent bins at 58.6, 70.3, 257.8,
+and 328.1 Hz agree. The earlier `/var/tmp/mame_q700_boot_audio.wav` 0.62 s
+clip has a very different, DC-dominated spectrum and is not a valid chime
+reference for this EASC trial. The cause of its difference from the newer
+MAME run is not established.
+
+The Sound control panel opened on the EASC image. Basil produced 2.51 s of
+nonzero stereo HDMI PCM in `/var/tmp/tqtt_audio_easc_basil.wav`; Bend Me then
+produced a distinct 2.34 s stereo burst in
+`/var/tmp/tqtt_audio_easc_bendme.wav`. The panel remained responsive and
+advanced its selection. Screenshots are
+`/var/tmp/tqtt_audio_easc_basil_done.jpg` and
+`/var/tmp/tqtt_audio_easc_bendme_done.jpg`. The previous version-zero branch
+remains an independently validated fallback.
