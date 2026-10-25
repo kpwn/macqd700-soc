@@ -228,7 +228,13 @@ an isolated write-path reproduction and HFS consistency check.
    both read and write error paths. An experimental full-SoC TQTT source
    variant now selects native pins and connects the backend through boot
    and SCSI FIFO CDCs with `TQTT_NATIVE_SD=1`. It still needs Vivado
-   elaboration, hardware read/write integrity tests, and 200 MHz timing.
+   implementation, hardware read/write integrity tests, and 200 MHz timing.
+   The full-top Vivado RTL dry-run passed with HDMI audio, fan control, and
+   Ethernet selected on 2026-10-25. The SD J8 constraints are separate
+   `tqtt_sd_spi.xdc` and `tqtt_sd_native.xdc` files selected by Vivado Tcl;
+   Vivado XDC rejected a conditional in one file. The native CDC data RAM
+   write is separate from asynchronous pointer resets to permit RAM
+   inference; `make tb-sd-native-fifo tb-sd-native-bridge` still pass.
    The SPI-only PRAM persistence and JTAG card writer are terminated in
    this variant until their native equivalents exist; the default SPI
    variant still has them. A reset guard defers controller reset while
