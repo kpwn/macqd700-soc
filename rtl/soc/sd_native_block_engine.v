@@ -81,7 +81,12 @@ module sd_native_block_engine #(
     assign rd_valid = state == S_STREAM && rd_ready && byte_index < total_bytes;
 
     reg [31:0] ram [0:4095];
-    wire [31:0] stream_word = ram[byte_index[13:2]];
+    reg [31:0] stream_word;
+    // Synchronous BRAM read. On the fourth byte of a word, fetch the next
+    // word at the same edge that advances byte_index. That keeps the byte
+    // stream continuous without asking Vivado for an async 16 KiB read port.
+    wire [14:0] fetch_byte_index = byte_index + {14'b0, rd_valid};
+    wire [11:0] fetch_word_addr = fetch_byte_index[13:2];
     always @(*) begin
         case (byte_index[1:0])
             2'd0: rd_data = stream_word[31:24];
@@ -96,10 +101,21 @@ module sd_native_block_engine #(
     wire dma_take = wb_dma_cyc && wb_dma_stb && dma_addr_ok && !dma_ack_q;
     assign wb_dma_ack = dma_ack_q;
     assign wb_dma_err = wb_dma_cyc && wb_dma_stb && !dma_addr_ok;
+    wire fill_word = wr_ready && byte_index[1:0] == 2'd3;
+    wire dma_write_word = dma_take && wb_dma_we && wb_dma_sel == 4'hf;
+    wire ram_we = fill_word || dma_write_word;
+    wire [11:0] ram_waddr = dma_write_word ? wb_dma_adr[11:0] :
+                             byte_index[13:2];
+    wire [31:0] ram_wdata = dma_write_word ? wb_dma_dat_w :
+                            {write_accum[31:8], wr_data};
+    always @(posedge clk) begin
+        if (ram_we) ram[ram_waddr] <= ram_wdata;
+        wb_dma_dat_r <= ram[wb_dma_adr[11:0]];
+        stream_word <= ram[fetch_word_addr];
+    end
     always @(posedge clk) begin
         if (rst) begin
             dma_ack_q <= 0;
-            wb_dma_dat_r <= 0;
             write_accum <= 0;
             debug_dma_words <= 0;
         end else begin
@@ -110,13 +126,10 @@ module sd_native_block_engine #(
                     2'd0: write_accum[31:24] <= wr_data;
                     2'd1: write_accum[23:16] <= wr_data;
                     2'd2: write_accum[15:8] <= wr_data;
-                    2'd3: ram[byte_index[13:2]] <= {write_accum[31:8], wr_data};
+                    default: begin end
                 endcase
             end
             if (dma_take) begin
-                wb_dma_dat_r <= ram[wb_dma_adr[11:0]];
-                if (wb_dma_we && wb_dma_sel == 4'hf)
-                    ram[wb_dma_adr[11:0]] <= wb_dma_dat_w;
                 debug_dma_words <= debug_dma_words + 1'b1;
             end
         end
