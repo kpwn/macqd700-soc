@@ -423,6 +423,10 @@ if {![info exists ::env(DDR4_MIG_DCP)] &&
     set ddr4_mig_dcp $pcie_test_mig_dcp
     set ddr4_mig_dcp_source "legacy pcie_test fallback"
 }
+if {!$use_sim_model && $mode in {synth_only full_impl place_only} &&
+    ![file isfile $ddr4_mig_dcp]} {
+    error "DDR4 MIG DCP missing: $ddr4_mig_dcp; generate the board-specific MIG before implementation or set DDR4_MIG_DCP explicitly"
+}
 if {[info exists ::env(PCIE_XDMA_XCI)]} {
     set pcie_xdma_xci [file normalize $::env(PCIE_XDMA_XCI)]
     set pcie_xdma_source "PCIE_XDMA_XCI override"
@@ -581,15 +585,6 @@ if {$use_sim_model &&
     puts stderr "       That build would wrap the ROM image and corrupt the reset-vector area."
     puts stderr "       Use USE_REAL_MIG=1 for a DRAM-backed ROM image, reduce BOOT_ROM_SECTORS for a tiny smoke image,"
     puts stderr "       or set ALLOW_SIM_MODEL_ROM_WRAP=1 only for an intentional negative test."
-    exit 1
-}
-if {!$use_sim_model && ![file exists $ddr4_mig_dcp] &&
-    ($mode eq "synth_only" || $mode eq "full_impl")} {
-    puts stderr "ERROR: USE_REAL_MIG=1 needs the repo-generated DDR4 MIG DCP, but it was not found:"
-    puts stderr "       $ddr4_mig_dcp"
-    puts stderr "       Run 'make ddr4-mig' to generate it under build/ddr4_mig, or set DDR4_MIG_DCP to an explicit DCP."
-    puts stderr "       For one-off reference comparison only, USE_PCIE_TEST_MIG_DCP=1 can fall back to:"
-    puts stderr "       $pcie_test_mig_dcp"
     exit 1
 }
 if {$enable_pcie_xdma && ![file exists $pcie_xdma_xci]} {
