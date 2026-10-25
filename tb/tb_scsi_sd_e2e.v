@@ -34,6 +34,9 @@
 // the C++ driver switches to the 53C96 register protocol under the same
 // define.  Both builds share every source file — see the
 // SCSI_SD_E2E_BUILD_RULE template in the Makefile.
+// `SCSI_E2E_NATIVE_FIFO selects the production native-SD FIFO bridge at
+// the SCSI seam while retaining the byte-exact SPI card model downstream.
+// This isolates the faster pb_clk write consumer from the card protocol.
 
 module tb_scsi_sd_e2e (
     input  wire        pb_clk,
@@ -210,7 +213,13 @@ module tb_scsi_sd_e2e (
     // ══════════════════════════════════════════════════════════════════
     // Bridge: pb_clk ↔ core_clk CDC
     // ══════════════════════════════════════════════════════════════════
+`ifdef SCSI_E2E_NATIVE_FIFO
+    // Exercise the production native-SD write consumer against the same
+    // byte-exact card model used by the C96 end-to-end scenarios.
+    sd_scsi_native_bridge u_bridge (
+`else
     sd_scsi_bridge u_bridge (
+`endif
         .pb_clk          (pb_clk),
         .pb_rst          (rst),
         .pb_cmd_type     (pb_sd_cmd_type),

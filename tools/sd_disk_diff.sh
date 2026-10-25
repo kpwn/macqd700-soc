@@ -248,7 +248,10 @@ localize)
 restore)
     start=${3:?start_blk}; count=${4:?count}
     tmp=$(mktemp /tmp/sdrestore.XXXXXX.bin) || die "mktemp"
-    trap 'rm -f "$tmp"' EXIT
+    # Keep the lease-release action installed above. Replacing its EXIT trap
+    # with a temp-file-only trap stranded the first restore's 1800-second
+    # lease and blocked every following range in a multi-range repair.
+    trap 'rm -f "$tmp"; if [ "${JTAG_LEASE_HELD:-}" = "sd_disk_diff.$$" ]; then "$LEASE" release "sd_disk_diff.$$" >/dev/null 2>&1; fi' EXIT
     dd if="$img" of="$tmp" bs=512 skip="$start" count="$count" status=none
     got=$(( $(stat -c %s "$tmp") / 512 ))
     [ "$got" -eq "$count" ] || die "short read from image: wanted $count got $got"

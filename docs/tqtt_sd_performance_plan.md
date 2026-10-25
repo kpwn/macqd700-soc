@@ -477,3 +477,89 @@ The new fields are `[31:22]` write-ring occupancy, `[21:12]` bytes left in
 the current sector, then flags `[11:0]`: multi-write, backend kicked,
 request-go, backend busy, write-ready, target REQ, C96 DRQ, shim-write
 withhold, backend done, backend error, range-check OK, request is write.
+
+The diagnostic image from commit `9005062` is
+`/var/tmp/tqtt_native_scsi_flow_100/vivado/fpga_top.local.bit` (local ADB
+firmware; SHA-256
+`30728d22b3bb504d74ecec8cc754ecdea90510ec4d2696d02d8690d583ef4e3a`).
+Its final WNS/WHS/WPWS are +0.004/+0.005/+0.210 ns, with zero failing
+endpoints and zero bitstream DRC errors. JTAG loaded it as build
+`0x90050622`. Two hard-reset boots reached a different failure before the
+four-block write: MacsBug reported a bus error at ROM PC `0x4081B820`
+(`_vStdExit+0x56`). The faulting `CMPA.L (A2)+,A1` uses
+`A2=0x02C80000`. The CPU MMU's pointer descriptor for that virtual 256 KiB
+region is `0x00000018` (nonresident); the preceding region is mapped and a
+JTAG physical read at `0x02C80000` succeeds. Thus this immediate bus error
+is a virtual-memory mapping fault. Its cause may still be earlier data
+corruption; this observation does not exonerate the SD path. The ROM also
+produces some expected bus errors during boot, so halt-on-first-vector-2
+alone is not a sufficient diagnosis. The capture-server still is
+`/var/tmp/tqtt_snapshot_probe.jpg`.
+
+At the MacsBug halt, SCSI was idle after 1271 completed backend commands,
+zero SD errors, and zero CHECK CONDITIONs. The trace
+`/var/tmp/tqtt_native_macsbug_scsi.csv` records the most recent pseudo-DMA
+reads. Its read filter omits repeated values, so raw trace chunk lengths
+are shorter than 512 bytes. The filtered data for five consecutive sectors
+is an exact ordered subsequence of the reference `shd.hda` sectors
+11735..11739 (missing only repeated-value events), including a 501-byte
+trace for sector 11739 with its 11 repeated bytes omitted. This validates
+those final sectors' byte order and values as delivered by SCSI, but does
+not prove the entire disk read stream or explain the memory fault.
+
+For a simpler long-term data path, reuse the native block engine's 16 KiB
+BRAM as a dual-port SCSI/SD chunk buffer. The SCSI side fills an entire
+bounded write chunk before the card command; reads fill from SD before the
+Mac drains the chunk. A narrow cross-clock command/completion handshake and
+one authoritative byte count can replace the 512-byte SCSI ring plus the
+separate 128-byte native CDC FIFO. Start with serialized chunks for
+correctness; add a second buffer only if measured Mac-visible throughput
+justifies overlap. This preserves the Mac-facing 53C96 protocol and keeps
+bulk data off the shared DDR routing fabric.
+
+## Confirmed live write corruption, 2026-10-25
+
+The corrected native provisioner compared disk sectors 0..95410 with
+`/home/qwertyoruiop/shd.hda`. It found 102 changed sectors in 15 localized
+ranges. Each pre-repair range was saved under
+`/var/tmp/tqtt_card_pre_repair_20261025/`; all 15 ranges were restored and
+immediately verified. A subsequent full scan of 95,411 sectors reported
+zero mismatches (`/var/tmp/tqtt_native_diff_after_repair_95411.log`). A
+four-sector scratch write at raw LBA 3,000,000 also read back exactly and
+its original bytes were restored, proving that the provisioner's native
+block writer can write correctly.
+
+Rebooting the Mac from that clean baseline reproduced the pseudo-DMA write
+stall. The 53C96 trace records a WRITE(10) to disk LBA 46700 for eight
+blocks. The host supplied six complete sectors and 426 bytes of the
+seventh; it was held with 86 bytes left while the backend was idle and the
+512-byte SCSI ring full. Reading the card afterward showed all eight target
+sectors had changed, with the first four exactly matching the prior corrupt
+content. Thus the Mac's native write path corrupted a verified-clean volume
+during this boot; the earlier MacsBug mapping fault alone did not explain
+the damage. Trace: `/var/tmp/tqtt_native_clean_disk_write_wedge.csv`.
+
+`scsi.v` delayed `vh_wr_avail` by one pb_clk cycle to align a staged byte
+with credit in the legacy SPI bridge. The native bridge instead pushes to
+its asynchronous write FIFO on *every* pb_clk with credit high. At ring
+count zero, the registered credit remained high for one more cycle, so the
+native bridge could take stale bytes. The new native-bridge 53C96 end-to-end
+test reproduces this before the fix: three multi-block writes with producer
+stalls deliver corrupt bytes to the card model, and the SCSI ring records
+7..9 empty-ring drains. Ending credit immediately at count zero removes
+the underflows but still corrupts bytes after each stall. At ring count one,
+simultaneous producer push and FIFO drain preloads the *next* byte from the
+same RAM address being written at that edge, so it reads stale data. Holding
+one byte in reserve while producer and consumer overlap fixes all 27
+native-bridge end-to-end cases, including the three stall cases. The credit
+rising edge remains delayed to align the staged byte. Hardware retest and
+post-boot card comparison are required before treating the volume as safe.
+
+After the clean-baseline reproduction, a full scan found five changed
+32-sector batches. A per-sector comparison localized these to 15 sectors:
+98, 106, 2145..2146, 2240, 2243, 46700..46707, and 46840. Each 32-sector
+batch is backed up under `/var/tmp/tqtt_card_post_clean_boot_20261025/`.
+The 15 changed sectors were restored from the reference image and each
+immediately verified. A second full-volume comparison of 95,411 sectors
+reported zero mismatches
+(`/var/tmp/tqtt_native_diff_after_credit_repair_95411.log`).

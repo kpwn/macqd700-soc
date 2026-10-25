@@ -173,7 +173,7 @@ module tb_scsi_vhdd_sd #(
         .dbg_chk_ok(), .dbg_xfer_blocks(), .dbg_xfer_lba(),
         .dbg_medium_not_present(), .dbg_sense_key(),
         .dbg_sense_asc(), .dbg_check_cond_count(),
-        .dbg_c96_state(),
+        .dbg_c96_state(), .dbg_write_flow(),
         .clk           (clk),
         .rst           (rst),
         // Default build: only target A is live and TARGET_B_EN=0, so this

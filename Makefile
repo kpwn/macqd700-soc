@@ -5606,6 +5606,29 @@ $(SCSI_SD_E2E_NOSEL_BUILD)/Vtb_scsi_sd_e2e: $(SCSI_SD_E2E_RTL) \
 # s10_write10_lba_200_4blocks_cmd25 was green over a broken ring.
 SCSI_SD_E2E_C96_BUILD := $(BUILD_DIR)/scsi_sd_e2e_c96
 SCSI_SD_E2E_C96_CORE100_BUILD := $(BUILD_DIR)/scsi_sd_e2e_c96_core100
+SCSI_SD_E2E_C96_NATIVE_BUILD := $(BUILD_DIR)/scsi_sd_e2e_c96_native
+
+.PHONY: tb-scsi-sd-e2e-c96-native
+tb-scsi-sd-e2e-c96-native: $(SCSI_SD_E2E_C96_NATIVE_BUILD)/Vtb_scsi_sd_e2e
+	$(SCSI_SD_E2E_C96_NATIVE_BUILD)/Vtb_scsi_sd_e2e
+
+$(SCSI_SD_E2E_C96_NATIVE_BUILD)/Vtb_scsi_sd_e2e: Makefile $(SCSI_SD_E2E_RTL) \
+		$(RTL_DIR)/soc/vhdd_mux.v $(RTL_DIR)/soc/sd_scsi_native_bridge.v \
+		$(RTL_DIR)/soc/sd_async_byte_fifo.v $(TB_DIR)/tb_scsi_sd_e2e.cpp
+	@mkdir -p $(SCSI_SD_E2E_C96_NATIVE_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Wno-WIDTHEXPAND \
+		+define+SCSI_E2E_C96 +define+SCSI_E2E_NATIVE_FIFO +define+SCSI_REAL_TIMEOUTS \
+		-I$(RTL_DIR)/mac -I$(RTL_DIR)/soc -I$(RTL_DIR)/board -I$(RTL_DIR) \
+		-Mdir $(SCSI_SD_E2E_C96_NATIVE_BUILD) \
+		--top-module tb_scsi_sd_e2e \
+		$(SCSI_SD_E2E_RTL) $(RTL_DIR)/soc/vhdd_mux.v \
+		$(RTL_DIR)/soc/sd_scsi_native_bridge.v $(RTL_DIR)/soc/sd_async_byte_fifo.v \
+		$(TB_DIR)/tb_scsi_sd_e2e.cpp \
+		-CFLAGS "-std=c++17 -DSCSI_E2E_C96"
 
 .PHONY: tb-scsi-sd-e2e-c96
 tb-scsi-sd-e2e-c96: $(SCSI_SD_E2E_C96_BUILD)/Vtb_scsi_sd_e2e
@@ -9486,7 +9509,7 @@ ALL_TBS := \
 	tb-mode-admit \
 	tb-scanout-placement-sync tb-scanout-frames tb-scanout-frames-negctl \
 	tb-scanout-1bpp tb-scanout-1bpp-1080p tb-scanout-1bpp-negctl tb-video tb-video-pattern tb-video-checkerboard tb-video-smoke tb-vram-scaler-firstlight tb-dafb-scanout tb-dafb-mode-matrix tb-dafb-mode-matrix-negctl tb-mode-decode tb-dafb-24bpp-capacity tb-ddr-model tb-axi-ddr-contract tb-axi-ddr4-mig-bridge tb-via1 tb-via2 tb-scc tb-scsi tb-sd-scsi-lba-mapper tb-sd-scsi-bridge tb-scsi-sd-e2e tb-scsi-sd-e2e-dual tb-scsi-sd-e2e-dual-noselect \
-	tb-scsi-sd-e2e-c96 tb-scsi-sd-e2e-c96-core100 \
+	tb-scsi-sd-e2e-c96 tb-scsi-sd-e2e-c96-core100 tb-scsi-sd-e2e-c96-native \
 	tb-scsi-sd-e2e-ra tb-scsi-sd-e2e-c96-ra \
 	tb-vhdd-readahead tb-vhdd-readahead-off \
 	tb-irq-agg tb-peripheral-bus \

@@ -1675,8 +1675,8 @@ module scsi #(
     //     final block, all of it already written — vh_buf_count is not
     //     decremented in that state at all (it carries a residue), so
     //     gating on it there would deadlock a healthy transfer.
-    // Hence: available unless we are actively co-running the ring and
-    // it is empty.
+    // Hence: availability is gated by ring occupancy only while the
+    // producer and consumer are running concurrently.
     //
     // ONE CYCLE OF DELAY IS LOAD-BEARING.  The credit and the byte it
     // refers to have to arrive at the provider together, and the byte's
@@ -1693,19 +1693,23 @@ module scsi #(
     // a mid-block producer stall came out with exactly ONE wrong byte,
     // at the resume point.  Registering the credit aligns them.
     //
-    // The falling edge is delayed by the same cycle, which is the safe
-    // direction and already has slack: the drain path preloads
-    // vh_wr_data from vh_drain_next ON the wr_ready cycle, so the NEXT
-    // byte is on the wire one cycle BEFORE the decremented count shows
-    // up in the credit.
+    // The native FIFO bridge consumes a byte on EVERY pb_clk edge while
+    // credit is high. Its falling edge must therefore reflect occupancy
+    // immediately. At one queued byte a simultaneous producer push and
+    // drain would preload the next byte from the same sec_buf address being
+    // written on that edge (read-during-write returns the old byte). Hold
+    // one byte in reserve until the producer has completed the write.
+    // In S_VH_WAIT_WR all producer bytes are already stored, so this ring
+    // reserve does not apply to the tail of a transfer.
+    // Keeping the delayed rising edge aligns the first byte with credit.
     wire vh_wr_avail_comb = (phase != S_DATA_OUT) || (!vh_multi_write) ||
-                            (vh_buf_count != 10'd0);
+                            (vh_buf_count >= 10'd2);
     reg  vh_wr_avail_q;
     always @(posedge clk) begin
         if (rst) vh_wr_avail_q <= 1'b1;
         else     vh_wr_avail_q <= vh_wr_avail_comb;
     end
-    assign vh_wr_avail = vh_wr_avail_q;
+    assign vh_wr_avail = vh_wr_avail_q && vh_wr_avail_comb;
     // ══════════════════════════════════════════════════════════════════
     // Peripheral-bus slave: read path (combinational mux, registered out).
     // ══════════════════════════════════════════════════════════════════
