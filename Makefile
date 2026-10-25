@@ -4796,6 +4796,26 @@ $(SD_BRIDGE_PULSE_BUILD)/Vsd_scsi_bridge: $(RTL_DIR)/soc/sd_scsi_bridge.v $(TB_D
 		$(TB_DIR)/tb_sd_bridge_pulse.cpp \
 		-CFLAGS "-std=c++17"
 
+# Native four-bit SD can deliver a byte every four 100 MHz clocks. The
+# legacy SPI bridge's single-byte toggle path is not lossless at that rate;
+# validate the separate dual-clock FIFO before native SCSI integration.
+SD_NATIVE_FIFO_BUILD := $(BUILD_DIR)/sd_native_fifo
+.PHONY: tb-sd-native-fifo
+tb-sd-native-fifo: $(SD_NATIVE_FIFO_BUILD)/Vsd_async_byte_fifo
+	$(SD_NATIVE_FIFO_BUILD)/Vsd_async_byte_fifo
+
+$(SD_NATIVE_FIFO_BUILD)/Vsd_async_byte_fifo: $(RTL_DIR)/soc/sd_async_byte_fifo.v $(TB_DIR)/tb_sd_async_byte_fifo.cpp
+	@mkdir -p $(SD_NATIVE_FIFO_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Mdir $(SD_NATIVE_FIFO_BUILD) \
+		--top-module sd_async_byte_fifo \
+		$(RTL_DIR)/soc/sd_async_byte_fifo.v \
+		$(TB_DIR)/tb_sd_async_byte_fifo.cpp \
+		-CFLAGS "-std=c++17"
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SCSI 53C96 System-7 command-out drain tb (TURBOSCSI_C96=1, TARGET_ID=6)
 # Repro of the post-"Welcome to Macintosh" HW wedge: deferred DMA|CD_SELECT

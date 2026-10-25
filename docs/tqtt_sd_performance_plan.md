@@ -140,8 +140,17 @@ an isolated write-path reproduction and HFS consistency check.
    For full-Mac integration, TQTT already has a 100 MHz `video_ref_clk`
    from its fabric MMCM at both 100 and 200 MHz CPU settings. That can clock
    the native controller without changing its generated timing parameters.
-   `sd_scsi_bridge` can cross the existing 50 MHz peripheral bus into this
-   100 MHz storage domain. Boot must use a native block reader and an AXI
+   The existing `sd_scsi_bridge` control/reset handshake can cross the
+   existing 50 MHz peripheral bus into this 100 MHz storage domain, but its
+   single-byte toggle data path cannot carry native bus bursts. The
+   `tb-sd-bridge-pulse` measurement duplicates data at four core cycles per
+   byte (the four-bit 50 MHz bus rate); its first lossless tested spacing is
+   six cycles. A separate Gray-pointer `sd_async_byte_fifo` now passes
+   12,288 ordered bytes at the four-cycle rate, including reader stalls and
+   an interrupted-transfer reset (`make tb-sd-native-fifo`). It is a tested
+   building block, not yet wired into SCSI. The native SCSI path needs
+   FIFO-based data crossing and reset-epoch error handling. Boot must use a
+   native block reader and an AXI
    clock crossing to copy the ROM into DDR; the current `boot_fsm` performs
    SPI-only initialization and cannot be left active on the same card.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
