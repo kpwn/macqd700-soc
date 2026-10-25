@@ -129,3 +129,37 @@ the first quiet output line while that Tcl command is still running. Hold the
 JTAG lease until the REPL emits the completed `boot_hw_device` timing line and
 `> READY`, then issue `refresh` and read the probes. Do not send a second JTAG
 command merely because `jt.sh` returned.
+
+## 200 MHz TQTT flash boot diagnosis (2026-10-25)
+
+The integrated 200 MHz image
+`/var/tmp/tqtt_c96_waitfix_200/vivado/fpga_top.local.bit` (SHA-256
+`806657f10d76dc78518ed1f3aa1ce340a7deecadc8b709f91fad24dbb025f5df`)
+booted Mac OS and ran Speedometer over JTAG before flashing. Its routed setup
+slack is -0.052 ns; hold slack is +0.003 ns. The owner authorized loading
+this small-miss image.
+
+`openFPGALoader -c digilent_ad --ftdi-serial 210251A08870 --freq 6000000
+--fpga-part xcku5p-ffvb676 -f --verify` erased, wrote, and read back the
+entire image successfully on the detected Micron `0x20bb18` 128 Mbit flash.
+**Immediately after the loader exited, the Mac design was not configured.**
+Vivado read `REGISTER.CONFIG_STATUS=0x10801904`: `DONE_PIN=0`, `EOS=0`,
+`GWE=0`, with zero JTAG AXI and VIO cores. The capture server was receiving
+fresh black frames. The loader had used its SPI-over-JTAG bridge, and verified
+flash contents alone had not started the target FPGA image. This explains why
+a naive flash write appears to leave the board dead despite successful
+verification; it is a missing configuration boot step, not evidence of bad
+flash bytes.
+
+Vivado `boot_hw_device [current_hw_device]` then reported `DONE=HIGH` after
+about 50 seconds. After `refresh_hw_device`, Vivado found one JTAG AXI and
+one VIO core; `EOS=1`. A REPL attach with `JTAG_REPL_NO_PROGRAM=1` and the
+matching `.ltx` read build ID `0x8D3A363A`, `vio_rst_bundle=0x2e`, vHDD
+IDENT `0x5D0D0001`, and native SD High Speed active. The SCSI probe showed
+2,184 completions, zero SD errors, and zero CHECK CONDITIONs. HDMI capture
+first showed the checkra1n splash, then Finder after dismissing the normal
+improper-shutdown dialog; the [captured Finder frame](evidence/2026-10-25-tqtt-200mhz-flash-boot.jpg)
+is preserved in this repository. No SRAM bitstream was loaded during this
+verification. A physical power-cycle boot remains untested, and the earlier
+100 MHz attempt that reached DONE but lacked vHDD IDENT remains a separate
+unresolved observation.
