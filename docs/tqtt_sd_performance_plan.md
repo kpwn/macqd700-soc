@@ -658,3 +658,10 @@ CHECK CONDITIONs after 2,718 completions. This validates the previously
 failing small-file copy path in hardware. A readback of the new file's
 forks from the card, a larger Finder copy, and a measured Mac-visible
 throughput/integrity workload remain open.
+
+Speedometer 4.02's on-screen result after that reboot reports a **Disk
+rating of 3.444** with "Quadra 605 = 1.0" as its reference. The result
+frame is `/var/tmp/tqtt_c96_waitfix_finder3.jpg`. This is a Mac-visible
+relative benchmark improvement over the reference; it is not a bytes/s
+measurement and does not replace a post-benchmark card readback or an
+independently timed sustained-transfer workload.
