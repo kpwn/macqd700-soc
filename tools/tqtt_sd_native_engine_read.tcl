@@ -57,6 +57,14 @@ set p_rca [probe rca]
 set p_status [probe status]
 set p_crc [probe result_crc]
 set p_cycles [probe result_cycles]
+# The probe can be programmed before the physical card reseat. Its automatic
+# first init may then have failed on an absent/SPI-mode card; restart the
+# controller only after the caller has confirmed the card power cycle.
+set_property OUTPUT_VALUE 00000080 $p_ctrl
+commit_hw_vio [list $p_ctrl]
+after 5
+set_property OUTPUT_VALUE 00000000 $p_ctrl
+commit_hw_vio [list $p_ctrl]
 proc sample {} {
     refresh_hw_vio $::vio
     foreach {key item} [list status $::p_status capacity $::p_capacity \
