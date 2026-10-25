@@ -3340,7 +3340,7 @@ CPU_IPC_PROFILE ?= throughput-v2
 CPU_DEBUG_PROFILE ?= full
 BOARD ?= rk
 TQTT_HDMI_AUDIO ?= $(if $(filter tqtt,$(BOARD)),1,0)
-TQTT_FAN_AUTO ?= 0
+TQTT_FAN_AUTO ?= $(if $(filter tqtt,$(BOARD)),1,0)
 TQTT_NATIVE_SD ?= 0
 TQTT_NATIVE_SD_HS ?= 0
 ifneq ($(filter $(BOARD),rk tqtt),$(BOARD))
