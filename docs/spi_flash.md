@@ -84,3 +84,16 @@ Readback passed, a flash boot reported build ID `0xB9BE30AF`, the CPU retired
 instructions, and Mac OS appeared on HDMI capture. This image has a routed
 setup timing miss of 0.296 ns, manual fan PWM, and no HDMI audio. A fresh
 integrated image is still required after SD and audio work.
+
+On 2026-10-25, the newer 100 MHz C96 write-completion image
+(`/var/tmp/tqtt_c96_waitfix_100/vivado/fpga_top.local.bit`, SHA-256
+`15af1955b9646b4558db806d62cf1bcd6abf3ed3afc3ef4479628a76725b4219`)
+also passed `openFPGALoader --verify`. Vivado `boot_hw_device` reached
+`DONE=HIGH`, and an attach without SRAM programming read build ID
+`0xAC1FF528` and advancing CPU counters. However, `vhdd-status` read IDENT
+`0x00000000` rather than `0x5D0D0001`, and the displayed Mac did not boot
+normally. Loading the *same* `.local.bit` through JTAG immediately restored
+the vHDD IDENT and its enabled 4,194,240-block SD volume. Therefore, DONE,
+build ID, and CPU activity alone are insufficient flash-boot checks for this
+image. The flash startup failure remains to be diagnosed; the board is
+currently running the JTAG-loaded image.
