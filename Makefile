@@ -4916,6 +4916,27 @@ $(SD_NATIVE_INIT_CTRL_BUILD)/Vsd_native_init_controller: $(RTL_DIR)/soc/sd_nativ
 		$(TB_DIR)/tb_sd_native_init_controller.cpp \
 		-CFLAGS "-std=c++17"
 
+SD_NATIVE_BLOCK_BUILD := $(BUILD_DIR)/sd_native_block_engine
+.PHONY: tb-sd-native-block
+tb-sd-native-block: $(SD_NATIVE_BLOCK_BUILD)/Vsd_native_block_engine
+	$(SD_NATIVE_BLOCK_BUILD)/Vsd_native_block_engine
+
+$(SD_NATIVE_BLOCK_BUILD)/Vsd_native_block_engine: $(RTL_DIR)/soc/sd_native_block_engine.v $(RTL_DIR)/soc/sd_native_command.v $(RTL_DIR)/soc/sd_native_csr_master.v $(TB_DIR)/tb_sd_native_block_engine.cpp
+	@mkdir -p $(SD_NATIVE_BLOCK_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Mdir $(SD_NATIVE_BLOCK_BUILD) \
+		--top-module sd_native_block_engine \
+		-GPOLL_TIMEOUT_CYCLES=200000 -GEVENT_TIMEOUT_CYCLES=64 \
+		-GCSR_TIMEOUT_CYCLES=16 \
+		$(RTL_DIR)/soc/sd_native_block_engine.v \
+		$(RTL_DIR)/soc/sd_native_command.v \
+		$(RTL_DIR)/soc/sd_native_csr_master.v \
+		$(TB_DIR)/tb_sd_native_block_engine.cpp \
+		-CFLAGS "-std=c++17"
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SCSI 53C96 System-7 command-out drain tb (TURBOSCSI_C96=1, TARGET_ID=6)
 # Repro of the post-"Welcome to Macintosh" HW wedge: deferred DMA|CD_SELECT
