@@ -1662,6 +1662,17 @@
         .pb_rd           (pb_adbinj_rd),
         .pb_rdata        (pb_adbinj_rdata),
         .pb_ack          (pb_adbinj_ack),
+`ifdef TQTT_USB_HOST
+        .usb_kc_valid    (usb_adb_kc_valid),
+        .usb_kc_byte     (usb_adb_kc_byte),
+        .usb_kc_ready    (usb_adb_kc_ready),
+        .usb_mouse_valid (usb_adb_mouse_valid),
+        .usb_mouse_button_valid(usb_adb_mouse_button_valid),
+        .usb_mouse_button(usb_adb_mouse_button),
+        .usb_mouse_dx    (usb_adb_mouse_dx),
+        .usb_mouse_dy    (usb_adb_mouse_dy),
+        .usb_mouse_ready(usb_adb_mouse_ready),
+`else
         .usb_kc_valid    (1'b0),
         .usb_kc_byte     (8'b0),
         .usb_kc_ready    (),
@@ -1671,6 +1682,7 @@
         .usb_mouse_dx    (8'sd0),
         .usb_mouse_dy    (8'sd0),
         .usb_mouse_ready(),
+`endif
         .inj_kc_valid    (adb_inj_kc_valid),
         .inj_kc_byte     (adb_inj_kc_byte),
         .kbd_status      (adb_kbd_status),

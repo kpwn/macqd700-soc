@@ -202,8 +202,7 @@ module fpga_top #(
     // TQTT sends 48 kHz HDMI audio packets sourced from the Mac ASC by
     // default. Set TQTT_HDMI_AUDIO=0 for DVI-compatible video only.
     parameter integer TQTT_HDMI_AUDIO = 1,
-    // Optional fabric SYSMON fan curve. Manual VIO control remains the
-    // default until the automatic image has been exercised on hardware.
+    // Fabric SYSMON fan curve; TQTT Makefile builds enable this by default.
     parameter integer TQTT_FAN_AUTO = 0,
     // MAME's Quadra 700 model derives VIA clocks from C7M/10:
     // 31.3344 MHz / 4 / 10 = 783.36 kHz.
@@ -296,6 +295,11 @@ module fpga_top #(
 `else
     output wire        fan_pwm,
     input  wire        fan_fb
+`ifdef TQTT_USB_HOST
+    ,
+    inout  wire        usb_dp,
+    inout  wire        usb_dm
+`endif
 `endif
 
 `ifdef ETH_ENABLE
@@ -410,6 +414,13 @@ module fpga_top #(
     // them; later includes see them normally. No functional change.
     // ─────────────────────────────────────────────────────────────────
 
+`ifdef TQTT_USB_HOST
+    wire usb_adb_kc_valid, usb_adb_kc_ready;
+    wire [7:0] usb_adb_kc_byte;
+    wire usb_adb_mouse_valid, usb_adb_mouse_ready;
+    wire usb_adb_mouse_button_valid, usb_adb_mouse_button;
+    wire signed [7:0] usb_adb_mouse_dx, usb_adb_mouse_dy;
+`endif
 `include "fpga_top_clocks.vh"
 `include "fpga_top_ethernet.vh"
 `include "fpga_top_cpu.vh"
@@ -419,6 +430,9 @@ module fpga_top #(
 `include "fpga_top_xbar.vh"
 `include "fpga_top_ddr.vh"
 `include "fpga_top_peripherals.vh"
+`ifdef TQTT_USB_HOST
+`include "fpga_top_usb.vh"
+`endif
 `include "fpga_top_debug_ctrl.vh"
 `ifdef TQTT_NATIVE_SD
 `include "fpga_top_sd_native.vh"

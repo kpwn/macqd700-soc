@@ -102,8 +102,12 @@ engine so the Mac side remains reusable.
 
 OHCI reference: <https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Libraries/Com/usb_ohci.html>.
 
-No full-SoC USB host RTL or PMOD pin constraints are connected yet. The
-hardware port, core, CDC, HID mapping, and hub stack each need validation.
+The full SoC now has a TQTT-only `TQTT_USB_HOST=1` option for one PMOD0/J1
+port. It connects the host core through the 60 MHz clock, report CDC, HID
+mapping, and ADB injector. This path is compiled separately from the
+standalone probe and is disabled by default pending physical USB-A wiring and
+standalone attach/enumeration tests. One port accepts one keyboard or one
+mouse at a time; the second direct port and hub support remain pending.
 
 The report-to-ADB keyboard converter now lives in
 `rtl/mac/usb_hid_adb_keyboard.v`. It compares complete six-key HID snapshots,
@@ -121,5 +125,5 @@ keyboard FIFO has room including its registered in-flight pulse.
 button/movement reports into the peripheral clock, suppresses idle reports,
 and releases a held button on disconnect. `tb-usb-hid-adb-mouse-cdc` and
 `tb-adb-inject` cover the mouse clock crossing and its MMIO collision.
-The full SoC ties the USB ports off until a physical USB host is wired and
-validated; hardware enumeration and Mac-visible USB input remain pending.
+With `TQTT_USB_HOST=0`, the full SoC ties the USB injector inputs off.
+Hardware enumeration and Mac-visible USB input remain pending.

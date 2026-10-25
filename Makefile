@@ -3379,6 +3379,7 @@ TQTT_HDMI_AUDIO ?= $(if $(filter tqtt,$(BOARD)),1,0)
 TQTT_FAN_AUTO ?= $(if $(filter tqtt,$(BOARD)),1,0)
 TQTT_NATIVE_SD ?= 0
 TQTT_NATIVE_SD_HS ?= 0
+TQTT_USB_HOST ?= 0
 ifneq ($(filter $(BOARD),rk tqtt),$(BOARD))
 $(error BOARD must be rk or tqtt, got '$(BOARD)')
 endif
@@ -3388,6 +3389,7 @@ VIVADO_RUN_ENV += TQTT_HDMI_AUDIO=$(TQTT_HDMI_AUDIO)
 VIVADO_RUN_ENV += TQTT_FAN_AUTO=$(TQTT_FAN_AUTO)
 VIVADO_RUN_ENV += TQTT_NATIVE_SD=$(TQTT_NATIVE_SD)
 VIVADO_RUN_ENV += TQTT_NATIVE_SD_HS=$(TQTT_NATIVE_SD_HS)
+VIVADO_RUN_ENV += TQTT_USB_HOST=$(TQTT_USB_HOST)
 # CPU socket select for synth/impl — same CPU=stub|m68k knob as the
 # Verilator flow (see "CPU build select" above); consumed by vivado.tcl.
 VIVADO_RUN_ENV += CPU=$(CPU)
@@ -5068,6 +5070,7 @@ lint-tqtt-native-sd:
 	$(VERILATOR) --lint-only --bbox-unsup --top-module fpga_top \
 		-DTQTT_BOARD -DTQTT_GMII -DTQTT_NATIVE_SD -DETH_ENABLE \
 		$(if $(filter 1,$(TQTT_NATIVE_SD_HS)),-DTQTT_NATIVE_SD_HS,) \
+		$(if $(filter 1,$(TQTT_USB_HOST)),-DTQTT_USB_HOST,) \
 		-DVIO_ENABLE -DJTAG_AXI_ENABLE \
 		-DSCSI_TRACE_ENABLE -DCORE_MMCM -DDEBUG_CTRL_NO_LOCAL_FALLBACK \
 		-GTQTT_HDMI_AUDIO=0 -GTQTT_FAN_AUTO=1 -GETH_ICMP_RESPONDER=0 \

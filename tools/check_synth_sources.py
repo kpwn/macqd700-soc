@@ -42,6 +42,7 @@ ALLOWLIST = {
     "rtl/board/sim_mig_backend.v":  "sim-only DDR model, never synthesised",
     "rtl/soc/fpga_top_sdmin.v":     "standalone fpga-sdmin-bitstream top",
     "rtl/soc/sd_provision_core.v":  "standalone sd_provision_top bitstream",
+    "rtl/soc/sd_native_provision_core.v": "standalone native SD provisioning bitstream",
     "rtl/soc/sd_provision_top.v":   "standalone provisioning bitstream top",
     "rtl/soc/tqtt_ddr4_probe.v":   "standalone TQTT DDR4 hardware probe",
     "rtl/soc/tqtt_eth_probe.v":    "standalone TQTT GMII receive probe",
@@ -52,8 +53,8 @@ ALLOWLIST = {
     "rtl/soc/tqtt_sd_native_autoinit_probe.v": "standalone TQTT native SD init probe",
     "rtl/soc/tqtt_sd_native_engine_probe.v": "standalone TQTT native SD block-engine probe",
     "rtl/soc/tqtt_usb_host_probe.v": "standalone TQTT USB host probe",
-    "rtl/third_party/m1nl_usb_hid_host/usb_hid_host.v": "standalone TQTT USB host probe core",
-    "rtl/third_party/m1nl_usb_hid_host/usb_hid_host_rom.v": "standalone TQTT USB host probe ROM",
+    "rtl/third_party/m1nl_usb_hid_host/usb_hid_host.v": "optional TQTT USB host and standalone probe core",
+    "rtl/third_party/m1nl_usb_hid_host/usb_hid_host_rom.v": "optional TQTT USB host and standalone probe ROM",
     "rtl/third_party/hdl_util_hdmi/hdmi.sv": "standalone HDMI probe packetizer",
 }
 

@@ -561,6 +561,9 @@ if {$tqtt_native_sd && $board ne "tqtt"} {error "TQTT_NATIVE_SD requires BOARD=t
 set tqtt_native_sd_hs [parse_int_env TQTT_NATIVE_SD_HS 0]
 if {$tqtt_native_sd_hs ni {0 1}} {error "TQTT_NATIVE_SD_HS must be 0 or 1"}
 if {$tqtt_native_sd_hs && !$tqtt_native_sd} {error "TQTT_NATIVE_SD_HS requires TQTT_NATIVE_SD=1"}
+set tqtt_usb_host [parse_int_env TQTT_USB_HOST 0]
+if {$tqtt_usb_host ni {0 1}} {error "TQTT_USB_HOST must be 0 or 1"}
+if {$tqtt_usb_host && $board ne "tqtt"} {error "TQTT_USB_HOST requires BOARD=tqtt"}
 if {$sd_safe_cmd25 && [info exists ::env(ENABLE_SD_JTAG_WRITER)]} {
     error "SD_SAFE_CMD25 requires the preemptive provisioning writer to be disabled"
 }
@@ -668,7 +671,7 @@ proc read_taxi_filelist {file seen_name} {
 }
 
 proc read_all_rtl {rtl_dir} {
-    global board use_sim_model cpu_m68k040 cpu_m68k040_v eth_enable eth_rk5_dir tqtt_native_sd
+    global board use_sim_model cpu_m68k040 cpu_m68k040_v eth_enable eth_rk5_dir tqtt_native_sd tqtt_usb_host
 
     # ── CPU socket occupant ──────────────────────────────────────────────
     # CPU=m68k: the m68k-ooo submodule supplies the whole OoO CPU
@@ -730,6 +733,14 @@ proc read_all_rtl {rtl_dir} {
     read_verilog $rtl_dir/mac/adb_keyboard.v
     read_verilog $rtl_dir/mac/adb_mouse.v
     read_verilog $rtl_dir/mac/adb_inject.v
+    read_verilog $rtl_dir/mac/usb_hid_adb_keyboard.v
+    read_verilog $rtl_dir/mac/usb_hid_adb_keyboard_cdc.v
+    read_verilog $rtl_dir/mac/usb_hid_adb_mouse.v
+    read_verilog $rtl_dir/mac/usb_hid_adb_mouse_cdc.v
+    if {$tqtt_usb_host} {
+        read_verilog $rtl_dir/third_party/m1nl_usb_hid_host/usb_hid_host.v
+        read_verilog $rtl_dir/third_party/m1nl_usb_hid_host/usb_hid_host_rom.v
+    }
 
     # HDMI video pipeline (rtl/mac/video/*)
     read_verilog $rtl_dir/board/video_phy/mmcm_hdmi.v
@@ -1160,6 +1171,7 @@ if {$enable_pcie_xdma} {
 # budget; the physical input clocks stay at their board frequencies.
 if {$board eq "tqtt"} {
     read_xdc $synth_dir/tqtt_fpga_top.xdc
+    if {$tqtt_usb_host} {read_xdc $synth_dir/tqtt_usb_host_full.xdc}
     if {$tqtt_native_sd} {
         read_xdc $synth_dir/tqtt_sd_native.xdc
     } else {
@@ -1213,6 +1225,7 @@ if {$mode eq "ddr_pincheck"} {
     if {$board eq "tqtt"} { lappend pincheck_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
     if {$tqtt_native_sd} { lappend pincheck_def_args -verilog_define TQTT_NATIVE_SD }
     if {$tqtt_native_sd_hs} { lappend pincheck_def_args -verilog_define TQTT_NATIVE_SD_HS }
+    if {$tqtt_usb_host} { lappend pincheck_def_args -verilog_define TQTT_USB_HOST }
     if {$eth_debug_enable} { lappend pincheck_def_args -verilog_define ETH_DEBUG_ENABLE }
     # debug_ctrl.v's local cycle/inst-count fallback is for unit testing only;
     # the integrated bitstream always feeds real 64-bit external counters.
@@ -1254,6 +1267,7 @@ if {$mode eq "dry_run"} {
     if {$board eq "tqtt"} { lappend dry_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
     if {$tqtt_native_sd} { lappend dry_def_args -verilog_define TQTT_NATIVE_SD }
     if {$tqtt_native_sd_hs} { lappend dry_def_args -verilog_define TQTT_NATIVE_SD_HS }
+    if {$tqtt_usb_host} { lappend dry_def_args -verilog_define TQTT_USB_HOST }
     if {$eth_debug_enable} { lappend dry_def_args -verilog_define ETH_DEBUG_ENABLE }
     if {$core_mmcm} { lappend dry_def_args -verilog_define CORE_MMCM }
     lappend dry_def_args -verilog_define DEBUG_CTRL_NO_LOCAL_FALLBACK
@@ -1293,6 +1307,7 @@ if {$mode eq "clock_report"} {
     if {$board eq "tqtt"} { lappend clock_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
     if {$tqtt_native_sd} { lappend clock_def_args -verilog_define TQTT_NATIVE_SD }
     if {$tqtt_native_sd_hs} { lappend clock_def_args -verilog_define TQTT_NATIVE_SD_HS }
+    if {$tqtt_usb_host} { lappend clock_def_args -verilog_define TQTT_USB_HOST }
     if {$eth_debug_enable} { lappend clock_def_args -verilog_define ETH_DEBUG_ENABLE }
     lappend clock_def_args -verilog_define DEBUG_CTRL_NO_LOCAL_FALLBACK
     synth_design \
@@ -1361,6 +1376,7 @@ if {$eth_enable} { lappend synth_def_args -verilog_define ETH_ENABLE }
 if {$board eq "tqtt"} { lappend synth_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
 if {$tqtt_native_sd} { lappend synth_def_args -verilog_define TQTT_NATIVE_SD }
 if {$tqtt_native_sd_hs} { lappend synth_def_args -verilog_define TQTT_NATIVE_SD_HS }
+if {$tqtt_usb_host} { lappend synth_def_args -verilog_define TQTT_USB_HOST }
 if {$eth_debug_enable} { lappend synth_def_args -verilog_define ETH_DEBUG_ENABLE }
 if {$core_mmcm} { lappend synth_def_args -verilog_define CORE_MMCM }
 # debug_ctrl.v's local cycle/inst-count fallback is unit-tb only; the
@@ -1560,7 +1576,8 @@ foreach key [lsort [array names ::env]] {
     if {$key in {CORE_BUDGET_NS NO_INCREMENTAL INCREMENTAL_REF_DCP
                  DDR4_MIG_DCP USE_REAL_MIG REAL_FPGA_BUILD CORE_MMCM
                  ENABLE_VIO ENABLE_JTAG_AXI ENABLE_ILA ENABLE_PCIE_XDMA
-                 ETH_ENABLE ETH_DEBUG_ENABLE TQTT_HDMI_AUDIO TQTT_FAN_AUTO}} {
+                 ETH_ENABLE ETH_DEBUG_ENABLE TQTT_HDMI_AUDIO TQTT_FAN_AUTO
+                 TQTT_USB_HOST TQTT_NATIVE_SD TQTT_NATIVE_SD_HS}} {
         dict set synth_selection physical_environment $key $::env($key)
     }
 }
