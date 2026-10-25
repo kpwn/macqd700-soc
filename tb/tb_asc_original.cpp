@@ -38,6 +38,8 @@ int main() {
     ok &= check("original B IRQ control reads zero",read8(0xF29),0);
     write8(0x807,3);
     ok &= check("clock register readback",read8(0x807),3);
+    write8(0x805,0x7f);
+    ok &= check("wavetable control readback",read8(0x805),0x7f);
     write8(0x808,0x5a);
     ok &= check("Batman register readback",read8(0x808),0x5a);
     write8(0x012,0x5a); // direct-addressed FIFO RAM in mode 0

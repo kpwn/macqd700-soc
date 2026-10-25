@@ -453,6 +453,7 @@ module asc #(
     reg [7:0] rate_reg;
     reg [7:0] clock_reg;
     reg [7:0] batman_reg;
+    reg [7:0] wt_ctl_reg;
     reg [7:0] volume_reg;    // R_VOLUME — writable + readable, but NOT
                              //   applied to audio output (MAME emits
                              //   raw signed sample; off-chip codec
@@ -863,6 +864,7 @@ module asc #(
             rate_reg     <= RATE_DEFAULT;
             clock_reg    <= 8'h00;
             batman_reg   <= 8'h00;
+            wt_ctl_reg   <= 8'h00;
             volume_reg   <= 8'hFF;
             playreca_reg <= 8'h00;          // playback mode enabled
             playreca_written <= 1'b0;       // sticky: set on first 0x80A write
@@ -1091,8 +1093,8 @@ module asc #(
                     // path, but ASCTester does as part of its idle-IRQ
                     // probe.
                     8'h04: fifostat <= pb_wdata;
-                    // R_WTCONTROL (0x05) — Sonora ignores.
-                    8'h05: ;
+                    // Original ASC latches R_WTCONTROL; Sonora ignores it.
+                    8'h05: if (IS_ORIGINAL_ASC) wt_ctl_reg <= pb_wdata;
                     // R_VOLUME (0x06).
                     8'h06: volume_reg <= pb_wdata;
                     // Original ASC latches R_CLOCK; Sonora ignores it.
@@ -1647,7 +1649,8 @@ module asc #(
                         // path above); does NOT clear the status bits.
                         8'h04: pb_rdata_reg <= fifostat;
                         // R_WTCONTROL — Sonora reads 0.
-                        8'h05: pb_rdata_reg <= 8'h00;
+                        8'h05: pb_rdata_reg <= IS_ORIGINAL_ASC
+                                                   ? wt_ctl_reg : 8'h00;
                         // R_VOLUME — writable + readable.
                         8'h06: pb_rdata_reg <= volume_reg;
                         // R_CLOCK — depends on IS_EASC:
