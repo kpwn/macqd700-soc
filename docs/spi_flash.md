@@ -96,4 +96,8 @@ normally. Loading the *same* `.local.bit` through JTAG immediately restored
 the vHDD IDENT and its enabled 4,194,240-block SD volume. Therefore, DONE,
 build ID, and CPU activity alone are insufficient flash-boot checks for this
 image. The flash startup failure remains to be diagnosed; the board is
-currently running the JTAG-loaded image.
+currently running the JTAG-loaded image. In that working JTAG state,
+`vio_rst_bundle=0x2e` means platform reset released, DDR calibrated, ROM ready,
+and HDMI I²C finished; `vio_boot_video=0x38` shows HDMI clock lock and no boot
+error. Capture these probes after the next flash boot to locate the stalled
+stage before reloading SRAM.
