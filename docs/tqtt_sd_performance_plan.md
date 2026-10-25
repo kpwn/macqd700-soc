@@ -191,8 +191,18 @@ an isolated write-path reproduction and HFS consistency check.
    After physically reseating the card, use the read-only
    `tools/tqtt_sd_native_engine_read.tcl` with
    `NATIVE_SD_CARD_POWER_CYCLED=1` to check card initialization, 1..32
-   sectors, CRC32, and DMA timing. It has not yet been loaded or used on the
-   card. The engine is not in the full Mac top. The negotiated 50 MHz CMD6
+   sectors, CRC32, and DMA timing. The original engine probe was loaded in
+   FPGA SRAM on 2026-10-25; Vivado detected its VIO and its automatic init
+   reported an error before the card was reseated. This is not a native card
+   transfer result. The script pulses the probe's soft reset after the card
+   power cycle so initialization can be retried. The current source factors
+   that same init, block RAM, and LiteSDCard wiring into `sd_native_backend`
+   for reuse in the full Mac. The refactored probe also routed at 100 MHz
+   (WNS +5.519 ns, WHS +0.022 ns, DRC zero errors) in the separate
+   `build/tqtt_sd_native_engine_probe_backend` output directory, SHA-256
+   `88d70d4bf4fe48dc38e69cc79df65e755d791e2fe8887ffadf988f8a781f40a2`.
+   It is not the image loaded in SRAM. The engine is not in the full Mac top.
+   The negotiated 50 MHz CMD6
    switch must wait until its 64-byte status can be checked through DMA.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.

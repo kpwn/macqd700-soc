@@ -39,6 +39,7 @@ read_verilog $proj_root/third_party/litesdcard/litesdcard_core.v
 foreach source {
     sd_native_csr_master.v sd_native_command.v sd_native_init.v
     sd_native_init_controller.v sd_native_block_engine.v
+    sd_native_backend.v
     tqtt_sd_native_engine_probe.v
 } {
     read_verilog $proj_root/rtl/soc/$source
