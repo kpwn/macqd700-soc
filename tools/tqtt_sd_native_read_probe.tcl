@@ -136,6 +136,21 @@ proc ram_word {index} {
     return $value
 }
 
+if {[info exists ::env(NATIVE_SD_SMOKE_ONLY)] &&
+    $::env(NATIVE_SD_SMOKE_ONLY) eq "1"} {
+    # Exercise the VIO-to-Wishbone bridge without sending any SD commands.
+    csr 0x0004 0x5a3cc35a
+    set got [csr 0x0004]
+    if {$got != 0x5a3cc35a} {
+        error [format "Wishbone scratch mismatch: got 0x%08x" $got]
+    }
+    puts "PASS native SD probe VIO/Wishbone scratch roundtrip"
+    close_hw_target
+    disconnect_hw_server
+    close_hw_manager
+    exit 0
+}
+
 puts "Native SD reset; card must have been power-cycled since SPI mode"
 csr 0x2804 256
 csr 0x2808 1

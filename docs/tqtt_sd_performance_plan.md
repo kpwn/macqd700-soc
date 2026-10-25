@@ -125,6 +125,11 @@ an isolated write-path reproduction and HFS consistency check.
    again before booting the current SPI-mode Mac image; reloading the FPGA
    alone does not return a native-mode card to SPI mode.
 
+   Before any card power cycle, the loaded probe passed a card-independent
+   hardware smoke test: `NATIVE_SD_NO_PROGRAM=1 NATIVE_SD_SMOKE_ONLY=1`
+   exercised a VIO-to-Wishbone scratch write/read roundtrip on the FPGA.
+   This verifies the debug/control path only, not native SD signaling.
+
    For full-Mac integration, TQTT already has a 100 MHz `video_ref_clk`
    from its fabric MMCM at both 100 and 200 MHz CPU settings. That can clock
    the native controller without changing its generated timing parameters.
