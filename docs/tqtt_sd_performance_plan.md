@@ -129,6 +129,13 @@ an isolated write-path reproduction and HFS consistency check.
    hardware smoke test: `NATIVE_SD_NO_PROGRAM=1 NATIVE_SD_SMOKE_ONLY=1`
    exercised a VIO-to-Wishbone scratch write/read roundtrip on the FPGA.
    This verifies the debug/control path only, not native SD signaling.
+   After reseating the card while the native probe is loaded, run the
+   read-only comparison matrix with
+   `NATIVE_SD_CARD_POWER_CYCLED=1 tools/tqtt_sd_native_matrix.sh`.
+   It saves the card CID/CSD and individual Vivado logs, reads 32 sectors
+   each at LBAs 0, 8192, and 95410 at both 25 and negotiated 50 MHz, and
+   requires each same-LBA CRC32 pair to match. The reported DMA cycles
+   measure transfer time in the 100 MHz probe, excluding JTAG startup.
 
    For full-Mac integration, TQTT already has a 100 MHz `video_ref_clk`
    from its fabric MMCM at both 100 and 200 MHz CPU settings. That can clock
