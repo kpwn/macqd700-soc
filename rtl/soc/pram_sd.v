@@ -179,7 +179,8 @@ module pram_sd #(
     // keeps the module strictly manual for every existing instance and tb.
     // This adds no WRITE path -- the module's contract that nothing but an
     // explicit host command can touch the card for a SAVE is unchanged.
-    parameter integer AUTOLOAD_ON_BOOT  = 0
+    parameter integer AUTOLOAD_ON_BOOT  = 0,
+    parameter integer NATIVE_TRANSPORT  = 0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -221,6 +222,22 @@ module pram_sd #(
     output wire        spi_cs_n_in,
     output wire        spi_fast_mode,
     output wire        spi_hs_mode,
+
+    // Optional native block transport. The caller crosses to the 100 MHz
+    // LiteSDCard domain and grants this client only while SCSI is idle.
+    output wire [2:0]  native_cmd_type,
+    output wire [31:0] native_lba,
+    output wire [15:0] native_block_count,
+    output wire        native_go,
+    input  wire        native_busy,
+    input  wire        native_done,
+    input  wire        native_error,
+    input  wire        native_rd_valid,
+    input  wire [7:0]  native_rd_data,
+    output wire        native_rd_ready,
+    input  wire        native_wr_ready,
+    output wire [7:0]  native_wr_data,
+    output wire        native_wr_avail,
 
     // ── SD bus arbitration (see header) ───────────────────────────────
     output wire        sd_req,
@@ -429,6 +446,7 @@ module pram_sd #(
     // ── sd_ctrl handshake ─────────────────────────────────────────────
     reg        ctrl_go_q;
     reg [2:0]  ctrl_cmd_q;
+    reg        native_wr_gap_q;
     wire       ctrl_busy;
     wire       ctrl_done;
     wire       ctrl_error;
@@ -499,6 +517,7 @@ module pram_sd #(
             def_cnt_q      <= {DEFAULT_HOLD_LOG2{1'b0}};
             ctrl_go_q      <= 1'b0;
             ctrl_cmd_q     <= CT_CMD17;
+            native_wr_gap_q <= 1'b0;
             sd_req_q       <= 1'b0;
             pram_req       <= 1'b0;
             pram_we        <= 1'b0;
@@ -534,6 +553,14 @@ module pram_sd #(
             // the boot hold ends when the operation resolves.
             if (autoload_busy_q && state == S_DONE) autoload_busy_q <= 1'b0;
             ctrl_go_q <= 1'b0;
+            // sec_buf has a synchronous read port. After each accepted
+            // native write byte, leave one cycle for the next BRAM byte to
+            // appear before offering it to the bridge's write FIFO.
+            if (NATIVE_TRANSPORT != 0) begin
+                if (state == S_SD_GO) native_wr_gap_q <= 1'b0;
+                else if (native_wr_gap_q) native_wr_gap_q <= 1'b0;
+                else if (ctrl_wr_ready) native_wr_gap_q <= 1'b1;
+            end
             buf_we    <= 1'b0;
 
             // ── AXI-Lite write channel ────────────────────────────────
@@ -911,6 +938,27 @@ module pram_sd #(
         end
     end
 
+    assign native_cmd_type = ctrl_cmd_q;
+    assign native_lba = PRAM_LBA;
+    assign native_block_count = 16'd1;
+    assign native_go = (NATIVE_TRANSPORT != 0) && ctrl_go_q;
+    assign native_rd_ready = 1'b1;
+    assign native_wr_data = wr_byte_q;
+    assign native_wr_avail = (NATIVE_TRANSPORT != 0) &&
+                             (state == S_SD_WAIT) && (op_q != OP_LOAD) &&
+                             !native_wr_gap_q;
+
+    generate if (NATIVE_TRANSPORT != 0) begin : g_native_transport
+        assign ctrl_busy = native_busy;
+        assign ctrl_done = native_done;
+        assign ctrl_error = native_error;
+        assign ctrl_err_cause = {3'b0, native_error};
+        assign ctrl_rd_valid = native_rd_valid;
+        assign ctrl_rd_data = native_rd_data;
+        assign ctrl_wr_ready = native_wr_ready;
+        assign spi_cmd_valid = 1'b0;
+        assign spi_cmd_data = 8'b0;
+    end else begin : g_spi_transport
     sd_ctrl u_sd_ctrl (
         .clk           (clk),
         .rst           (rst),
@@ -948,6 +996,7 @@ module pram_sd #(
         .dbg_block_idx     (),
         .dbg_last_poll_cnt ()
     );
+    end endgenerate
 
     /* verilator lint_off UNUSEDSIGNAL */
     wire _unused_pram_sd = &{1'b0, ctrl_busy, s_wstrb, SYS_PERSIST_BASE, 1'b0};

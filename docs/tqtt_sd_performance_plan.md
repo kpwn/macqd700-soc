@@ -98,8 +98,8 @@ an isolated write-path reproduction and HFS consistency check.
    plus CRC handling. An isolated generator run produced a 246 KB core and
    CSR map.
    The standalone probes now use the generated core with direct TQTT pins.
-   An experimental full SoC variant connects native boot and SCSI. PRAM and
-   JTAG card provisioning still need native transports; no native card
+   An experimental full SoC variant connects native boot, SCSI, and PRAM.
+   JTAG bulk card provisioning still needs a native transport; no native card
    transfer has been measured on hardware.
 
    A standalone native probe is now in progress on branch
@@ -275,9 +275,13 @@ an isolated write-path reproduction and HFS consistency check.
    Vivado XDC rejected a conditional in one file. The native CDC data RAM
    write is separate from asynchronous pointer resets to permit RAM
    inference; `make tb-sd-native-fifo tb-sd-native-bridge` still pass.
-   The SPI-only PRAM persistence and JTAG card writer are terminated in
-   this variant until their native equivalents exist; the default SPI
-   variant still has them. A reset guard defers controller reset while
+   A native PRAM transport now shares the block engine with boot and SCSI,
+   retaining the SPI build's LBA 8191 sector format, checksum, boot autoload,
+   and `0x50A00100` JTAG commands. `make tb-pram-sd-native` checks a full
+   SAVE/LOAD sector round trip; the SPI PRAM tests and native owner-mux test
+   also pass. Native PRAM still needs hardware validation. The JTAG bulk
+   card writer remains disabled in this variant; the default SPI variant
+   retains it. A reset guard defers controller reset while
    an on-card command is active (`make tb-sd-native-reset`). The negotiated
    50 MHz CMD6 switch now has an opt-in `TQTT_NATIVE_SD_HS=1` implementation.
    After four-bit initialization at 25 MHz, `sd_native_hs_switch` sends CMD6
@@ -315,8 +319,9 @@ an isolated write-path reproduction and HFS consistency check.
    incomplete global-clock guidance trees, but completed routing and passed
    final timing and DRC. This image has not been loaded; card power cycling,
    native integrity tests, and High Speed negotiation readback remain pending.
-   PRAM and JTAG provisioning also need native-mode paths before the SPI
-   transport can be replaced in a full image. Keep the RK SPI board path.
+   Native PRAM passed simulation and real-MIG RTL elaboration but is not in
+   the bitstreams listed above. JTAG bulk provisioning still needs a native
+   path before the SPI transport can be replaced. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest

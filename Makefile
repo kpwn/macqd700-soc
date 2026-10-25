@@ -1219,6 +1219,16 @@ $(PRAM_SD_BUILD)_autoload/Vtb_pram_sd_top: $(PRAM_SD_RTL) $(TB_DIR)/tb_pram_sd.c
 		-CFLAGS "-std=c++17 -DAUTOLOAD_BUILD"
 
 .PHONY: tb-pram-sd tb-pram-sd-populated
+PRAM_SD_NATIVE_BUILD := $(BUILD_DIR)/tb_pram_sd_native
+.PHONY: tb-pram-sd-native
+tb-pram-sd-native:
+	@mkdir -p $(PRAM_SD_NATIVE_BUILD)
+	$(VERILATOR) --binary --timing --top-module tb_pram_sd_native \
+		-Wno-TIMESCALEMOD -Wno-UNUSED -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		--Mdir $(PRAM_SD_NATIVE_BUILD) $(RTL_DIR)/soc/pram_sd.v \
+		$(TB_DIR)/tb_pram_sd_native.sv
+	$(PRAM_SD_NATIVE_BUILD)/Vtb_pram_sd_native
+
 tb-pram-sd: $(PRAM_SD_BUILD)/Vtb_pram_sd_top
 	@echo "Running pram_sd unit tb (post-reset default PRAM image)..."
 	$(PRAM_SD_BUILD)/Vtb_pram_sd_top
@@ -9427,7 +9437,7 @@ ALL_TBS := \
 	tb-scsi-c96-mame-chunk tb-scsi-c96-sm43-chunk tb-scsi-dual tb-scsi-trace-ring tb-sonic-trace-ring tb-scsi-trace-pb \
 	tb-sd-provision tb-sd-jtag-writer tb-vhdd-ctrl \
 	tb-dma-ctrl tb-dma-engine tb-dma-l2c tb-axil-null-slave tb-axil-split2 \
-	tb-pram-sd tb-pram-sd-populated tb-pram-sd-autoload \
+	tb-pram-sd tb-pram-sd-populated tb-pram-sd-autoload tb-pram-sd-native \
 	tb-l2c-pri8 tb-l2c tb-l2c-stress tb-l2c-collision tb-l2c-bypass-all tb-l2c-chain tb-l2c-chain-off \
 	tb-axi-vram-mux3 tb-vram-ddr-chain tb-vram-ddr-chain-nol2c tb-fb-reader-ddr-chain \
 	tb-scanout-ddr-frames \

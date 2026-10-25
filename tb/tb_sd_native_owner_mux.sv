@@ -4,7 +4,7 @@ module tb_sd_native_owner_mux;
     always #5 clk = ~clk;
     reg rst = 1;
     reg phase = 0;
-    reg boot_go = 0, scsi_go = 0;
+    reg boot_go = 0, scsi_go = 0, pram_go = 0, pram_grant = 0;
     reg card_busy = 0, card_done = 0, card_error = 0;
     reg card_rd_valid = 0, card_wr_ready = 0;
     reg [7:0] card_rd_data = 0;
@@ -17,6 +17,8 @@ module tb_sd_native_owner_mux;
     wire [7:0] boot_rd_data;
     wire scsi_busy, scsi_done, scsi_error, scsi_rd_valid, scsi_wr_ready;
     wire [7:0] scsi_rd_data;
+    wire pram_busy, pram_done, pram_error, pram_rd_valid, pram_wr_ready;
+    wire [7:0] pram_rd_data;
     sd_native_owner_mux dut (
         .clk(clk), .rst(rst), .boot_phase_complete(phase),
         .boot_cmd_type(3'd2), .boot_lba(32'd0),
@@ -31,6 +33,14 @@ module tb_sd_native_owner_mux;
         .scsi_rd_data(scsi_rd_data), .scsi_rd_ready(1'b0),
         .scsi_wr_ready(scsi_wr_ready), .scsi_wr_data(8'ha5),
         .scsi_wr_avail(1'b1),
+        .pram_grant(pram_grant),
+        .pram_cmd_type(3'd3), .pram_lba(32'd8191),
+        .pram_block_count(16'd1), .pram_go(pram_go),
+        .pram_busy(pram_busy), .pram_done(pram_done),
+        .pram_error(pram_error), .pram_rd_valid(pram_rd_valid),
+        .pram_rd_data(pram_rd_data), .pram_rd_ready(1'b1),
+        .pram_wr_ready(pram_wr_ready), .pram_wr_data(8'h5a),
+        .pram_wr_avail(1'b1),
         .card_cmd_type(card_cmd_type), .card_lba(card_lba),
         .card_block_count(card_block_count), .card_go(card_go),
         .card_busy(card_busy), .card_done(card_done),
@@ -96,7 +106,42 @@ module tb_sd_native_owner_mux;
         #1;
         if (!scsi_done || !scsi_error || boot_done)
             $fatal(1, "SCSI error completion routed incorrectly");
-        $display("PASS native SD owner mux boot/SCSI isolation, rejection and handoff");
+        @(negedge clk);
+        card_done = 0;
+        card_error = 0;
+        pram_grant = 1;
+        pram_go = 1;
+        #1;
+        if (!card_go || card_lba != 8191 || card_cmd_type != 3)
+            $fatal(1, "PRAM request not selected");
+        @(negedge clk);
+        pram_go = 0;
+        card_busy = 1;
+        card_rd_valid = 1;
+        card_wr_ready = 1;
+        scsi_go = 1;
+        #1;
+        if (!pram_busy || scsi_busy || !pram_rd_valid || scsi_rd_valid ||
+            !card_rd_ready || !pram_wr_ready || scsi_wr_ready ||
+            card_wr_data != 8'h5a || !card_wr_avail)
+            $fatal(1, "PRAM stream routed incorrectly");
+        @(negedge clk);
+        scsi_go = 0;
+        #1;
+        if (!scsi_done || !scsi_error || !pram_busy)
+            $fatal(1, "SCSI request was not rejected during PRAM grant");
+        @(negedge clk);
+        pram_grant = 0;
+        #1;
+        if (!pram_rd_valid || scsi_rd_valid || !pram_busy)
+            $fatal(1, "in-flight PRAM owner followed grant change");
+        card_done = 1;
+        card_busy = 0;
+        card_rd_valid = 0;
+        #1;
+        if (!pram_done || pram_error || scsi_done)
+            $fatal(1, "PRAM completion routed incorrectly");
+        $display("PASS native SD owner mux boot/SCSI/PRAM isolation and handoff");
         $finish;
     end
 endmodule

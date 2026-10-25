@@ -1,8 +1,8 @@
 // Experimental TQTT full-SoC four-bit SD path. ROM boot and SCSI share one
 // 100 MHz LiteSDCard backend. The boot and SCSI CDCs preserve their existing
 // reset/error contracts; SCSI requests above 32 sectors are chunked before
-// reaching the backend's 16 KiB DMA RAM. PRAM-on-card and JTAG provisioning
-// still need native implementations before this replaces the SPI build.
+// reaching the backend's 16 KiB DMA RAM. PRAM uses the same persistent sector
+// format through a third native client; bulk JTAG provisioning is still absent.
 
     // No SPI bus exists in this build. boot_fsm skips its SPI init states.
     assign boot_spi_cmd_ready = 1'b0;
@@ -156,6 +156,13 @@
     wire card_go, card_done, card_error, card_rd_valid, card_rd_ready;
     wire [7:0] card_rd_data, card_wr_data;
     wire card_wr_ready, card_wr_avail;
+    wire [2:0] np_cmd_type;
+    wire [31:0] np_lba;
+    wire [15:0] np_block_count;
+    wire np_go, np_busy, np_done, np_error, np_rd_valid, np_rd_ready;
+    wire [7:0] np_rd_data, np_wr_data;
+    wire np_wr_ready, np_wr_avail;
+    wire native_pram_grant;
     sd_native_owner_mux u_native_owner (
         .clk(video_ref_clk), .rst(native_rst),
         .boot_phase_complete(native_boot_done_sync[1]),
@@ -170,6 +177,14 @@
         .scsi_rd_valid(nc_rd_valid), .scsi_rd_data(nc_rd_data),
         .scsi_rd_ready(nc_rd_ready), .scsi_wr_ready(nc_wr_ready),
         .scsi_wr_data(nc_wr_data), .scsi_wr_avail(nc_wr_avail),
+        .pram_grant(native_pram_grant),
+        .pram_cmd_type(np_cmd_type), .pram_lba(np_lba),
+        .pram_block_count(np_block_count), .pram_go(np_go),
+        .pram_busy(np_busy), .pram_done(np_done),
+        .pram_error(np_error), .pram_rd_valid(np_rd_valid),
+        .pram_rd_data(np_rd_data), .pram_rd_ready(np_rd_ready),
+        .pram_wr_ready(np_wr_ready), .pram_wr_data(np_wr_data),
+        .pram_wr_avail(np_wr_avail),
         .card_cmd_type(card_cmd_type), .card_lba(card_lba),
         .card_block_count(card_block_count), .card_go(card_go),
         .card_busy(native_card_busy), .card_done(card_done),
@@ -233,21 +248,6 @@
     wire [7:0] core_scsi_dbg_last_write_resp = 8'd0;
     wire [7:0] core_scsi_dbg_last_poll_cnt = 8'd0;
 
-    // The old SPI PRAM/JTAG services have no valid native transport yet.
-    // Terminate their AXI window and let RTC use its live/default PRAM.
-    wire pram_autoload_pending = 1'b0;
-    assign pram_sd_default = 1'b0;
-    assign pram_x_req = 1'b0;
-    assign pram_x_we = 1'b0;
-    assign pram_x_addr = 8'b0;
-    assign pram_x_wdata = 8'b0;
-    axil_null_slave #(.ADDR_WIDTH(20), .DATA_WIDTH(32)) u_native_sdj_null (
-        .clk(core_clk), .rst(soc_full_rst_bank[5]),
-        .awaddr(sdj_awaddr), .awvalid(sdj_awvalid), .awready(sdj_awready),
-        .wdata(sdj_wdata), .wstrb(sdj_wstrb),
-        .wvalid(sdj_wvalid), .wready(sdj_wready),
-        .bresp(sdj_bresp), .bvalid(sdj_bvalid), .bready(sdj_bready),
-        .araddr(sdj_araddr), .arvalid(sdj_arvalid), .arready(sdj_arready),
-        .rdata(sdj_rdata), .rresp(sdj_rresp),
-        .rvalid(sdj_rvalid), .rready(sdj_rready)
-    );
+    // Keep the existing PRAM sector and JTAG register contract. The native
+    // implementation lives in its own include so the SPI path stays intact.
+`include "fpga_top_sd_pram_native.vh"

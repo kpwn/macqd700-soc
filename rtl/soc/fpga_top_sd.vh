@@ -277,6 +277,12 @@
         .spi_cs_n_in   (pram_spi_cs_n_w   ),
         .spi_fast_mode (pram_spi_fast_w   ),
         .spi_hs_mode   (pram_spi_hs_w     ),
+        .native_cmd_type(), .native_lba(), .native_block_count(),
+        .native_go(), .native_busy(1'b0), .native_done(1'b0),
+        .native_error(1'b0), .native_rd_valid(1'b0),
+        .native_rd_data(8'b0), .native_rd_ready(),
+        .native_wr_ready(1'b0), .native_wr_data(),
+        .native_wr_avail(),
 
         .sd_req    (pram_sd_req),
         .sd_gnt    (pram_gnt_q ),

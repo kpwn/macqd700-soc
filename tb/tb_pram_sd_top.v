@@ -148,6 +148,12 @@ module tb_pram_sd_top #(
         .spi_cs_n_in   (spi_cs_n     ),
         .spi_fast_mode (spi_fast_mode),
         .spi_hs_mode   (spi_hs_mode  ),
+        .native_cmd_type(), .native_lba(), .native_block_count(),
+        .native_go(), .native_busy(1'b0), .native_done(1'b0),
+        .native_error(1'b0), .native_rd_valid(1'b0),
+        .native_rd_data(8'b0), .native_rd_ready(),
+        .native_wr_ready(1'b0), .native_wr_data(),
+        .native_wr_avail(),
 
         .sd_req (sd_req),
         .sd_gnt (sd_gnt),
