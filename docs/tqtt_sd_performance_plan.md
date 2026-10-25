@@ -286,8 +286,20 @@ an isolated write-path reproduction and HFS consistency check.
    state as bit 187 of `vio_scsi_sd`, preserving all older bit positions;
    `tools/scsi_sense_probe.sh` decodes it. That observability change passed
    TQTT native-SD Verilator lint in both modes and TQTT Vivado RTL
-   elaboration. The bitstreams listed above predate that VIO change, so
-   they cannot report the new bit without a rebuild.
+   elaboration. The bitstreams listed above predate that VIO change. A
+   VIO-enabled combined 100 MHz CPU / negotiated 50 MHz SD image from staging
+   commit `21d30b2` and CPU commit `4736fadf` completed on 2026-10-25:
+   `/var/tmp/tqtt_native_hs_vio_100/vivado/checkpoints/route.dcp` (SHA-256
+   `dcab6a3e90798f073c0e0f9fd4cf1e6788da3583fcdd1f7ff99b187823b3563c`),
+   blank bitstream SHA-256
+   `d549277326fb5df302e9ba5d50c1d350b7481bf9e688c49d515348493398a812`,
+   and local ADB-patched bitstream SHA-256
+   `7b8adf235219955b5757146a20a9ccb2a5cf08f218e39af19eb1e25da5a85a8f`.
+   Final WNS/WHS/WPWS were +0.010/+0.003/+0.053 ns with zero pulse-width
+   failures and zero bitstream DRC errors. Incremental routing reported four
+   incomplete global-clock guidance trees, but completed routing and passed
+   final timing and DRC. This image has not been loaded; card power cycling,
+   native integrity tests, and High Speed negotiation readback remain pending.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
