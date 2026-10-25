@@ -263,15 +263,16 @@ module sd_native_block_engine #(
             error <= 0;
         end else begin
             done <= 0;
-            if (((state == S_DATA || state == S_DATA_WAIT ||
-                  state == S_DMA || state == S_DMA_WAIT) ||
+            if (((state == S_DATA || state == S_DMA) ||
                  (state == S_FILL && !wr_ready) ||
                  (state == S_STREAM && !rd_valid)) &&
                 poll_timer == POLL_LAST) begin
-                if (multi && (state == S_DATA || state == S_DATA_WAIT ||
-                              state == S_DMA || state == S_DMA_WAIT)) begin
+                if (multi && (state == S_DATA || state == S_DMA)) begin
                     // A multi-block command may still own the card. Try a
                     // bounded CMD12 before reporting the transfer error.
+                    // Do not enter STOP from a CSR response-wait state:
+                    // the previous CSR transaction must finish before the
+                    // command engine can take ownership of its response.
                     transfer_failed <= 1;
                     state <= S_STOP;
                 end else begin
