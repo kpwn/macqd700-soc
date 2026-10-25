@@ -118,6 +118,16 @@ an isolated write-path reproduction and HFS consistency check.
    The card must be physically power-cycled after any SPI-mode image before
    native-mode hardware testing; FPGA reconfiguration alone does not reset
    the card's protocol selection.
+
+   For full-Mac integration, TQTT already has a 100 MHz `video_ref_clk`
+   from its fabric MMCM at both 100 and 200 MHz CPU settings. That can clock
+   the native controller without changing its generated timing parameters.
+   `sd_scsi_bridge` can cross the existing 50 MHz peripheral bus into this
+   100 MHz storage domain. Boot must use a native block reader and an AXI
+   clock crossing to copy the ROM into DDR; the current `boot_fsm` performs
+   SPI-only initialization and cannot be left active on the same card.
+   PRAM and JTAG provisioning also need native-mode paths before the SPI
+   transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
    writes, random LBAs, card removal/reset recovery, and full Mac boot.
    Measure transfer and command overhead at each mode; retain the fastest
