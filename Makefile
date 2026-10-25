@@ -4816,6 +4816,25 @@ $(SD_NATIVE_FIFO_BUILD)/Vsd_async_byte_fifo: $(RTL_DIR)/soc/sd_async_byte_fifo.v
 		$(TB_DIR)/tb_sd_async_byte_fifo.cpp \
 		-CFLAGS "-std=c++17"
 
+SD_NATIVE_BRIDGE_BUILD := $(BUILD_DIR)/sd_native_bridge
+.PHONY: tb-sd-native-bridge
+tb-sd-native-bridge: $(SD_NATIVE_BRIDGE_BUILD)/Vsd_scsi_native_bridge
+	$(SD_NATIVE_BRIDGE_BUILD)/Vsd_scsi_native_bridge
+
+$(SD_NATIVE_BRIDGE_BUILD)/Vsd_scsi_native_bridge: $(RTL_DIR)/soc/sd_scsi_native_bridge.v $(RTL_DIR)/soc/sd_async_byte_fifo.v $(RTL_DIR)/soc/sd_scsi_bridge.v $(TB_DIR)/tb_sd_scsi_native_bridge.cpp
+	@mkdir -p $(SD_NATIVE_BRIDGE_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Mdir $(SD_NATIVE_BRIDGE_BUILD) \
+		--top-module sd_scsi_native_bridge \
+		$(RTL_DIR)/soc/sd_scsi_native_bridge.v \
+		$(RTL_DIR)/soc/sd_async_byte_fifo.v \
+		$(RTL_DIR)/soc/sd_scsi_bridge.v \
+		$(TB_DIR)/tb_sd_scsi_native_bridge.cpp \
+		-CFLAGS "-std=c++17"
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SCSI 53C96 System-7 command-out drain tb (TURBOSCSI_C96=1, TARGET_ID=6)
 # Repro of the post-"Welcome to Macintosh" HW wedge: deferred DMA|CD_SELECT

@@ -147,9 +147,12 @@ an isolated write-path reproduction and HFS consistency check.
    byte (the four-bit 50 MHz bus rate); its first lossless tested spacing is
    six cycles. A separate Gray-pointer `sd_async_byte_fifo` now passes
    12,288 ordered bytes at the four-cycle rate, including reader stalls and
-   an interrupted-transfer reset (`make tb-sd-native-fifo`). It is a tested
-   building block, not yet wired into SCSI. The native SCSI path needs
-   FIFO-based data crossing and reset-epoch error handling. Boot must use a
+   an interrupted-transfer reset (`make tb-sd-native-fifo`).
+   `sd_scsi_native_bridge` now wraps the established request/reset crossing
+   with read and write FIFOs. Its focused test checks ordered 512-byte reads
+   and writes, read completion only after the final byte reaches the SCSI
+   side, and FIFO backpressure (`make tb-sd-native-bridge`). The wrapper is
+   not yet connected to the card controller or full Mac top. Boot must use a
    native block reader and an AXI
    clock crossing to copy the ROM into DDR; the current `boot_fsm` performs
    SPI-only initialization and cannot be left active on the same card.
