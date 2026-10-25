@@ -19,6 +19,59 @@ module IBUFDS #(
     wire _unused = &{IB, 1'b0};
 endmodule
 
+module IBUF (input wire I, output wire O);
+    assign O = I;
+endmodule
+
+module IOBUF (input wire I, input wire T, output wire O, inout wire IO);
+    assign IO = T ? 1'bz : I;
+    assign O = IO;
+endmodule
+
+module OBUFDS (input wire I, output wire O, output wire OB);
+    assign O = I;
+    assign OB = ~I;
+endmodule
+
+module ODDRE1 #(
+    parameter IS_C_INVERTED = 1'b0,
+    parameter IS_D1_INVERTED = 1'b0,
+    parameter IS_D2_INVERTED = 1'b0,
+    parameter SRVAL = 1'b0
+) (
+    input wire C, D1, D2, SR,
+    output wire Q
+);
+    assign Q = SR ? SRVAL : D1;
+    wire _unused_oddre1 = &{1'b0, C, D2, IS_C_INVERTED,
+                            IS_D1_INVERTED, IS_D2_INVERTED};
+endmodule
+
+module SYSMONE1 #(
+    parameter [15:0] INIT_40 = 0, INIT_41 = 0, INIT_42 = 0,
+                     INIT_48 = 0, INIT_4A = 0
+) (
+    input wire DCLK, RESET, DEN, DWE, CONVST, CONVSTCLK,
+    input wire [7:0] DADDR,
+    input wire [15:0] DI, VAUXP, VAUXN,
+    input wire VP, VN, I2C_SCLK, I2C_SDA,
+    output wire [15:0] DO,
+    output wire [5:0] CHANNEL,
+    output wire [7:0] ALM, MUXADDR,
+    output wire DRDY, EOC, EOS, BUSY, JTAGBUSY, JTAGLOCKED,
+                JTAGMODIFIED, OT, I2C_SCLK_TS, I2C_SDA_TS
+);
+    assign DO = 16'b0;
+    assign CHANNEL = 6'b0;
+    assign ALM = 8'b0;
+    assign MUXADDR = 8'b0;
+    assign {DRDY, EOC, EOS, BUSY, JTAGBUSY, JTAGLOCKED,
+            JTAGMODIFIED, OT, I2C_SCLK_TS, I2C_SDA_TS} = 10'b0;
+    wire _unused_sysmone1 = &{1'b0, DCLK, RESET, DEN, DWE, CONVST,
+        CONVSTCLK, DADDR, DI, VAUXP, VAUXN, VP, VN, I2C_SCLK,
+        I2C_SDA, INIT_40, INIT_41, INIT_42, INIT_48, INIT_4A};
+endmodule
+
 module IBUFDS_GTE4 #(
     parameter REFCLK_EN_TX_PATH  = 1'b0,
     parameter REFCLK_HROW_CK_SEL = 2'b00,
@@ -152,12 +205,16 @@ module debug_vio (
     input wire [159:0] probe_in13,
     input wire [83:0] probe_in14,
     input wire [31:0] probe_in15, // v28: hot/fetch window guard fault counters
+    input wire [15:0] probe_in16, // TQTT fan RPM
+    input wire [19:0] probe_in17, // TQTT fan mode/fault/temperature/duty
     output wire [4:0] probe_out0,
-    output wire probe_out1
+    output wire probe_out1,
+    output wire [7:0] probe_out2
 );
     assign probe_out0 = 5'b00011;
     assign probe_out1 = 1'b0;
-    wire _unused = &{1'b0, clk, probe_in0, probe_in1, probe_in2, probe_in3, probe_in4, probe_in5, probe_in6, probe_in7, probe_in8, probe_in9, probe_in10, probe_in11, probe_in12, probe_in13, probe_in14, probe_in15};
+    assign probe_out2 = 8'h00;
+    wire _unused = &{1'b0, clk, probe_in0, probe_in1, probe_in2, probe_in3, probe_in4, probe_in5, probe_in6, probe_in7, probe_in8, probe_in9, probe_in10, probe_in11, probe_in12, probe_in13, probe_in14, probe_in15, probe_in16, probe_in17};
 endmodule
 
 // Ethernet-link clock/delay primitives used by q700_eth_link.sv.  Functional
@@ -171,6 +228,7 @@ module MMCME4_BASE #(
     parameter integer CLKOUT1_DIVIDE = 1,
     parameter real CLKOUT1_PHASE = 0.0,
     parameter integer CLKOUT2_DIVIDE = 1,
+    parameter integer CLKOUT3_DIVIDE = 1,
     parameter BANDWIDTH = "OPTIMIZED",
     parameter STARTUP_WAIT = "FALSE"
 ) (

@@ -4972,6 +4972,35 @@ $(SD_NATIVE_INIT_CTRL_BUILD)/Vsd_native_init_controller: $(RTL_DIR)/soc/sd_nativ
 		-CFLAGS "-std=c++17"
 
 SD_NATIVE_BLOCK_BUILD := $(BUILD_DIR)/sd_native_block_engine
+
+# Full TQTT native-SD source composition with physical board clock/pin RTL.
+# The HDMI-audio branch uses a SystemVerilog constant cast that this Verilator
+# version cannot elaborate; Vivado's full-top gate checks that variant.
+.PHONY: lint-tqtt-native-sd
+lint-tqtt-native-sd:
+	$(VERILATOR) --lint-only --bbox-unsup --top-module fpga_top \
+		-DTQTT_BOARD -DTQTT_GMII -DTQTT_NATIVE_SD -DETH_ENABLE \
+		-DVIO_ENABLE -DJTAG_AXI_ENABLE \
+		-DSCSI_TRACE_ENABLE -DCORE_MMCM -DDEBUG_CTRL_NO_LOCAL_FALLBACK \
+		-GTQTT_HDMI_AUDIO=0 -GTQTT_FAN_AUTO=1 -GETH_ICMP_RESPONDER=0 \
+		-I$(RTL_DIR)/soc -I$(RTL_DIR)/board -I$(RTL_DIR) \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-PINMISSING -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-CMPCONST \
+		-Wno-UNOPTFLAT -Wno-SELRANGE -Wno-LITENDIAN \
+		-Wno-UNSIGNED -Wno-BLKSEQ -Wno-TIMESCALEMOD \
+		-Wno-COMBDLY -Wno-MODDUP -Wno-ALWCOMBORDER \
+		-Wno-GENUNNAMED -Wno-SYNCASYNCNET \
+		$(FPGA_TOP_RTL_SRCS) \
+		third_party/litesdcard/litesdcard_core.v \
+		$(shell python3 $(TOOLS_DIR)/taxi_filelist.py $(ETH_RK5_DIR)) \
+		$(ETH_RK5_DIR)/third_party/taxi/src/eth/rtl/taxi_eth_mac_1g_gmii_fifo.sv \
+		$(ETH_RK5_DIR)/third_party/taxi/src/eth/rtl/taxi_eth_mac_1g_gmii.sv \
+		$(ETH_RK5_DIR)/third_party/taxi/src/eth/rtl/taxi_gmii_phy_if.sv \
+		$(ETH_RK5_DIR)/third_party/taxi/src/io/rtl/taxi_ssio_sdr_in.sv \
+		$(ETH_RK5_DIR)/third_party/taxi/src/io/rtl/taxi_ssio_sdr_out.sv \
+		$(TB_DIR)/verilator_xilinx_stubs.v
+
 .PHONY: tb-sd-native-block
 tb-sd-native-block: $(SD_NATIVE_BLOCK_BUILD)/Vsd_native_block_engine
 	$(SD_NATIVE_BLOCK_BUILD)/Vsd_native_block_engine
