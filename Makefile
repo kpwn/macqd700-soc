@@ -4852,6 +4852,23 @@ $(SD_NATIVE_CSR_BUILD)/Vsd_native_csr_master: $(RTL_DIR)/soc/sd_native_csr_maste
 		$(TB_DIR)/tb_sd_native_csr_master.cpp \
 		-CFLAGS "-std=c++17"
 
+SD_NATIVE_CMD_BUILD := $(BUILD_DIR)/sd_native_command
+.PHONY: tb-sd-native-command
+tb-sd-native-command: $(SD_NATIVE_CMD_BUILD)/Vsd_native_command
+	$(SD_NATIVE_CMD_BUILD)/Vsd_native_command
+
+$(SD_NATIVE_CMD_BUILD)/Vsd_native_command: $(RTL_DIR)/soc/sd_native_command.v $(TB_DIR)/tb_sd_native_command.cpp
+	@mkdir -p $(SD_NATIVE_CMD_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Mdir $(SD_NATIVE_CMD_BUILD) \
+		--top-module sd_native_command -GEVENT_TIMEOUT_CYCLES=64 \
+		$(RTL_DIR)/soc/sd_native_command.v \
+		$(TB_DIR)/tb_sd_native_command.cpp \
+		-CFLAGS "-std=c++17"
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SCSI 53C96 System-7 command-out drain tb (TURBOSCSI_C96=1, TARGET_ID=6)
 # Repro of the post-"Welcome to Macintosh" HW wedge: deferred DMA|CD_SELECT

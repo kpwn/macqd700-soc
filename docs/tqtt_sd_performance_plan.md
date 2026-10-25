@@ -160,8 +160,12 @@ an isolated write-path reproduction and HFS consistency check.
    A one-outstanding `sd_native_csr_master` now provides bounded Wishbone
    CSR transactions for the future hardware command sequencer. Its test
    covers reads, writes, bus errors, timeouts, and reset cancellation
-   (`make tb-sd-native-csr`); card initialization and block commands are
-   still controlled only by the host probe script.
+   (`make tb-sd-native-csr`). `sd_native_command` builds on it to write a
+   command argument/type/send sequence, poll the card event with a bound,
+   and return all 128 response bits. Its test covers normal completion,
+   card errors, event timeout, and CSR error (`make tb-sd-native-command`).
+   Card initialization and DMA block commands are still controlled only by
+   the host probe script.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
