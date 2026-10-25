@@ -195,7 +195,22 @@ an isolated write-path reproduction and HFS consistency check.
    sectors, CRC32, and DMA timing. After the first read succeeds,
    `NATIVE_SD_CARD_POWER_CYCLED=1 tools/tqtt_sd_native_engine_matrix.sh`
    repeats eight read-only cases across the card, checks each CRC32 pair,
-   and records the engine's DMA cycles and MB/s. The original engine probe
+   and records the engine's DMA cycles and MB/s.
+   The same read-only engine probe can also be built with
+   `make TQTT_NATIVE_SD_HS=1 fpga-tqtt-sd-native-engine-probe-bitstream`.
+   Its separate `build/tqtt_sd_native_engine_probe_hs` output negotiates
+   CMD6 High Speed and reports the confirmed selection in status bit 10.
+   Point the matrix at that build with
+   `NATIVE_SD_ENGINE_BUILD_DIR=build/tqtt_sd_native_engine_probe_hs` and set
+   `NATIVE_SD_EXPECT_HS=1` to reject a silent fallback to 25 MHz. Load the
+   matching bitstream and LTX before the matrix. The physical card must be
+   power-cycled before the first native test; neither build step does so.
+   The High Speed probe build completed on 2026-10-25 with WNS/WHS/WPWS
+   +5.127/+0.019/+4.458 ns, zero failing timing endpoints, and zero
+   bitstream DRC errors. Its bitstream SHA-256 is
+   `86970fc789eced4cda252b5a75682bfdb8a2ffa6e6ee4c0148cd535f9d3854f0`.
+   This is a build result, not a physical card speed or integrity result.
+   The original engine probe
    was loaded in FPGA SRAM on 2026-10-25; Vivado detected its VIO and its
    automatic init reported an error before the card was reseated. This is
    not a native card transfer result. It was reloaded after the audio

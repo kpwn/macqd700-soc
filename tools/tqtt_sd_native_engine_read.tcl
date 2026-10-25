@@ -90,6 +90,16 @@ if {$lba + $blocks > $capacity} {
     error [format "request LBA %u + %u exceeds card capacity %u" $lba $blocks $capacity]
 }
 puts [format "CARD sectors=%u RCA=0x%08x" $capacity [dict get $snap rca]]
+set high_speed [expr {($status >> 10) & 1}]
+if {[info exists ::env(NATIVE_SD_EXPECT_HS)]} {
+    set expected_hs $::env(NATIVE_SD_EXPECT_HS)
+    if {$expected_hs ni {0 1}} {error "NATIVE_SD_EXPECT_HS must be 0 or 1"}
+    if {$high_speed != $expected_hs} {
+        error [format "native SD speed mismatch: expected High Speed=%s, observed=%u, status=0x%08x" \
+            $expected_hs $high_speed $status]
+    }
+}
+puts [format "CARD high_speed=%u sd_clk_mhz=%u" $high_speed [expr {$high_speed ? 50 : 25}]]
 
 set initial_toggle [expr {$status & 1}]
 scan [get_property OUTPUT_VALUE $p_ctrl] %x old_control
