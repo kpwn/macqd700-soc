@@ -154,6 +154,25 @@ module boot_fsm #(
     input  wire        cfg_skip_cmd59,
     input  wire        cfg_force_hs,
 
+`ifdef TQTT_NATIVE_SD
+    // Native SD is initialized in the 100 MHz storage domain. The caller
+    // crosses this request/byte stream into the boot clock domain and owns
+    // the 1..32-sector LiteSDCard block engine. This replaces SPI init and
+    // data transport while retaining the proven AXI ROM/zero writer below.
+    input  wire        native_ready,
+    input  wire        native_init_error,
+    input  wire [31:0] native_card_lbas,
+    output wire        native_go,
+    output wire [31:0] native_lba,
+    output wire [15:0] native_block_count,
+    input  wire        native_busy,
+    input  wire        native_done,
+    input  wire        native_error,
+    input  wire        native_rd_valid,
+    input  wire [7:0]  native_rd_data,
+    output wire        native_rd_ready,
+`endif
+
     // ── sd_spi byte interface (via sd_spi_mux "boot" port) ───────────
     output reg         spi_cmd_valid,
     input  wire        spi_cmd_ready,
@@ -439,7 +458,8 @@ module boot_fsm #(
         ST_CSD_DATA_SEND  = 6'd28,
         ST_CSD_DATA_WAIT  = 6'd29,
         ST_CSD_CRC_SEND   = 6'd30,
-        ST_CSD_CRC_WAIT   = 6'd31;
+        ST_CSD_CRC_WAIT   = 6'd31,
+        ST_NATIVE_WAIT    = 6'd32;
 
     // Commands we send during init
     localparam [3:0]
@@ -725,6 +745,28 @@ module boot_fsm #(
     // sector by sector internally for `block_count` blocks.
     wire [31:0] ctrl_lba_arg = is_sdhc ? START_SECTOR
                                        : (START_SECTOR << 9);
+`ifdef TQTT_NATIVE_SD
+    wire [31:0] native_remaining = NUM_SECTORS - {16'd0, sector};
+    assign native_go = ctrl_go;
+    assign native_lba = START_SECTOR + {16'd0, sector};
+    assign native_block_count = native_remaining > 32'd32 ? 16'd32 :
+                                native_remaining[15:0];
+    assign ctrl_busy = native_busy;
+    assign ctrl_done = native_done;
+    assign ctrl_error = native_error;
+    assign ctrl_err_cause = 4'd0;
+    assign ctrl_rd_valid = native_rd_valid;
+    assign ctrl_rd_data = native_rd_data;
+    assign ctrl_spi_cmd_valid = 1'b0;
+    assign ctrl_spi_cmd_data = 8'hff;
+    assign ctrl_dbg_rd_crc_calc = 16'd0;
+    assign ctrl_dbg_rd_crc_recv = 16'd0;
+    assign ctrl_dbg_last_real_r1 = 8'd0;
+    assign ctrl_dbg_cur_cmd = 4'd0;
+    assign ctrl_dbg_lba_lat = native_lba;
+    assign ctrl_dbg_last_crc7_sent = 8'd0;
+    assign ctrl_dbg_last_poll_cnt = 8'd0;
+`else
     sd_ctrl u_ctrl (
         .clk           (clk),
         .rst           (rst),
@@ -768,6 +810,7 @@ module boot_fsm #(
         .dbg_block_idx(),
         .dbg_last_poll_cnt(ctrl_dbg_last_poll_cnt)
     );
+`endif
 
     // AXI word writer.  sd_ctrl cannot be backpressured, so completed
     // 32-bit words sit in a small FIFO while the write channel retires one
@@ -793,6 +836,12 @@ module boot_fsm #(
     wire word_fifo_empty = (word_fifo_count == {(WORD_FIFO_LOG2+1){1'b0}});
     // Room for TWO more entries (MIRROR_LOW_RAM's dual-push case).
     wire word_fifo_room2 = (word_fifo_count <= (WORD_FIFO_DEPTH_COUNT - {{(WORD_FIFO_LOG2-1){1'b0}}, 2'd2}));
+`ifdef TQTT_NATIVE_SD
+    // The CDC bridge registers a popped byte before presenting valid here.
+    // Reserve four words for that in-flight byte and the next pack result.
+    assign native_rd_ready = st == ST_CTRL_RUN &&
+        word_fifo_count <= WORD_FIFO_DEPTH_COUNT - 4;
+`endif
     wire word_fifo_push = !rst && st == ST_CTRL_RUN && ctrl_rd_valid &&
                           pack_phase == 2'd3 &&
                           (MIRROR_LOW_RAM ? word_fifo_room2 : !word_fifo_full);
@@ -1064,8 +1113,33 @@ module boot_fsm #(
                     byte_idx     <= 10'd0;
                     frame_idx    <= 3'd0;
                     rom_loading_int <= 1'b1;
+`ifdef TQTT_NATIVE_SD
+                    st           <= ST_NATIVE_WAIT;
+`else
                     st           <= ST_DUMMY_SEND;
+`endif
                 end
+
+`ifdef TQTT_NATIVE_SD
+                ST_NATIVE_WAIT: begin
+                    if (native_init_error) begin
+                        error <= 1'b1;
+                        err_cause <= 3'd3;
+                        st <= ST_ERROR;
+                    end else if (native_ready) begin
+                        if (native_card_lbas < START_SECTOR + NUM_SECTORS) begin
+                            error <= 1'b1;
+                            err_cause <= 3'd3;
+                            st <= ST_ERROR;
+                        end else begin
+                            card_num_lbas <= native_card_lbas;
+                            sd_crc_enabled <= 1'b1;
+                            sector <= 16'd0;
+                            st <= ST_CTRL_KICK;
+                        end
+                    end
+                end
+`endif
 
                 ST_DUMMY_SEND: begin
                     if (bst == BS_IDLE) begin
@@ -1544,7 +1618,9 @@ module boot_fsm #(
                 // ────────── Kick sd_ctrl for CMD18 multi-block read ──
                 ST_CTRL_KICK: begin
                     // Reset per-sector/stream state and fire go.
+`ifndef TQTT_NATIVE_SD
                     sector           <= 16'd0;
+`endif
                     sec_byte_idx     <= 10'd0;
                     pack_phase       <= 2'd0;
                     ctrl_go          <= 1'b1;
@@ -1636,7 +1712,15 @@ module boot_fsm #(
                                 st        <= ST_ERROR;
                             end
                         end else begin
+`ifdef TQTT_NATIVE_SD
+                            // Native DMA RAM is 16 KiB, so continue the
+                            // ROM copy in 32-sector requests. `sector` is
+                            // the number of completely streamed sectors.
+                            st <= ({16'd0, sector} < NUM_SECTORS) ?
+                                  ST_CTRL_KICK : ST_AXI_B_WAIT;
+`else
                             st <= ST_AXI_B_WAIT;
+`endif
                         end
                     end
                 end
@@ -1677,6 +1761,9 @@ module boot_fsm #(
                     end
                     if (!burst_active && word_fifo_empty &&
                         !m_axi_awvalid && !m_axi_wvalid) begin
+`ifdef TQTT_NATIVE_SD
+                        sector <= 16'd0;
+`endif
                         st <= ST_CTRL_KICK;
                     end
                 end
