@@ -101,3 +101,13 @@ currently running the JTAG-loaded image. In that working JTAG state,
 and HDMI I²C finished; `vio_boot_video=0x38` shows HDMI clock lock and no boot
 error. Capture these probes after the next flash boot to locate the stalled
 stage before reloading SRAM.
+
+The owner observed all four status LEDs dark and the fan at full speed in the
+failed flash-boot state. That is consistent with a clock/reset or early boot
+failure: the LEDs indicate DDR calibration, SD activity, ROM load, and HDMI
+clock lock, while the fan's PWM output deliberately releases to full speed
+when the fabric MMCM is unlocked. It is also consistent with the board still
+running the SPI-over-JTAG programming bridge before a successful FPGA reboot.
+The previous attach did **not** record VIO reset/boot probes in that failed
+state, so these observations do not yet distinguish those cases. Read those
+probes before any JTAG SRAM reload on the next attempt.
