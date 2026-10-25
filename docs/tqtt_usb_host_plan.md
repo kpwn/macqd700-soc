@@ -117,6 +117,9 @@ FIFO, including a zero report when the host disconnects. The
 across the two clocks. The ADB injector now has a ready/valid USB keyboard
 input; MMIO wins a same-cycle collision, and the USB event waits until the
 keyboard FIFO has room including its registered in-flight pulse.
-`tb-adb-inject` covers both cases. The full SoC ties this port off until a
-physical USB host is wired and validated; hardware enumeration and
-Mac-visible USB typing remain pending.
+`tb-adb-inject` covers both cases. The mouse path now crosses complete
+button/movement reports into the peripheral clock, suppresses idle reports,
+and releases a held button on disconnect. `tb-usb-hid-adb-mouse-cdc` and
+`tb-adb-inject` cover the mouse clock crossing and its MMIO collision.
+The full SoC ties the USB ports off until a physical USB host is wired and
+validated; hardware enumeration and Mac-visible USB input remain pending.

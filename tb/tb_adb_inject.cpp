@@ -56,6 +56,8 @@ static void reset() {
     dut->rst = 1;
     dut->pb_addr = 0; dut->pb_wdata = 0; dut->pb_wr = 0; dut->pb_rd = 0;
     dut->usb_kc_valid = 0; dut->usb_kc_byte = 0;
+    dut->usb_mouse_valid = 0; dut->usb_mouse_button_valid = 0;
+    dut->usb_mouse_button = 0; dut->usb_mouse_dx = 0; dut->usb_mouse_dy = 0;
     dut->dev_cmd_valid = 0; dut->dev_cmd_addr = 0; dut->dev_cmd_op = 0;
     dut->dev_listen_valid = 0; dut->dev_listen_b0 = 0; dut->dev_listen_b1 = 0;
     for (int i = 0; i < 4; i++) tick();
@@ -351,6 +353,45 @@ static bool test_usb_reserves_inflight_slot() {
     return true;
 }
 
+static bool test_usb_mouse_and_mmio_collision() {
+    reset();
+    dut->usb_mouse_valid = 1;
+    dut->usb_mouse_button_valid = 1;
+    dut->usb_mouse_button = 1;
+    dut->usb_mouse_dx = 10;
+    dut->usb_mouse_dy = static_cast<uint8_t>(-5);
+    dut->pb_addr = OFF_MOUSE_DX_W;
+    dut->pb_wdata = 3;
+    dut->pb_wr = 1;
+    dut->eval();
+    CHECK_EQ("USB mouse waits for MMIO", dut->usb_mouse_ready, 0);
+    tick();
+    dut->pb_wr = 0;
+    dut->eval();
+    CHECK_EQ("USB mouse ready after MMIO", dut->usb_mouse_ready, 1);
+    tick();
+    dut->usb_mouse_valid = 0;
+    tick(); tick();
+    TalkResult r = talk(ADDR_MOUSE, OP_TALK_R0);
+    CHECK_TRUE("mouse collision event delivered", r.valid);
+    CHECK_EQ("mouse pressed, dy -5", r.b0, 0x7b);
+    CHECK_EQ("mouse dx 3 plus 10", r.b1, 0x8d);
+
+    dut->usb_mouse_valid = 1;
+    dut->usb_mouse_button_valid = 1;
+    dut->usb_mouse_button = 0;
+    dut->usb_mouse_dx = 0;
+    dut->usb_mouse_dy = 0;
+    tick();
+    dut->usb_mouse_valid = 0;
+    tick(); tick();
+    r = talk(ADDR_MOUSE, OP_TALK_R0);
+    CHECK_TRUE("mouse release event delivered", r.valid);
+    CHECK_EQ("mouse released, dy zero", r.b0, 0x80);
+    CHECK_EQ("mouse released, dx zero", r.b1, 0x80);
+    return true;
+}
+
 #define RUN(t) do { \
     printf("%-40s ", #t); fflush(stdout); \
     if (t()) { printf("PASS\n"); n_pass++; } \
@@ -374,6 +415,7 @@ int main(int argc, char** argv) {
     RUN(test_flush_clears_pending);
     RUN(test_usb_and_mmio_collision);
     RUN(test_usb_reserves_inflight_slot);
+    RUN(test_usb_mouse_and_mmio_collision);
 
     printf("\n%d/%d scenarios passed.\n", n_pass, n_pass + n_fail);
     delete dut;

@@ -57,6 +57,12 @@ module adb_inject (
     input  wire        usb_kc_valid,
     input  wire [7:0]  usb_kc_byte,
     output wire        usb_kc_ready,
+    input  wire        usb_mouse_valid,
+    input  wire        usb_mouse_button_valid,
+    input  wire        usb_mouse_button,
+    input  wire signed [7:0] usb_mouse_dx,
+    input  wire signed [7:0] usb_mouse_dy,
+    output wire        usb_mouse_ready,
 
     // To adb_keyboard.inj_*
     output reg         inj_kc_valid,
@@ -88,12 +94,17 @@ module adb_inject (
 
     wire pb_kbd_write = pb_wr &&
                         (pb_addr == ADBINJ_KBD_ENQ || pb_addr == ADBINJ_KBD_ENQ_W);
+    wire pb_mouse_write = pb_wr &&
+                          (pb_addr == ADBINJ_MOUSE_BTN || pb_addr == ADBINJ_MOUSE_DX ||
+                           pb_addr == ADBINJ_MOUSE_DY || pb_addr == ADBINJ_MOUSE_BTN_W ||
+                           pb_addr == ADBINJ_MOUSE_DX_W || pb_addr == ADBINJ_MOUSE_DY_W);
     wire [5:0] kbd_count = kbd_status[6:1];
     // inj_kc_valid is registered here, so it occupies a FIFO slot at the
     // next edge even while the device's status still shows the old count.
     wire usb_has_slot = !kbd_status[7] &&
                         (kbd_count < 6'd15 || !inj_kc_valid);
     assign usb_kc_ready = !rst && !pb_kbd_write && usb_has_slot;
+    assign usb_mouse_ready = !rst && !pb_mouse_write;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -118,6 +129,14 @@ module adb_inject (
             if (usb_kc_valid && usb_kc_ready) begin
                 inj_kc_byte  <= usb_kc_byte;
                 inj_kc_valid <= 1'b1;
+            end
+            if (usb_mouse_valid && usb_mouse_ready) begin
+                inj_btn_state <= usb_mouse_button;
+                inj_btn_valid <= usb_mouse_button_valid;
+                inj_dx <= usb_mouse_dx;
+                inj_dx_valid <= usb_mouse_dx != 0;
+                inj_dy <= usb_mouse_dy;
+                inj_dy_valid <= usb_mouse_dy != 0;
             end
 
             if (pb_wr) begin
