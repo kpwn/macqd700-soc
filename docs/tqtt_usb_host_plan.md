@@ -110,5 +110,9 @@ The report-to-ADB keyboard converter now lives in
 emits make/break events with a ready/valid handshake, releases held keys on
 disconnect, ignores rollover reports, and avoids duplicate key events. The
 `tb-usb-hid-adb-keyboard` regression covers those behaviors and backpressure.
-It is not yet clock-crossed from the 60 MHz host or connected to the Mac ADB
-injector; hardware enumeration and Mac-visible USB typing remain pending.
+`usb_hid_adb_keyboard_cdc.v` now carries complete reports from the 60 MHz
+USB domain to the 50 MHz peripheral domain through the existing asynchronous
+FIFO, including a zero report when the host disconnects. The
+`tb-usb-hid-adb-keyboard-cdc` regression checks report order and key release
+across the two clocks. The path is not yet connected to the Mac ADB injector;
+hardware enumeration and Mac-visible USB typing remain pending.
