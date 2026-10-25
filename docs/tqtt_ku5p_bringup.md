@@ -2,9 +2,10 @@
 
 This board uses the same `xcku5p-ffvb676-2-i` FPGA as the RK target, but its
 clock, DDR4, SD, Ethernet, and video wiring differ. `BOARD=rk` remains the
-default. `BOARD=tqtt` now selects the full Mac SoC integration; its hardware
-boot and 200 MHz timing closure remain in progress. The standalone SD/CRC
-image is still available for board diagnostics.
+default. `BOARD=tqtt` selects the full Mac SoC integration. The 200 MHz image
+boots Mac OS and runs from verified SPI flash; final 200 MHz timing closure and
+unattended power-on boot remain open. The standalone SD/CRC image is still
+available for board diagnostics.
 
 ## Board direction
 
@@ -196,16 +197,18 @@ test, and the capture feed resumed.
 
 ## Full SoC integration in progress
 
-`BOARD=tqtt` now selects the TQTT 1 GiB DDR4 MIG, 8-bit GMII Taxi MAC,
-direct TMDS pins, SD SPI, UART2, LEDs, and fan. The 50 MHz E18 oscillator
+`BOARD=tqtt` selects the TQTT 1 GiB DDR4 MIG, 8-bit GMII Taxi MAC,
+direct TMDS pins, native four-bit SD, UART2, LEDs, and fan. The native SD
+controller negotiates 50 MHz High Speed by default; set `TQTT_NATIVE_SD=0`
+for the legacy SPI diagnostic path or `TQTT_NATIVE_SD_HS=0` for native 25 MHz.
+The 50 MHz E18 oscillator
 drives one fabric MMCM that produces a 200 MHz core clock, 50 MHz peripheral
 clock, 100 MHz video reference, and 125 MHz GMII transmit clock. The 100 MHz
 T24/U24 differential clock remains dedicated to MIG. The existing Mac scanout
 runs at 720p60 and feeds the ASC-to-HDMI transmitter by default. The
-full-image HDMI audio path has routed and been programmed at 100 MHz, and
-its video output has been captured through Mac OS boot to Finder. ASC audio
-playback remains to be checked with an audible Mac sound event. The standalone
-48 kHz audio probe remains available.
+full-image HDMI audio path has been captured through Mac OS boot to Finder.
+ASC sound and Sound control-panel alerts were validated on the full image;
+the standalone 48 kHz audio probe remains available.
 
 The RK physical DDR layout reserves its ROM and framebuffer above the first
 1 GiB. That would wrap on TQTT's 30-bit MIG AXI address bus and corrupt RAM.

@@ -3377,8 +3377,8 @@ CPU_DEBUG_PROFILE ?= full
 BOARD ?= rk
 TQTT_HDMI_AUDIO ?= $(if $(filter tqtt,$(BOARD)),1,0)
 TQTT_FAN_AUTO ?= $(if $(filter tqtt,$(BOARD)),1,0)
-TQTT_NATIVE_SD ?= 0
-TQTT_NATIVE_SD_HS ?= 0
+TQTT_NATIVE_SD ?= $(if $(filter tqtt,$(BOARD)),1,0)
+TQTT_NATIVE_SD_HS ?= $(TQTT_NATIVE_SD)
 TQTT_USB_HOST ?= 0
 ifneq ($(filter $(BOARD),rk tqtt),$(BOARD))
 $(error BOARD must be rk or tqtt, got '$(BOARD)')
@@ -3957,8 +3957,8 @@ fpga-tqtt-usb-host-probe-bitstream:
 	flock -n -E 75 $(VIVADO_LOCK) -c '$(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_usb_host_probe.tcl -tclargs $(TQTT_USB_HOST_PROBE_BUILD_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — TQTT USB host probe pending"; fi; exit $$status; }
 
-# Board-selectable full Mac build. Keep RK as the default until this image
-# passes boot, storage, video, and network checks on the TQTT board.
+# Board-selectable full Mac build. Keep RK as the default until TQTT meets
+# 200 MHz timing and unattended power-on boot is verified.
 .PHONY: check-tqtt-ddr-map tqtt-full tqtt-full-100
 tqtt-full tqtt-full-100: BOARD=tqtt
 check-tqtt-ddr-map:
@@ -3972,7 +3972,7 @@ tqtt-full: check-tqtt-ddr-map
 	$(MAKE) tqtt-ddr4-mig
 	$(MAKE) BOARD=tqtt TARGET_FREQ_MHZ=200 CORE_CLK_HZ=200000000 CORE_MMCM=1 \
 	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced TQTT_NATIVE_SD=$(TQTT_NATIVE_SD) \
-	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,)$(if $(filter 1,$(TQTT_FAN_AUTO)),_fan_auto,)$(if $(filter 1,$(TQTT_NATIVE_SD)),_native_sd,) impl-split
+	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,)$(if $(filter 1,$(TQTT_FAN_AUTO)),_fan_auto,)$(if $(filter 1,$(TQTT_NATIVE_SD)),_native_sd,)$(if $(filter 1,$(TQTT_NATIVE_SD_HS)),_hs,) impl-split
 
 .PHONY: test-tqtt-fan-thermal
 test-tqtt-fan-thermal:
@@ -3988,7 +3988,7 @@ tqtt-full-100: check-tqtt-ddr-map
 	$(MAKE) tqtt-ddr4-mig
 	$(MAKE) BOARD=tqtt TARGET_FREQ_MHZ=100 CORE_CLK_HZ=100000000 CORE_MMCM=1 \
 	  USE_REAL_MIG=1 CPU_DEBUG_PROFILE=reduced TQTT_NATIVE_SD=$(TQTT_NATIVE_SD) \
-	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt_100$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,)$(if $(filter 1,$(TQTT_FAN_AUTO)),_fan_auto,)$(if $(filter 1,$(TQTT_NATIVE_SD)),_native_sd,) impl-split
+	  VIVADO_IMPL_DIR=$(BUILD_DIR)/vivado_tqtt_100$(if $(filter 1,$(TQTT_HDMI_AUDIO)),_hdmi_audio,)$(if $(filter 1,$(TQTT_FAN_AUTO)),_fan_auto,)$(if $(filter 1,$(TQTT_NATIVE_SD)),_native_sd,)$(if $(filter 1,$(TQTT_NATIVE_SD_HS)),_hs,) impl-split
 
 .PHONY: fpga-100mhz-jtag-bitstream
 fpga-100mhz-jtag-bitstream:

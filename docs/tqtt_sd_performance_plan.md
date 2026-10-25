@@ -19,9 +19,16 @@ a faster FPGA SD clock domain and read-only CRC testing across this card
 before any write test. UHS-II's additional contacts and SD Express's PCIe
 interface are absent. Do not claim those modes from the card label.
 
-## Current implementation and measured problem
+## Current status and historical baseline
 
-The full Mac uses one-bit SPI. At a 200 MHz core clock the SCSI transport's
+The current TQTT full build defaults to native four-bit SD with negotiated
+50 MHz High Speed. The flash-booted 200 MHz Mac ran Speedometer 4.02 at Disk
+4.279, duplicated and launched an application in Finder, and showed zero SD
+errors after 2,736 SCSI-to-SD completions. The tests and remaining integrity
+work are recorded below. `TQTT_NATIVE_SD=0` retains the old SPI path for
+diagnostics, and `TQTT_NATIVE_SD_HS=0` selects native 25 MHz.
+
+The earlier full Mac used one-bit SPI. At a 200 MHz core clock the SCSI transport's
 `HS_HALF=4` produces a 25 MHz SD clock, or 3.125 MB/s raw bus capacity.
 The boot transfer also uses 25 MHz. The 50 MHz SCSI setting had produced CRC
 failures on the earlier board/card path, so the current RTL conservatively
