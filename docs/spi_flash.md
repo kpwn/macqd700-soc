@@ -70,13 +70,14 @@ The tested board reported FPGA IDCODE `0x04a62093` and Micron flash JEDEC
 flash named in the available schematic. Check that the entire bitstream fits
 the detected device; the tested image ended at `0x00ec0000`.
 
-**Readback verification does not prove a flash boot.** On 2026-10-25, the
-verified flash write left FPGA `DONE=0`; `openFPGALoader -r` did not bring it
-up. After restoring `hw_server`, Vivado's `boot_hw_device [current_hw_device]`
-completed after about 50 seconds with `DONE=1`. Reattach the REPL with
-`JTAG_REPL_NO_PROGRAM=1` and the matching `.ltx`, then run `refresh` to bind
-the debug cores and check `build-id`, `perf live`, and video. Do not use a
-normal SRAM programming attach when verifying flash boot.
+**Readback verification does not prove a flash boot.** Inspect `DONE`, `EOS`,
+and the expected debug cores after programming. The older image below needed
+Vivado's `boot_hw_device [current_hw_device]` to start; the later compressed
+image started without it. Issue `boot_hw_device` only if the target remains
+unconfigured. Reattach the REPL with `JTAG_REPL_NO_PROGRAM=1` and the matching
+`.ltx`, then run `refresh` to bind the debug cores and check `build-id`, vHDD,
+SD status, and video. Do not use a normal SRAM programming attach when
+verifying flash boot.
 
 The tested 200 MHz TQTT image had SHA-256
 `6ad31b3e181ee0eba1c8037aa0854b395134a620a023b6d784d6726622970db5`.
@@ -141,13 +142,12 @@ this small-miss image.
 `openFPGALoader -c digilent_ad --ftdi-serial 210251A08870 --freq 6000000
 --fpga-part xcku5p-ffvb676 -f --verify` erased, wrote, and read back the
 entire image successfully on the detected Micron `0x20bb18` 128 Mbit flash.
-**Immediately after the loader exited, the Mac design was not configured.**
+**Immediately after the loader exited, this Mac image was not configured.**
 Vivado read `REGISTER.CONFIG_STATUS=0x10801904`: `DONE_PIN=0`, `EOS=0`,
 `GWE=0`, with zero JTAG AXI and VIO cores. The capture server was receiving
 fresh black frames. The loader had used its SPI-over-JTAG bridge, and verified
-flash contents alone had not started the target FPGA image. This explains why
-a naive flash write appears to leave the board dead despite successful
-verification; it is a missing configuration boot step, not evidence of bad
+flash contents alone had not started this target FPGA image. In this case,
+the dark board indicated a missing configuration boot step rather than bad
 flash bytes.
 
 Vivado `boot_hw_device [current_hw_device]` then reported `DONE=HIGH` after
@@ -187,6 +187,24 @@ zero errors. Its blank `.bit` shrank from 15,431,259 to 12,690,253 bytes.
 `/var/tmp/tqtt_c96_waitfix_200_bootopt/vivado/fpga_top.local.bit` (12,720,849
 bytes, SHA-256
 `1c57d1e2903f0aa5b8780169b40fbc7fa054be32540df482f0451e2cae08b931`).
-This candidate has not yet been loaded or flashed. The configuration settings
-may shorten flash boot, but a flash write still needs a separate reboot of
-the FPGA target image; they do not make readback verification a boot test.
+This file was loaded over JTAG first and reached Mac OS with vHDD IDENT
+`0x5D0D0001`, native SD High Speed, zero SD errors, and no framebuffer misses.
+
+The same file was then written to TQTT SPI flash using the command above.
+The detected Micron `0x20bb18` device was erased, programmed through
+`0x00c30000`, and fully read back with `--verify`; openFPGALoader exited
+successfully. Without a separate `boot_hw_device` command or SRAM load, a
+fresh Vivado session read `REGISTER.CONFIG_STATUS=0x109079fc`, `DONE_PIN=1`,
+`EOS=1`, `GWE=1`, one JTAG AXI core, and one VIO core. The REPL attached with
+`JTAG_REPL_NO_PROGRAM=1` and read build ID `0x8D3A363A`, vHDD IDENT
+`0x5D0D0001`, 4,194,240 SD blocks, native High Speed active, 2,187 SCSI-to-SD
+completions, zero SD errors, zero CHECK CONDITIONs, and no vHDD watchdog fire.
+Video was live at 640x480 with matching framebuffer requests/responses and no
+misses. The fan was in automatic control at about 34 °C. HDMI capture showed
+the [Finder desktop](evidence/2026-10-25-tqtt-200mhz-compressed-flash-auto-boot.jpg)
+after dismissing the normal improper-shutdown dialog.
+
+This proves a successful configuration start after flash programming for this
+image. A physical power-cycle boot is still untested. Since compression,
+SPI bus width, configuration mode, and rate changed together, this comparison
+does not identify which setting enabled automatic startup.
