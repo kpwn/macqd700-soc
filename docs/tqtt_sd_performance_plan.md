@@ -121,7 +121,9 @@ an isolated write-path reproduction and HFS consistency check.
    using it, first load the native probe into FPGA SRAM, then reseat the
    card. Run the host script with `NATIVE_SD_NO_PROGRAM=1` to attach to that
    already loaded probe; it will initialize the reseated card and perform
-   read-only transfers.
+   read-only transfers. After native-mode testing, power-cycle the card
+   again before booting the current SPI-mode Mac image; reloading the FPGA
+   alone does not return a native-mode card to SPI mode.
 
    For full-Mac integration, TQTT already has a 100 MHz `video_ref_clk`
    from its fabric MMCM at both 100 and 200 MHz CPU settings. That can clock
