@@ -667,3 +667,22 @@ relative benchmark improvement over the reference. Relative to the earlier
 higher; the earlier value is rounded, so this ratio is approximate. It is
 not a bytes/s measurement and does not replace a post-benchmark card
 readback or an independently timed sustained-transfer workload.
+
+The integrated 200 MHz TQTT follow-up image completed on 2026-10-25 at
+`/var/tmp/tqtt_c96_waitfix_200/vivado/fpga_top.local.bit` (local ADB ROM;
+SHA-256
+`806657f10d76dc78518ed1f3aa1ce340a7deecadc8b709f91fad24dbb025f5df`).
+It uses CPU source `4736fadf`, reduced debug, the throughput-v2 IPC profile,
+50 MHz peripheral bus, native four-bit SD with negotiated 50 MHz High Speed,
+HDMI audio, automatic fan, and Ethernet. Final routed WNS/WHS were
+-0.052/+0.003 ns; 174 setup endpoints in the 200 MHz core group missed
+timing, while hold, HDMI, peripheral, and Ethernet timing passed. The user
+approved a JTAG trial of the 52 ps setup miss. The ADB-patched image loaded
+over JTAG as build ID `0x8D3A363A`; reset and HDMI probes read `0x2e` and
+`0x38`, vHDD IDENT read `0x5D0D0001`, the CPU retired instructions, and
+DAFB video was live at 640x480 with no framebuffer-reader misses. The native
+SD High Speed probe read 1, with 2,498 SCSI completions, zero SD errors,
+zero CHECK CONDITIONs, and no medium-not-present indication. This is a
+boot and basic storage-health check; a Mac-visible disk benchmark, large
+file copy/readback, HDMI audio check, and longer 200 MHz stability run are
+still required. SPI flash remains on the verified 100 MHz image.
