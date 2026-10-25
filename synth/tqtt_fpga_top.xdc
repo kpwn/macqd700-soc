@@ -2,6 +2,15 @@
 # TQTT KU5P DDR4 package pins, from vendor examples/06-ddr4-sdram/pin.txt.
 # The reference clock is 100 MHz. Differential mate pins are paired by Vivado.
 
+# Boot from the board's configuration SPI flash.  The standalone TQTT probes
+# already use SPIx4 at 51 MHz; keep the full Mac image on the same qualified
+# configuration settings.  Compression reduces the time spent in configuration
+# before the Mac design can drive HDMI, LEDs, and the fan.
+set_property BITSTREAM.GENERAL.COMPRESS TRUE [current_design]
+set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
+set_property CONFIG_MODE SPIx4 [current_design]
+set_property BITSTREAM.CONFIG.CONFIGRATE 51.0 [current_design]
+
 set_property IOSTANDARD DIFF_SSTL12_DCI [get_ports {ddr4_ck_t[0]}]
 set_property IOSTANDARD LVCMOS12 [get_ports tqtt_reset]
 set_property PACKAGE_PIN P19 [get_ports tqtt_reset]

@@ -162,3 +162,12 @@ is preserved in this repository. No SRAM bitstream was loaded during this
 verification. A physical power-cycle boot remains untested, and the earlier
 100 MHz attempt that reached DONE but lacked vHDD IDENT remains a separate
 unresolved observation.
+
+The full TQTT XDC used for this image did not set the configuration SPI bus
+width, configuration clock rate, or bitstream compression, although the
+standalone TQTT probes did. Its 15.4 MB `.bit` and roughly 50-second Vivado
+`boot_hw_device` time are consistent with a slow default configuration path;
+the observed duration alone does not prove the exact flash clock. The full
+build now specifies SPIx4, 51 MHz configuration rate, and compression in
+`synth/tqtt_fpga_top.xdc`, matching the standalone probes. That change is for
+future generated images and has not yet been tested by a physical power cycle.
