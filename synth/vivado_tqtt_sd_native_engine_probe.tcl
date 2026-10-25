@@ -2,6 +2,11 @@
 set output_dir [lindex $argv 0]
 set proj_root [file normalize [file dirname [info script]]/..]
 set part xcku5p-ffvb676-2-i
+set high_speed 0
+if {[info exists ::env(TQTT_NATIVE_SD_HS)]} {
+    set high_speed $::env(TQTT_NATIVE_SD_HS)
+}
+if {$high_speed ni {0 1}} {error "TQTT_NATIVE_SD_HS must be 0 or 1"}
 set_param general.maxThreads 16
 file mkdir $output_dir
 file mkdir $output_dir/ip
@@ -39,14 +44,16 @@ read_verilog $proj_root/third_party/litesdcard/litesdcard_core.v
 foreach source {
     sd_native_csr_master.v sd_native_command.v sd_native_init.v
     sd_native_init_controller.v sd_native_block_engine.v
-    sd_native_backend.v
+    sd_native_hs_switch.v sd_native_backend.v
     tqtt_sd_native_engine_probe.v
 } {
     read_verilog $proj_root/rtl/soc/$source
 }
 read_ip $ip_dir/native_sd_vio/native_sd_vio.xci
 read_xdc $proj_root/synth/tqtt_sd_native_probe.xdc
-synth_design -top tqtt_sd_native_engine_probe -part $part
+set synth_args [list -top tqtt_sd_native_engine_probe -part $part]
+if {$high_speed} {lappend synth_args -verilog_define TQTT_NATIVE_SD_HS}
+synth_design {*}$synth_args
 write_checkpoint -force $output_dir/checkpoints/synth.dcp
 opt_design
 place_design
@@ -62,5 +69,6 @@ puts $f "board=tqtt"
 puts $f "top=tqtt_sd_native_engine_probe"
 puts $f "core=LiteSDCard-2024.12"
 puts $f "clock_hz=100000000"
+puts $f "high_speed=$high_speed"
 puts $f "generated_utc=[clock format [clock seconds] -gmt 1 -format {%Y-%m-%dT%H:%M:%SZ}]"
 close $f

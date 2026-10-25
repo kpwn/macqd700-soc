@@ -16,7 +16,7 @@ module tqtt_sd_native_engine_probe (
 
     wire [31:0] vio_lba, vio_control;
     wire rst = (por != 0) || vio_control[7];
-    wire init_ready, init_error;
+    wire init_ready, init_error, high_speed_active;
     wire [31:0] card_num_lbas, rca;
     wire [4:0] init_phase;
     reg [31:0] lba_q;
@@ -28,8 +28,14 @@ module tqtt_sd_native_engine_probe (
     wire [7:0] block_rd_data;
     wire [15:0] block_dma_words;
     wire [3:0] block_cmd_event;
-    sd_native_backend u_backend (
+`ifdef TQTT_NATIVE_SD_HS
+    localparam integer HIGH_SPEED = 1;
+`else
+    localparam integer HIGH_SPEED = 0;
+`endif
+    sd_native_backend #(.HIGH_SPEED(HIGH_SPEED)) u_backend (
         .clk(clk), .rst(rst), .ready(init_ready), .init_error(init_error),
+        .high_speed_active(high_speed_active),
         .card_num_lbas(card_num_lbas), .rca(rca), .init_phase(init_phase),
         .cmd_type(count_q == 1 ? 3'd1 : 3'd2),
         .lba(lba_q), .block_count({10'b0, count_q}), .go(block_go),
@@ -103,7 +109,9 @@ module tqtt_sd_native_engine_probe (
             end
         end
     end
-    wire [31:0] status = {byte_count, 7'b0, init_phase, init_error,
+    // Bit 10 reports a confirmed CMD6 High Speed switch; all earlier status
+    // fields retain their positions for the existing read script.
+    wire [31:0] status = {byte_count, 6'b0, high_speed_active, init_phase, init_error,
                           init_ready, block_busy, last_error, done_toggle};
     native_sd_vio u_vio (
         .clk(clk),

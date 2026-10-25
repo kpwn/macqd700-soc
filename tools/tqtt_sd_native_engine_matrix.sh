@@ -13,8 +13,10 @@ fi
 mkdir -p "$out_dir"
 out_dir=$(cd "$out_dir" && pwd)
 
-bit="$repo_dir/build/tqtt_sd_native_engine_probe/tqtt_sd_native_engine_probe.bit"
-ltx="$repo_dir/build/tqtt_sd_native_engine_probe/tqtt_sd_native_engine_probe.ltx"
+engine_dir=${NATIVE_SD_ENGINE_BUILD_DIR:-$repo_dir/build/tqtt_sd_native_engine_probe}
+[[ $engine_dir = /* ]] || engine_dir="$repo_dir/$engine_dir"
+bit="$engine_dir/tqtt_sd_native_engine_probe.bit"
+ltx="$engine_dir/tqtt_sd_native_engine_probe.ltx"
 [[ -r $bit && -r $ltx ]] || { echo "Native engine probe bit/LTX missing" >&2; exit 2; }
 
 # ROM, first HDD sectors, a previously changed filesystem region, and widely
