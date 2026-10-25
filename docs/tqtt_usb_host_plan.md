@@ -154,8 +154,11 @@ shows WNS −0.100 ns across 350 failing setup endpoints, WHS +0.007 ns with
 zero hold failures, and no pulse-width failures. The worst setup path is
 inside the CPU, from `LsEuPlugin_logic_alignedSendPtr_reg[0]` to a D-cache
 BRAM address input. The routed checkpoint is
-`/var/tmp/tqtt_usb_full_200_impl/checkpoints/route.dcp`. This does not meet
-the 200 MHz timing gate and has not been loaded on hardware. No physical
-USB-A front end is wired to PMOD0 yet. The next hardware gate is a standalone
+`/var/tmp/tqtt_usb_full_200_impl/checkpoints/route.dcp`. Bitstream generation
+also completed with zero critical warnings or errors; the offline blank image
+is `/var/tmp/tqtt_usb_full_200_impl/fpga_top.blank.bit` (SHA-256
+`c2ce1e1f46e14a55fd42b967f5796e06fc8db69ccb4734cda24c4cb36a5eea9b`).
+This does not meet the 200 MHz timing gate and has not been loaded on hardware.
+No physical USB-A front end is wired to PMOD0 yet. The next hardware gate is a standalone
 host probe with a known keyboard or mouse, followed by a timing-clean
 full-SoC image and Mac input.
