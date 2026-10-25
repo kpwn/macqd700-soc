@@ -5529,6 +5529,24 @@ $(ASC_BUILD)/Vasc: $(ASC_RTL) $(TB_DIR)/tb_asc.cpp
 		$(TB_DIR)/tb_asc.cpp \
 		-CFLAGS "-std=c++17"
 
+# Production FIFO cadence and per-channel sample-rate conversion.  A 1 MHz
+# clock keeps the fractional 44.1 kHz test short without changing the ratio.
+ASC_FIFO_RATE_BUILD := $(BUILD_DIR)/asc_fifo_rate
+.PHONY: tb-asc-fifo-rate
+tb-asc-fifo-rate: $(ASC_FIFO_RATE_BUILD)/Vasc
+	$(ASC_FIFO_RATE_BUILD)/Vasc
+
+$(ASC_FIFO_RATE_BUILD)/Vasc: $(ASC_RTL) $(TB_DIR)/tb_asc_fifo_rate.cpp
+	@mkdir -p $(ASC_FIFO_RATE_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Wno-WIDTHEXPAND -GPB_CLK_HZ=1000000 -GFIFO_SAMPLE_HZ=44100 \
+		-I$(RTL_DIR)/mac -I$(RTL_DIR) -Mdir $(ASC_FIFO_RATE_BUILD) \
+		--top-module asc $(ASC_RTL) $(TB_DIR)/tb_asc_fifo_rate.cpp \
+		-CFLAGS "-std=c++17"
+
 # ──────────────────────────────────────────────────────────────────────────────
 # ASC MAME-trace replay harness — drives the same Vasc model with a
 # bus-trace TSV captured from MAME via tools/mame_asc_capture.lua, and

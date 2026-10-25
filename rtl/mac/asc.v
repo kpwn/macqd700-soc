@@ -112,26 +112,25 @@
 //                        +0x828..0x82B phase[3], +0x82C..0x82F incr[3])
 //   +0xF00 .. +0xF01   FIFO A write-pointer   (RO live, hi/lo split)
 //   +0xF02 .. +0xF03   FIFO A read-pointer    (RO live, hi/lo split)
-//   +0xF04 .. +0xF05   FIFO A SRC step        (R/W; latched, SRC engine TBD)
+//   +0xF04 .. +0xF05   FIFO A SRC step        (R/W; 16.16 advance)
 //   +0xF06 .. +0xF07   FIFO A volume L/R      (R/W; latched, per-ch split TBD)
-//   +0xF08             FIFO A control         (R/W; latched, CD-XA mode bits)
+//   +0xF08             FIFO A control         (R/W; bit 7 enables SRC)
 //   +0xF09             FIFO A IRQ control    (bit 0=disable)
 //   +0xF10             FIFO A CD-XA decoder   (R/W; latched-stub)
 //   +0xF20 .. +0xF21   FIFO B write-pointer   (RO live, hi/lo split)
 //   +0xF22 .. +0xF23   FIFO B read-pointer    (RO live, hi/lo split)
-//   +0xF24 .. +0xF25   FIFO B SRC step        (R/W; latched, SRC engine TBD)
+//   +0xF24 .. +0xF25   FIFO B SRC step        (R/W; 16.16 advance)
 //   +0xF26 .. +0xF27   FIFO B volume L/R      (R/W; latched, per-ch split TBD)
-//   +0xF28             FIFO B control         (R/W; latched, CD-XA mode bits)
+//   +0xF28             FIFO B control         (R/W; bit 7 enables SRC)
 //   +0xF29             FIFO B IRQ control    (bit 0=disable)
 //   +0xF30             FIFO B CD-XA decoder   (R/W; latched-stub)
 //
 // Sample-rate clocking:
-//   A small counter decrements on `phi2_tick` pulses (nominally 1 MHz).
-//   The reload seed is RATE_DEFAULT (45 → 22.222 kHz at 1 MHz phi2,
-//   ≈ Sonora's hardwired 22.257 kHz).  Real Sonora has no programmable
-//   rate — writes to 0x808 are ignored — but the divider is
-//   reload-driven and runs at the default forever.  Each tick advances
-//   the FIFO read-pointer and latches the current output sample.
+//   The ROM wavetable uses the existing phi2 divider (~22.4 kHz).  The
+//   Q700 product integration sets FIFO_SAMPLE_HZ=44100 for the EASC FIFO
+//   stream; each channel's SRC register then controls byte consumption.
+//   The standalone legacy test leaves FIFO_SAMPLE_HZ=0 and shares the
+//   phi2 divider with the wavetable path.
 //
 // Sonora-specific quirks (vs first-generation ASC / EASC):
 //   - Mode register (0x801) is hardwired to FIFO; writes ignored,
@@ -203,7 +202,12 @@
 
 `default_nettype none
 
-module asc (
+module asc #(
+    parameter integer PB_CLK_HZ = 50_000_000,
+    // Zero retains the historical phi2 divider for standalone tests.
+    // The Q700 integration supplies EASC's 44.1 kHz FIFO output rate.
+    parameter integer FIFO_SAMPLE_HZ = 0
+) (
     input  wire        clk,
     input  wire        rst,
 
@@ -492,14 +496,15 @@ module asc (
     //
     // R_SRCA/B   — sample-rate-converter step value (16-bit big-endian
     //              fixed-point per asc.h, "0x7fff = step 0x8000 ≈ 22 kHz").
-    //              We don't have an SRC engine; latched-only.
+    //              When FIFO_CTRL[7] is set, each output tick advances
+    //              the accumulator and consumes a byte on carry.
     // R_VOLA/B_L/R — per-channel L/R volume on Sonora's stereo path.  We
     //              currently apply a single master volume_reg (0x806) to
     //              both halves; the per-channel split is deferred but
     //              the registers are software-visible.
-    // R_FIFOA/B_CTRL — bits[1:0] select CD-XA decode mode (0=PCM, 1=8:1,
-    //              2=4:1, 3=reserved); bit 7 enables CD-XA decode.  We
-    //              don't decode CD-XA, so this is latched-only too.
+    // R_FIFOA/B_CTRL — bit 7 enables SRC; bits[1:0] select CD-XA decode
+    //              mode (0=PCM, 1=2:1, 2=4:1, 3=8:1).  CD-XA decode is
+    //              deferred; those mode bits are latched only.
     // R_CDXA_A/B — real Sonora performs CD-XA ADPCM decode through this
     //              register; we stub as a single latched byte (interface-
     //              compatible, decode side-effect deferred).
@@ -547,14 +552,32 @@ module asc (
     reg [7:0] rate_cnt;
 
     wire [7:0] rate_seed = (rate_reg == 8'd0) ? RATE_DEFAULT : rate_reg;
-    wire       sample_tick = phi2_tick && sample_active && (rate_cnt <= 8'd1);
+    wire       wave_tick = phi2_tick && wave_active && (rate_cnt <= 8'd1);
+    reg [31:0] fifo_rate_phase;
+    wire [32:0] fifo_rate_sum = {1'b0, fifo_rate_phase} + FIFO_SAMPLE_HZ;
+    wire fifo_rate_tick = (FIFO_SAMPLE_HZ != 0)
+                        && (fifo_rate_sum >= PB_CLK_HZ);
+    wire sample_tick = wave_tick || (fifo_active
+                       && ((FIFO_SAMPLE_HZ == 0)
+                           ? (phi2_tick && rate_cnt <= 8'd1)
+                           : fifo_rate_tick));
 
-    // EASC's sample rate is hardwired (~22.257 kHz on real silicon).
-    // We model it with a phi2-clocked divider seeded from RATE_DEFAULT
-    // (35 → Q700 phi2 783_360 / 35 ≈ 22_381 Hz).  The Q700 ROM never
-    // writes 0x808, but the unit-tb does — writes to 0x808 reload
-    // rate_cnt immediately so the next sample fires after the chosen
-    // count.  Both FIFO and WAVE mode share the same divider.
+    // Keep the fractional FIFO clock running across mode changes, as the
+    // physical audio stream does.  This produces 44,100 ticks per second
+    // without a fractional divider or a separate clock domain.
+    always @(posedge clk) begin
+        if (rst)
+            fifo_rate_phase <= 32'd0;
+        else if (FIFO_SAMPLE_HZ != 0) begin
+            if (fifo_rate_tick)
+                fifo_rate_phase <= fifo_rate_sum - PB_CLK_HZ;
+            else
+                fifo_rate_phase <= fifo_rate_sum[31:0];
+        end
+    end
+
+    // The ROM's wavetable path retains the established phi2 divider.
+    // Standalone tests also use it for FIFO unless FIFO_SAMPLE_HZ is set.
     always @(posedge clk) begin
         if (rst) begin
             rate_cnt <= RATE_DEFAULT;
@@ -590,10 +613,39 @@ module asc (
     wire fifo_clear_write = (pb_wr && pb_addr == 12'h803 && pb_wdata[7])
                           || easc_mode_toggle_write;
     // Gate pops on `fifo_active` so wave mode does not drain FIFO data.
-    wire fa_sample_pop = sample_tick && fifo_active && (fa_count > 11'd0);
+    reg [15:0] fa_src_accum, fb_src_accum;
+    reg fa_src_written, fb_src_written;
+    wire [16:0] fa_src_step = fa_src_written
+                            ? ({1'b0, r_srca_h, r_srca_l} + 17'd1) : 17'd0;
+    wire [16:0] fb_src_step = fb_src_written
+                            ? ({1'b0, r_srcb_h, r_srcb_l} + 17'd1) : 17'd0;
+    wire [16:0] fa_src_sum = {1'b0, fa_src_accum} + fa_src_step;
+    wire [16:0] fb_src_sum = {1'b0, fb_src_accum} + fb_src_step;
+    wire fa_src_advance = !r_fifoa_ctrl[7] || fa_src_sum[16];
+    wire fb_src_advance = !r_fifob_ctrl[7] || fb_src_sum[16];
+    always @(posedge clk) begin
+        if (rst) begin
+            fa_src_accum <= 16'd0;
+            fb_src_accum <= 16'd0;
+            fa_src_written <= 1'b0;
+            fb_src_written <= 1'b0;
+        end else begin
+            if (pb_wr && (pb_addr == 12'hF04 || pb_addr == 12'hF05))
+                fa_src_written <= 1'b1;
+            if (pb_wr && (pb_addr == 12'hF24 || pb_addr == 12'hF25))
+                fb_src_written <= 1'b1;
+            if (sample_tick && fifo_active) begin
+                if (r_fifoa_ctrl[7]) fa_src_accum <= fa_src_sum[15:0];
+                if (r_fifob_ctrl[7]) fb_src_accum <= fb_src_sum[15:0];
+            end
+        end
+    end
+    wire fa_sample_pop = sample_tick && fifo_active && fa_src_advance
+                       && (fa_count > 11'd0);
     // EASC/Sonora FIFO mode consumes both FIFO channels.  The channel
     // control stereo bit affects presentation, not whether FIFO B drains.
-    wire fb_sample_pop = sample_tick && fifo_active && (fb_count > 11'd0);
+    wire fb_sample_pop = sample_tick && fifo_active && fb_src_advance
+                       && (fb_count > 11'd0);
     // FIFO mode pushes at the write-pointer; cap saturates at 1024.
     wire fa_cpu_push = fifo_active && pb_wr && pb_addr[11:10] == 2'b00
                      && ((fa_count < 11'd1024) || fa_sample_pop);
@@ -1242,7 +1294,7 @@ module asc (
                 if (fa_sample_pop) begin
                     // sample_a_raw is loaded by the FIFO A port block.
                     fa_rp        <= fa_rp + 10'd1;
-                end else if (fifo_active) begin
+                end else if (fifo_active && fa_src_advance) begin
                     // Underflow: hold previous sample_a_raw (matches
                     // MAME's m_last_left = smpll where smpll = stale
                     // fifo[rdptr] = previous good byte).  Local sticky.
@@ -1254,7 +1306,7 @@ module asc (
                 if (fb_sample_pop) begin
                     // sample_b_raw is loaded by the FIFO B port block.
                     fb_rp        <= fb_rp + 10'd1;
-                end else if (fifo_active) begin
+                end else if (fifo_active && fb_src_advance) begin
                     fb_underflow_sticky <= 1'b1;
                 end
 
@@ -1303,29 +1355,29 @@ module asc (
                     // (asc.cpp:1490-1523 calls pop_fifo for each).
                     if (fifo_active) begin
                         // Channel A
-                        if (fa_count <= 11'h1ff) begin
+                        if (fa_src_advance && fa_count <= 11'h1ff) begin
                             fifostat[STAT_BIT_HALF_FULL_A] <= 1'b1;
                             if (!fa_irqen[0])
                                 irq_q <= 1'b1;
-                        end else begin
+                        end else if (fa_src_advance) begin
                             fifostat[STAT_BIT_HALF_FULL_A] <= 1'b0;
                         end
-                        if (fa_count == 11'h0)
+                        if (fa_src_advance && fa_count == 11'h0)
                             fifostat[STAT_BIT_EMPTY_OR_FULL_A] <= 1'b1;
-                        else
+                        else if (fa_src_advance)
                             fifostat[STAT_BIT_EMPTY_OR_FULL_A] <= 1'b0;
 
                         // Channel B
-                        if (fb_count <= 11'h1ff) begin
+                        if (fb_src_advance && fb_count <= 11'h1ff) begin
                             fifostat[STAT_BIT_HALF_FULL_B] <= 1'b1;
                             if (!fb_irqen[0])
                                 irq_q <= 1'b1;
-                        end else begin
+                        end else if (fb_src_advance) begin
                             fifostat[STAT_BIT_HALF_FULL_B] <= 1'b0;
                         end
-                        if (fb_count == 11'h0)
+                        if (fb_src_advance && fb_count == 11'h0)
                             fifostat[STAT_BIT_EMPTY_OR_FULL_B] <= 1'b1;
-                        else
+                        else if (fb_src_advance)
                             fifostat[STAT_BIT_EMPTY_OR_FULL_B] <= 1'b0;
                     end
                     // EASC has NO Sonora-style "playback-mode level
