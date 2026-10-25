@@ -1,5 +1,5 @@
 #!/bin/bash
-# scsi_sense_probe.sh — decode the widened vio_scsi_sd probe (97 bits).
+# scsi_sense_probe.sh — decode the widened vio_scsi_sd probe.
 #
 # Field map after the 2026-08-18 observability change (new fields appended
 # ABOVE the old ones, so every previously documented bit position is unchanged):
@@ -27,6 +27,8 @@ import sys
 h=sys.argv[1].strip(); v=int(h,16); bits=len(h)*4
 g=lambda hi,lo:(v>>lo)&((1<<(hi-lo+1))-1)
 print(f"  raw={h}  ({bits} bits)")
+if bits >= 188:
+    print(f"  native SD negotiated High Speed = {g(187,187)}")
 if bits >= 187:
     ok=g(130,130); blks=g(154,131); lba=g(186,155)
     print(f"  RANGE-CHECK INPUTS: chk_ok={ok}  xfer_blocks={blks}  xfer_lba={lba}")

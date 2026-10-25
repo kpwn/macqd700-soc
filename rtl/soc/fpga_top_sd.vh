@@ -433,6 +433,7 @@
 
     // core-side bridge → sd_ctrl request fields
     wire [2:0]  core_scsi_cmd_type;
+    wire        core_sd_high_speed_active = 1'b0;
     wire [31:0] core_scsi_lba;
     wire [15:0] core_scsi_block_count;
     wire        core_scsi_go;

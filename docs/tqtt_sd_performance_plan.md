@@ -282,7 +282,12 @@ an isolated write-path reproduction and HFS consistency check.
    Final WNS/WHS/WPWS were +0.020/+0.005/+0.053 ns, with zero failing
    endpoints and zero bitstream DRC errors. No 50 MHz card test or board load
    exists yet. The default remains 25 MHz until physical card integrity
-   tests pass.
+   tests pass. A later source change appends the actual negotiated High Speed
+   state as bit 187 of `vio_scsi_sd`, preserving all older bit positions;
+   `tools/scsi_sense_probe.sh` decodes it. That observability change passed
+   TQTT native-SD Verilator lint in both modes and TQTT Vivado RTL
+   elaboration. The bitstreams listed above predate that VIO change, so
+   they cannot report the new bit without a rebuild.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,

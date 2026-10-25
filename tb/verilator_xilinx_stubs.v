@@ -199,7 +199,7 @@ module debug_vio (
     input wire [31:0] probe_in7,
     input wire [31:0] probe_in8,
     input wire [67:0] probe_in9,
-    input wire [186:0] probe_in10,
+    input wire [187:0] probe_in10,
     input wire [47:0] probe_in11,
     input wire [95:0] probe_in12,
     input wire [159:0] probe_in13,

@@ -11,6 +11,7 @@ module sd_native_backend #(
     input  wire        rst,
     output wire        ready,
     output wire        init_error,
+    output wire        high_speed_active,
     output wire [31:0] card_num_lbas,
     output wire [31:0] rca,
     output wire [4:0]  init_phase,
@@ -60,7 +61,8 @@ module sd_native_backend #(
         .wb_sel(init_wb_sel), .wb_stb(init_wb_stb), .wb_we(init_wb_we)
     );
 
-    wire hs_done, hs_error, hs_session_active;
+    wire hs_done, hs_error, hs_session_active, hs_active;
+    assign high_speed_active = hs_active;
     wire [29:0] hs_wb_adr;
     wire [1:0] hs_wb_bte;
     wire [2:0] hs_wb_cti;
@@ -104,7 +106,7 @@ module sd_native_backend #(
     generate if (HIGH_SPEED != 0) begin : g_high_speed
         sd_native_hs_switch u_hs (
             .clk(clk), .rst(rst || !init_ready),
-            .done(hs_done), .error(hs_error), .high_speed_active(),
+            .done(hs_done), .error(hs_error), .high_speed_active(hs_active),
             .card_session_active(hs_session_active),
             .wb_ctrl_adr(hs_wb_adr), .wb_ctrl_bte(hs_wb_bte),
             .wb_ctrl_cti(hs_wb_cti), .wb_ctrl_cyc(hs_wb_cyc),
@@ -121,6 +123,7 @@ module sd_native_backend #(
     end else begin : g_default_speed
         assign hs_done = 1'b1;
         assign hs_error = 1'b0;
+        assign hs_active = 1'b0;
         assign hs_session_active = 1'b0;
         assign hs_wb_adr = 30'b0;
         assign hs_wb_bte = 2'b0;
