@@ -218,8 +218,14 @@ an isolated write-path reproduction and HFS consistency check.
    requests longer than the backend's 32-sector RAM window into consecutive
    commands while keeping one SCSI completion. Its test covers 65-sector
    reads and writes, a later-chunk failure, and invalid requests
-   (`make tb-sd-native-chunker`). These modules are not connected to the
-   full SoC yet. The negotiated 50 MHz CMD6
+   (`make tb-sd-native-chunker`). An experimental full-SoC TQTT source
+   variant now selects native pins and connects the backend through boot
+   and SCSI FIFO CDCs with `TQTT_NATIVE_SD=1`. It still needs Vivado
+   elaboration, hardware read/write integrity tests, and 200 MHz timing.
+   The SPI-only PRAM persistence and JTAG card writer are terminated in
+   this variant until their native equivalents exist; the default SPI
+   variant still has them. A reset guard defers controller reset while
+   an on-card command is active (`make tb-sd-native-reset`). The negotiated 50 MHz CMD6
    switch must wait until its 64-byte status can be checked through DMA.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.

@@ -47,7 +47,11 @@
     // needed.
     // ═══════════════════════════════════════════════════════════════════
     assign led[0] = ddr_cal_done;
+`ifdef TQTT_NATIVE_SD
+    assign led[1] = native_card_busy;
+`else
     assign led[1] = ~spi_cs_n_wire;
+`endif
     assign led[2] = boot_rom_loaded;
     assign led[3] = hdmi_mmcm_locked;
 

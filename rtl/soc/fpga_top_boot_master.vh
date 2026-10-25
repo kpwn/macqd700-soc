@@ -44,6 +44,20 @@
     wire        boot_spi_cs_n;
     wire        boot_spi_fast;
     wire        boot_spi_hs;
+`ifdef TQTT_NATIVE_SD
+    wire        boot_native_ready;
+    wire        boot_native_init_error;
+    wire [31:0] boot_native_card_lbas;
+    wire        boot_native_go;
+    wire [31:0] boot_native_lba;
+    wire [15:0] boot_native_block_count;
+    wire        boot_native_busy;
+    wire        boot_native_done;
+    wire        boot_native_error;
+    wire        boot_native_rd_valid;
+    wire [7:0]  boot_native_rd_data;
+    wire        boot_native_rd_ready;
+`endif
 
     wire [3:0]  boot_m_awid;
     wire [31:0] boot_m_awaddr;
@@ -206,6 +220,21 @@
         // standalone SD/CRC test harness drives these from VIO.
         .cfg_skip_cmd59(1'b0),
         .cfg_force_hs  (1'b0),
+
+`ifdef TQTT_NATIVE_SD
+        .native_ready(boot_native_ready),
+        .native_init_error(boot_native_init_error),
+        .native_card_lbas(boot_native_card_lbas),
+        .native_go(boot_native_go),
+        .native_lba(boot_native_lba),
+        .native_block_count(boot_native_block_count),
+        .native_busy(boot_native_busy),
+        .native_done(boot_native_done),
+        .native_error(boot_native_error),
+        .native_rd_valid(boot_native_rd_valid),
+        .native_rd_data(boot_native_rd_data),
+        .native_rd_ready(boot_native_rd_ready),
+`endif
 
         .spi_cmd_valid(boot_spi_cmd_valid),
         .spi_cmd_ready(boot_spi_cmd_ready),

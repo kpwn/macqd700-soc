@@ -555,6 +555,9 @@ if {$tqtt_hdmi_audio && $board ne "tqtt"} {error "TQTT_HDMI_AUDIO requires BOARD
 set tqtt_fan_auto [parse_int_env TQTT_FAN_AUTO 0]
 if {$tqtt_fan_auto ni {0 1}} {error "TQTT_FAN_AUTO must be 0 or 1"}
 if {$tqtt_fan_auto && $board ne "tqtt"} {error "TQTT_FAN_AUTO requires BOARD=tqtt"}
+set tqtt_native_sd [parse_int_env TQTT_NATIVE_SD 0]
+if {$tqtt_native_sd ni {0 1}} {error "TQTT_NATIVE_SD must be 0 or 1"}
+if {$tqtt_native_sd && $board ne "tqtt"} {error "TQTT_NATIVE_SD requires BOARD=tqtt"}
 if {$sd_safe_cmd25 && [info exists ::env(ENABLE_SD_JTAG_WRITER)]} {
     error "SD_SAFE_CMD25 requires the preemptive provisioning writer to be disabled"
 }
@@ -662,7 +665,7 @@ proc read_taxi_filelist {file seen_name} {
 }
 
 proc read_all_rtl {rtl_dir} {
-    global board use_sim_model cpu_m68k040 cpu_m68k040_v eth_enable eth_rk5_dir
+    global board use_sim_model cpu_m68k040 cpu_m68k040_v eth_enable eth_rk5_dir tqtt_native_sd
 
     # ── CPU socket occupant ──────────────────────────────────────────────
     # CPU=m68k: the m68k-ooo submodule supplies the whole OoO CPU
@@ -812,6 +815,20 @@ proc read_all_rtl {rtl_dir} {
     read_verilog $rtl_dir/soc/vhdd_mux.v
     read_verilog $rtl_dir/soc/vhdd_readahead.v
     read_verilog $rtl_dir/soc/sd_scsi_bridge.v
+    if {$tqtt_native_sd} {
+        read_verilog $rtl_dir/soc/sd_async_byte_fifo.v
+        read_verilog $rtl_dir/soc/sd_scsi_native_bridge.v
+        read_verilog $rtl_dir/soc/sd_native_csr_master.v
+        read_verilog $rtl_dir/soc/sd_native_command.v
+        read_verilog $rtl_dir/soc/sd_native_init.v
+        read_verilog $rtl_dir/soc/sd_native_init_controller.v
+        read_verilog $rtl_dir/soc/sd_native_block_engine.v
+        read_verilog $rtl_dir/soc/sd_native_backend.v
+        read_verilog $rtl_dir/soc/sd_native_reset_guard.v
+        read_verilog $rtl_dir/soc/sd_native_scsi_chunker.v
+        read_verilog $rtl_dir/soc/sd_native_owner_mux.v
+        read_verilog $rtl_dir/../third_party/litesdcard/litesdcard_core.v
+    }
     read_verilog $rtl_dir/soc/boot_fsm.v
     read_verilog $rtl_dir/soc/peripheral_reset_sequencer.v
     # T14/T16 DDR-path additions.  axi_bridge_stale_sink is UNGATED
@@ -1185,6 +1202,7 @@ if {$mode eq "ddr_pincheck"} {
     if {$enable_pcie_xdma} { lappend pincheck_def_args -verilog_define PCIE_XDMA_ENABLE }
     if {$eth_enable} { lappend pincheck_def_args -verilog_define ETH_ENABLE }
     if {$board eq "tqtt"} { lappend pincheck_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
+    if {$tqtt_native_sd} { lappend pincheck_def_args -verilog_define TQTT_NATIVE_SD }
     if {$eth_debug_enable} { lappend pincheck_def_args -verilog_define ETH_DEBUG_ENABLE }
     # debug_ctrl.v's local cycle/inst-count fallback is for unit testing only;
     # the integrated bitstream always feeds real 64-bit external counters.
@@ -1224,6 +1242,7 @@ if {$mode eq "dry_run"} {
     if {$enable_pcie_xdma} { lappend dry_def_args -verilog_define PCIE_XDMA_ENABLE }
     if {$eth_enable} { lappend dry_def_args -verilog_define ETH_ENABLE }
     if {$board eq "tqtt"} { lappend dry_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
+    if {$tqtt_native_sd} { lappend dry_def_args -verilog_define TQTT_NATIVE_SD }
     if {$eth_debug_enable} { lappend dry_def_args -verilog_define ETH_DEBUG_ENABLE }
     if {$core_mmcm} { lappend dry_def_args -verilog_define CORE_MMCM }
     lappend dry_def_args -verilog_define DEBUG_CTRL_NO_LOCAL_FALLBACK
@@ -1261,6 +1280,7 @@ if {$mode eq "clock_report"} {
     if {$enable_pcie_xdma} { lappend clock_def_args -verilog_define PCIE_XDMA_ENABLE }
     if {$eth_enable} { lappend clock_def_args -verilog_define ETH_ENABLE }
     if {$board eq "tqtt"} { lappend clock_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
+    if {$tqtt_native_sd} { lappend clock_def_args -verilog_define TQTT_NATIVE_SD }
     if {$eth_debug_enable} { lappend clock_def_args -verilog_define ETH_DEBUG_ENABLE }
     lappend clock_def_args -verilog_define DEBUG_CTRL_NO_LOCAL_FALLBACK
     synth_design \
@@ -1327,6 +1347,7 @@ if {$enable_jtag_axi} { lappend synth_def_args -verilog_define JTAG_AXI_ENABLE }
 if {$enable_pcie_xdma} { lappend synth_def_args -verilog_define PCIE_XDMA_ENABLE }
 if {$eth_enable} { lappend synth_def_args -verilog_define ETH_ENABLE }
 if {$board eq "tqtt"} { lappend synth_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
+if {$tqtt_native_sd} { lappend synth_def_args -verilog_define TQTT_NATIVE_SD }
 if {$eth_debug_enable} { lappend synth_def_args -verilog_define ETH_DEBUG_ENABLE }
 if {$core_mmcm} { lappend synth_def_args -verilog_define CORE_MMCM }
 # debug_ctrl.v's local cycle/inst-count fallback is unit-tb only; the
@@ -3456,6 +3477,7 @@ if {$cpu_m68k040} {
 puts $buildinfo_fh "eth_enable=$eth_enable"
 puts $buildinfo_fh "eth_icmp_responder=$eth_icmp_responder"
 puts $buildinfo_fh "eth_debug_enable=$eth_debug_enable"
+puts $buildinfo_fh "tqtt_native_sd=$tqtt_native_sd"
 puts $buildinfo_fh "build_id=$build_id"
 # The artifact's own timing verdict, all three check classes.  Without these the
 # only record of whether a shipped .bit met timing lives in a report file next to

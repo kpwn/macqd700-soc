@@ -16,6 +16,10 @@ module sd_native_block_engine #(
     input  wire [15:0] block_count,
     input  wire        go,
     output wire        busy,
+    // A card command may be open. Preserve the controller across a debug
+    // reset until CMD12/data completion; the staged write RAM is already
+    // full before this interval begins.
+    output wire        card_session_active,
     output reg         done,
     output reg         error,
     output wire        rd_valid,
@@ -77,6 +81,10 @@ module sd_native_block_engine #(
     wire multi = cmd_type_q == 3'd2 || cmd_type_q == 3'd4;
     wire [14:0] total_bytes = {blocks_q[5:0], 9'b0};
     assign busy = state != S_IDLE;
+    assign card_session_active = state == S_CMD || state == S_CMD_WAIT ||
+                                 state == S_DATA || state == S_DATA_WAIT ||
+                                 state == S_DMA || state == S_DMA_WAIT ||
+                                 state == S_STOP || state == S_STOP_WAIT;
     assign wr_ready = state == S_FILL && wr_avail;
     assign rd_valid = state == S_STREAM && rd_ready && byte_index < total_bytes;
 
