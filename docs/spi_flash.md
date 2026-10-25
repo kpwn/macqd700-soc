@@ -171,3 +171,11 @@ the observed duration alone does not prove the exact flash clock. The full
 build now specifies SPIx4, 51 MHz configuration rate, and compression in
 `synth/tqtt_fpga_top.xdc`, matching the standalone probes. That change is for
 future generated images and has not yet been tested by a physical power cycle.
+
+At a later Finder desktop check, the same flash-booted image still showed the
+SD volume enabled with vHDD IDENT `0x5D0D0001`, no vHDD watchdog fires, and
+2,522 SCSI-to-SD completions with zero SD errors and no captured first error.
+The native High Speed probe remained asserted. The fan probe reported ADC code
+635 (about 35.6 °C), duty 140/255, and tach 3,780 RPM. HDMI capture still
+showed a live Finder desktop. These are continued-run health checks, not a
+power-on boot test or a sustained disk integrity workload.
