@@ -3534,14 +3534,26 @@ if {[catch {
         set bi_fh [open $bi_pw_file r]; set bi_txt [read $bi_fh]; close $bi_fh
         set bi_worst ""
         set bi_n 0
+        set bi_rows 0; set bi_parsed 0
         foreach bi_line [split $bi_txt "\n"] {
+            if {[regexp {^(Min Skew|Max Skew|Min Period|Max Period|Low Pulse Width|High Pulse Width)\s} $bi_line]} {
+                incr bi_rows
+            }
             # Data rows carry a numeric slack in column 7 of the check table.
             if {[regexp {^(Min Skew|Max Skew|Min Period|Max Period|Low Pulse Width|High Pulse Width)\s+\S+\s+\S+\s+\S+\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s} $bi_line -> bi_ct bi_req bi_act bi_slk]} {
+                incr bi_parsed
                 if {$bi_worst eq "" || $bi_slk < $bi_worst} { set bi_worst $bi_slk }
                 if {$bi_slk < 0} { incr bi_n }
             }
         }
-        if {$bi_worst ne ""} { set bi_wpws $bi_worst; set bi_pw_fails $bi_n }
+        if {$bi_worst ne "" && $bi_parsed == $bi_rows} {
+            set bi_wpws $bi_worst; set bi_pw_fails $bi_n
+        } elseif {$bi_rows == 0 && [string first "Pulse Width Report" $bi_txt] >= 0} {
+            # -all_violators emits no table when every pulse-width check passes.
+            set bi_wpws 0.000; set bi_pw_fails 0
+        } else {
+            puts "WARN: pulse-width report has $bi_rows rows but only $bi_parsed parsed; verdict unknown"
+        }
     } bi_err]} {
     puts "WARN: could not extract WPWS for buildinfo: $bi_err"
 }

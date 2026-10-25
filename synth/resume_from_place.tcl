@@ -342,13 +342,25 @@ set rp_wpws "unknown"; set rp_fails "unknown"
 if {![catch {
         set rp_fh [open $rp_file r]; set rp_txt [read $rp_fh]; close $rp_fh
         set rp_worst ""; set rp_n 0
+        set rp_rows 0; set rp_parsed 0
         foreach rp_line [split $rp_txt "\n"] {
+            if {[regexp {^(Min Skew|Max Skew|Min Period|Max Period|Low Pulse Width|High Pulse Width)\s} $rp_line]} {
+                incr rp_rows
+            }
             if {[regexp {^(Min Skew|Max Skew|Min Period|Max Period|Low Pulse Width|High Pulse Width)\s+\S+\s+\S+\s+\S+\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s+(-?[0-9.]+)\s} $rp_line -> rp_ct rp_req rp_act rp_slk]} {
+                incr rp_parsed
                 if {$rp_worst eq "" || $rp_slk < $rp_worst} { set rp_worst $rp_slk }
                 if {$rp_slk < 0} { incr rp_n }
             }
         }
-        if {$rp_worst ne ""} { set rp_wpws $rp_worst; set rp_fails $rp_n }
+        if {$rp_worst ne "" && $rp_parsed == $rp_rows} {
+            set rp_wpws $rp_worst; set rp_fails $rp_n
+        } elseif {$rp_rows == 0 && [string first "Pulse Width Report" $rp_txt] >= 0} {
+            # -all_violators emits no table when every pulse-width check passes.
+            set rp_wpws 0.000; set rp_fails 0
+        } else {
+            puts "WARN: pulse-width report has $rp_rows rows but only $rp_parsed parsed; verdict unknown"
+        }
     } rp_err]} {} else { puts "WARN: could not extract WPWS: $rp_err" }
 puts $bi "wpws=$rp_wpws"
 puts $bi "pulse_width_failing_endpoints=$rp_fails"
