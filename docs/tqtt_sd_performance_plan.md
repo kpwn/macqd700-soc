@@ -97,9 +97,9 @@ an isolated write-path reproduction and HFS consistency check.
    32-bit Wishbone control/DMA Verilog core with one CMD and four DAT lines,
    plus CRC handling. An isolated generator run produced a 246 KB core and
    CSR map.
-   Integration still needs a block-command bridge for the existing boot and
-   SCSI consumers and direct TQTT IO constraints. The generated core has not
-   been integrated or tested here.
+   The standalone probes now use the generated core with direct TQTT pins.
+   Full-Mac integration still needs a native boot reader and connections to
+   the SCSI and PRAM consumers; no native card transfer has been measured.
 
    A standalone native probe is now in progress on branch
    `codex/tqtt-native-sd-20261025`. It vendors the generated LiteSDCard
@@ -181,8 +181,18 @@ an isolated write-path reproduction and HFS consistency check.
    DMA RAM and byte-stream interfaces for one- or 32-sector reads/writes.
    Its behavioral LiteSDCard test checks DMA register programming, byte
    order, full transfer counts, CMD17/18/24/25 and CMD12 encodings, and
-   completion (`make tb-sd-native-block`). This engine has not been wired
-   into a physical card image or full Mac top. The negotiated 50 MHz CMD6
+   completion (`make tb-sd-native-block`). A standalone read-only image now
+   connects this engine to the hardware init controller and LiteSDCard core:
+   `make fpga-tqtt-sd-native-engine-probe-bitstream`. On 2026-10-25 its
+   100 MHz route had WNS +5.001 ns, WHS +0.010 ns, and zero bitstream DRC
+   errors. The artifact is
+   `build/tqtt_sd_native_engine_probe/tqtt_sd_native_engine_probe.bit`,
+   SHA-256 `dafee1f71f20cc50040c10b2ec2e0b9a0fc79140d1ba140f485067d16aa504c9`.
+   After physically reseating the card, use the read-only
+   `tools/tqtt_sd_native_engine_read.tcl` with
+   `NATIVE_SD_CARD_POWER_CYCLED=1` to check card initialization, 1..32
+   sectors, CRC32, and DMA timing. It has not yet been loaded or used on the
+   card. The engine is not in the full Mac top. The negotiated 50 MHz CMD6
    switch must wait until its 64-byte status can be checked through DMA.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
