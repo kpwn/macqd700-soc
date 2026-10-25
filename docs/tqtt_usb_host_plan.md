@@ -127,3 +127,21 @@ and releases a held button on disconnect. `tb-usb-hid-adb-mouse-cdc` and
 `tb-adb-inject` cover the mouse clock crossing and its MMIO collision.
 With `TQTT_USB_HOST=0`, the full SoC ties the USB injector inputs off.
 Hardware enumeration and Mac-visible USB input remain pending.
+
+On 2026-10-25, the TQTT 200 MHz full SoC with `TQTT_USB_HOST=1`, native
+four-bit High Speed SD, HDMI audio, automatic fan, Ethernet, and reduced CPU
+debug completed Vivado RTL elaboration and full synthesis with zero errors and
+zero critical warnings. The board-specific DDR4 MIG checkpoint was generated
+first with `make tqtt-ddr4-mig`. The synthesized checkpoint is
+`/var/tmp/tqtt_usb_full_200_synth/checkpoints/synth.dcp` (SHA-256
+`e2f6600ada1f91d8a64e2687900962ae99233773e2ce737fc161b7cdc541f0db`).
+The full design uses 141,690 LUTs and 95,186 flip-flops at synthesis; the
+USB host instance accounts for 436 LUTs and 328 flip-flops. The keyboard,
+keyboard CDC, mouse CDC, and ADB injector test targets also passed:
+`make tb-usb-hid-adb-keyboard tb-usb-hid-adb-keyboard-cdc
+tb-usb-hid-adb-mouse-cdc tb-adb-inject`.
+
+This checkpoint has not been placed or routed. Synthesis timing estimates
+are not evidence of 200 MHz closure, and no physical USB-A front end is wired
+to PMOD0 yet. The next hardware gate is the standalone host probe with a
+known keyboard or mouse, followed by a routed full-SoC image and Mac input.
