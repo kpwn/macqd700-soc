@@ -111,3 +111,21 @@ running the SPI-over-JTAG programming bridge before a successful FPGA reboot.
 The previous attach did **not** record VIO reset/boot probes in that failed
 state, so these observations do not yet distinguish those cases. Read those
 probes before any JTAG SRAM reload on the next attempt.
+
+On a second `boot_hw_device` attempt with the same verified flash contents,
+without rewriting flash or programming SRAM, the board did boot normally.
+Vivado reported `DONE=HIGH` after 50 seconds. After `refresh`, the REPL read
+build ID `0xAC1FF528`, `vio_rst_bundle=0x2e`, `vio_boot_video=0x38`, and
+vHDD IDENT `0x5D0D0001` with the 4,194,240-block SD volume enabled. The CPU
+retired instructions, `video-status` showed `dafb_live=1` at 640x480, and
+framebuffer requests and responses matched with no misses. The fan controller
+was active (`vio_fan_state=0xa7268`). This proves one successful warm
+configuration boot from the existing flash image; it does not prove reliable
+power-on boot. The earlier failed attempt remains unexplained.
+
+For a `boot_hw_device` retry from the running JTAG REPL, `tcl boot_hw_device
+[current_hw_device]` can take about 50 seconds. `tools/jt.sh` may return after
+the first quiet output line while that Tcl command is still running. Hold the
+JTAG lease until the REPL emits the completed `boot_hw_device` timing line and
+`> READY`, then issue `refresh` and read the probes. Do not send a second JTAG
+command merely because `jt.sh` returned.
