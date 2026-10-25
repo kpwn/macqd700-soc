@@ -7,6 +7,8 @@ module sd_native_init #(
     parameter integer INIT_WAIT_CYCLES = 500000,
     parameter integer RETRY_WAIT_CYCLES = 100000,
     parameter integer CMD_GAP_CYCLES = 4096,
+    parameter integer INIT_DIVIDER = 256,
+    parameter integer RUN_DIVIDER = 4,
     parameter integer OCR_RETRIES = 1000
 ) (
     input  wire         clk,
@@ -67,8 +69,8 @@ module sd_native_init #(
     assign csr_req_valid = !rst && state == S_LAUNCH && phase_is_csr;
     assign csr_req_write = 1'b1;
     assign csr_req_addr = phase == P_INIT_CLOCKS ? 16'h2808 : 16'h2804;
-    assign csr_req_wdata = phase == P_DIV_INIT ? 32'd256 :
-                           phase == P_INIT_CLOCKS ? 32'd1 : 32'd4;
+    assign csr_req_wdata = phase == P_DIV_INIT ? INIT_DIVIDER :
+                           phase == P_INIT_CLOCKS ? 32'd1 : RUN_DIVIDER;
     assign cmd_start = !rst && state == S_LAUNCH && !phase_is_csr &&
                        phase != P_READY && !cmd_busy;
     assign cmd_data_type = 2'b00;
@@ -248,7 +250,9 @@ module sd_native_init #(
     end
 `ifndef SYNTHESIS
     initial if (INIT_WAIT_CYCLES < 1 || RETRY_WAIT_CYCLES < 1 ||
-                CMD_GAP_CYCLES < 1 ||
+                CMD_GAP_CYCLES < 1 || INIT_DIVIDER < 2 ||
+                INIT_DIVIDER > 511 || RUN_DIVIDER < 2 ||
+                RUN_DIVIDER > 511 ||
                 OCR_RETRIES < 1 || OCR_RETRIES > 65536)
         $error("sd_native_init timing/retry parameters invalid");
 `endif

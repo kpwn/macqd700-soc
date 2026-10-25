@@ -5,7 +5,9 @@
 // A fresh card power cycle is required when switching from the SPI backend.
 `default_nettype none
 module sd_native_backend #(
-    parameter integer HIGH_SPEED = 0
+    parameter integer HIGH_SPEED = 0,
+    parameter integer EXPERIMENTAL_SD100 = 0,
+    parameter integer DEBUG_TIMING = 0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -32,6 +34,8 @@ module sd_native_backend #(
     output wire [15:0] debug_dma_words,
     output wire [3:0]  debug_cmd_event,
     output wire [3:0]  debug_failure_state,
+    input  wire [2:0]   debug_timing_select,
+    output wire [31:0] debug_timing_cycles,
     output wire        sd_clk,
     inout  wire        sd_cmd,
     inout  wire [3:0]  sd_dat
@@ -50,7 +54,14 @@ module sd_native_backend #(
     wire [31:0] wb_dat_r;
     wire wb_ack, wb_err;
 
-    sd_native_init_controller u_init (
+    sd_native_init_controller #(
+        .INIT_WAIT_CYCLES(EXPERIMENTAL_SD100 ? 1000000 : 500000),
+        .RETRY_WAIT_CYCLES(EXPERIMENTAL_SD100 ? 200000 : 100000),
+        .CMD_GAP_CYCLES(EXPERIMENTAL_SD100 ? 8192 : 4096),
+        .INIT_DIVIDER(EXPERIMENTAL_SD100 ? 500 : 256),
+        .RUN_DIVIDER(EXPERIMENTAL_SD100 ? 8 : 4),
+        .EVENT_TIMEOUT_CYCLES(EXPERIMENTAL_SD100 ? 200000000 : 100000000)
+    ) u_init (
         .clk(clk), .rst(rst), .ready(init_ready), .error(init_error_w),
         .card_num_lbas(card_num_lbas), .rca(rca),
         .debug_phase(init_phase), .debug_cmd_event(init_cmd_event),
@@ -82,7 +93,12 @@ module sd_native_backend #(
     assign card_session_active = block_card_session_active ||
                                  (HIGH_SPEED != 0 && hs_session_active);
     wire block_card_session_active;
-    sd_native_block_engine u_block (
+    sd_native_block_engine #(
+        .POLL_TIMEOUT_CYCLES(EXPERIMENTAL_SD100 ? 200000000 : 100000000),
+        .EVENT_TIMEOUT_CYCLES(EXPERIMENTAL_SD100 ? 200000000 : 100000000),
+        .STOP_GAP_CYCLES(EXPERIMENTAL_SD100 ? 8192 : 4096),
+        .DEBUG_TIMING(DEBUG_TIMING)
+    ) u_block (
         .clk(clk), .rst(rst || !ready),
         .cmd_type(cmd_type), .lba(lba), .block_count(block_count), .go(go),
         .busy(busy), .card_session_active(block_card_session_active),
@@ -92,6 +108,8 @@ module sd_native_backend #(
         .debug_dma_words(debug_dma_words),
         .debug_cmd_event(debug_cmd_event),
         .debug_failure_state(debug_failure_state),
+        .debug_timing_select(debug_timing_select),
+        .debug_timing_cycles(debug_timing_cycles),
         .wb_ctrl_adr(block_wb_adr), .wb_ctrl_bte(block_wb_bte),
         .wb_ctrl_cti(block_wb_cti), .wb_ctrl_cyc(block_wb_cyc),
         .wb_ctrl_dat_r(wb_dat_r), .wb_ctrl_dat_w(block_wb_dat_w),
@@ -106,7 +124,10 @@ module sd_native_backend #(
     );
 
     generate if (HIGH_SPEED != 0) begin : g_high_speed
-        sd_native_hs_switch u_hs (
+        sd_native_hs_switch #(
+            .POLL_TIMEOUT_CYCLES(EXPERIMENTAL_SD100 ? 200000000 : 100000000),
+            .EVENT_TIMEOUT_CYCLES(EXPERIMENTAL_SD100 ? 200000000 : 100000000)
+        ) u_hs (
             .clk(clk), .rst(rst || !init_ready),
             .done(hs_done), .error(hs_error), .high_speed_active(hs_active),
             .card_session_active(hs_session_active),

@@ -48,7 +48,11 @@ proc probe {name} {
     foreach item [get_hw_probes -of_objects $::vio -quiet] {
         if {[get_property NAME $item] eq $name} {return $item}
     }
-    error "VIO probe $name missing"
+    set names [list]
+    foreach item [get_hw_probes -of_objects $::vio -quiet] {
+        lappend names [get_property NAME $item]
+    }
+    error "VIO probe $name missing; available: $names"
 }
 set p_lba [probe vio_lba]
 set p_ctrl [probe vio_control]
@@ -56,7 +60,14 @@ set p_capacity [probe card_num_lbas]
 set p_rca [probe rca]
 set p_status [probe status]
 set p_crc [probe result_crc]
-set p_cycles [probe result_cycles]
+set p_cycle_bits [list]
+if {[catch {probe result_cycles} p_cycles]} {
+    # The timing mux can make Vivado split probe_in4 into 32 scalar nets.
+    # The matching LTX maps bit i to u_vio_i_(32-i)_n_0.
+    for {set bit_index 0} {$bit_index < 32} {incr bit_index} {
+        lappend p_cycle_bits [probe [format "u_vio_i_%d_n_0" [expr {32 - $bit_index}]]]
+    }
+}
 # The probe can be programmed before the physical card reseat. Its automatic
 # first init may then have failed on an absent/SPI-mode card; restart the
 # controller only after the caller has confirmed the card power cycle.
@@ -68,10 +79,22 @@ commit_hw_vio [list $p_ctrl]
 proc sample {} {
     refresh_hw_vio $::vio
     foreach {key item} [list status $::p_status capacity $::p_capacity \
-                              rca $::p_rca crc $::p_crc cycles $::p_cycles] {
+                              rca $::p_rca crc $::p_crc] {
         scan [get_property INPUT_VALUE $item] %x value
         dict set result $key $value
     }
+    if {[llength $::p_cycle_bits] == 0} {
+        scan [get_property INPUT_VALUE $::p_cycles] %x value
+    } else {
+        set value 0
+        set bit_index 0
+        foreach item $::p_cycle_bits {
+            scan [get_property INPUT_VALUE $item] %x bit_value
+            set value [expr {$value | (($bit_value & 1) << $bit_index)}]
+            incr bit_index
+        }
+    }
+    dict set result cycles $value
     return $result
 }
 set deadline [expr {[clock milliseconds] + 10000}]
@@ -100,7 +123,19 @@ if {[info exists ::env(NATIVE_SD_EXPECT_HS)]} {
             $expected_hs $high_speed $status]
     }
 }
-puts [format "CARD high_speed=%u sd_clk_mhz=%u" $high_speed [expr {$high_speed ? 50 : 25}]]
+set sys_clk_hz [expr {[info exists ::env(NATIVE_SD_SYS_CLK_HZ)] ?
+    $::env(NATIVE_SD_SYS_CLK_HZ) : 100000000}]
+if {$sys_clk_hz ni {100000000 200000000}} {
+    error "NATIVE_SD_SYS_CLK_HZ must be 100000000 or 200000000"
+}
+set sd_divider [expr {$high_speed ? 2 : ($sys_clk_hz == 200000000 ? 8 : 4)}]
+set sd_clk_mhz [expr {$sys_clk_hz / $sd_divider / 1000000}]
+if {[info exists ::env(NATIVE_SD_EXPECT_CLK_MHZ)] &&
+    $sd_clk_mhz != $::env(NATIVE_SD_EXPECT_CLK_MHZ)} {
+    error [format "native SD clock mismatch: expected %s MHz, computed %u MHz" \
+        $::env(NATIVE_SD_EXPECT_CLK_MHZ) $sd_clk_mhz]
+}
+puts [format "CARD high_speed=%u sd_clk_mhz=%u" $high_speed $sd_clk_mhz]
 puts [format "NATIVE_SD_PRE status=0x%08x crc=0x%08x cycles=%u" \
     [dict get $snap status] [dict get $snap crc] [dict get $snap cycles]]
 
@@ -169,7 +204,20 @@ if {$received != $blocks * 512} {
 if {[dict get $snap cycles] == 0} {error "native SD cycle counter is zero"}
 puts [format "PASS LBA=%u blocks=%u bytes=%u CRC32=0x%08x DMA_cycles=%u DMA_MBps=%.3f" \
     $lba $blocks $received [dict get $snap crc] [dict get $snap cycles] \
-    [expr {$received * 100.0 / [dict get $snap cycles]}]]
+    [expr {$received * ($sys_clk_hz / 1000000.0) / [dict get $snap cycles]}]]
+if {[info exists ::env(NATIVE_SD_STAGE_TIMING)] &&
+    $::env(NATIVE_SD_STAGE_TIMING) eq "1"} {
+    set control_base [expr {$blocks | $request_toggle}]
+    foreach {stage_name stage_select} {command 1 data 2 dma 3 stop 4 sd_edges 5} {
+        set_property OUTPUT_VALUE [format %08x [expr {$control_base | ($stage_select << 8)}]] $p_ctrl
+        commit_hw_vio [list $p_ctrl]
+        after 20
+        set stage_snap [sample]
+        puts [format "NATIVE_SD_TIMING %s_end_cycles=%u" $stage_name [dict get $stage_snap cycles]]
+    }
+    set_property OUTPUT_VALUE [format %08x $control_base] $p_ctrl
+    commit_hw_vio [list $p_ctrl]
+}
 close_hw_target
 disconnect_hw_server
 close_hw_manager

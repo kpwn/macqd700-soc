@@ -8,14 +8,35 @@ module tqtt_sd_native_engine_probe (
     inout  wire       sd_cmd,
     inout  wire [3:0] sd_dat
 );
-    wire clk_ibuf, clk;
+    wire clk_ibuf, clk, clock_locked;
     IBUFDS u_clk_ibuf (.I(sys_clk_p), .IB(sys_clk_n), .O(clk_ibuf));
+`ifdef TQTT_NATIVE_SD_OVERCLOCK_100
+    // Read-only experiment: 100 MHz differential input -> 200 MHz core,
+    // then LiteSDCard divider 2 -> 100 MHz at the 3.3 V SD socket.
+    wire clk200_unbuf, clkfb;
+    MMCME4_BASE #(
+        .CLKIN1_PERIOD(10.000), .DIVCLK_DIVIDE(1),
+        .CLKFBOUT_MULT_F(10.000), .CLKOUT0_DIVIDE_F(5.000)
+    ) u_sd100_mmcm (
+        .CLKIN1(clk_ibuf), .CLKFBIN(clkfb),
+        .CLKFBOUT(clkfb), .CLKFBOUTB(),
+        .CLKOUT0(clk200_unbuf), .CLKOUT0B(),
+        .CLKOUT1(), .CLKOUT1B(), .CLKOUT2(), .CLKOUT2B(),
+        .CLKOUT3(), .CLKOUT3B(), .CLKOUT4(), .CLKOUT5(), .CLKOUT6(),
+        .LOCKED(clock_locked), .PWRDWN(1'b0), .RST(1'b0)
+    );
+    BUFG u_clk_bufg (.I(clk200_unbuf), .O(clk));
+    localparam integer EXPERIMENTAL_SD100 = 1;
+`else
     BUFG u_clk_bufg (.I(clk_ibuf), .O(clk));
+    assign clock_locked = 1'b1;
+    localparam integer EXPERIMENTAL_SD100 = 0;
+`endif
     reg [7:0] por = 8'hff;
     always @(posedge clk) if (por != 0) por <= por - 1'b1;
 
     wire [31:0] vio_lba, vio_control;
-    wire rst = (por != 0) || vio_control[7];
+    wire rst = (por != 0) || !clock_locked || vio_control[7];
     wire init_ready, init_error, high_speed_active;
     wire [31:0] card_num_lbas, rca;
     wire [4:0] init_phase;
@@ -29,12 +50,16 @@ module tqtt_sd_native_engine_probe (
     wire [15:0] block_dma_words;
     wire [3:0] block_cmd_event;
     wire [3:0] block_failure_state;
+    wire [31:0] block_timing_cycles;
 `ifdef TQTT_NATIVE_SD_HS
     localparam integer HIGH_SPEED = 1;
 `else
     localparam integer HIGH_SPEED = 0;
 `endif
-    sd_native_backend #(.HIGH_SPEED(HIGH_SPEED)) u_backend (
+    sd_native_backend #(
+        .HIGH_SPEED(HIGH_SPEED), .EXPERIMENTAL_SD100(EXPERIMENTAL_SD100),
+        .DEBUG_TIMING(1)
+    ) u_backend (
         .clk(clk), .rst(rst), .ready(init_ready), .init_error(init_error),
         .high_speed_active(high_speed_active),
         .card_num_lbas(card_num_lbas), .rca(rca), .init_phase(init_phase),
@@ -47,6 +72,8 @@ module tqtt_sd_native_engine_probe (
         .debug_dma_words(block_dma_words),
         .debug_cmd_event(block_cmd_event),
         .debug_failure_state(block_failure_state),
+        .debug_timing_select(vio_control[10:8]),
+        .debug_timing_cycles(block_timing_cycles),
         .sd_clk(sd_clk), .sd_cmd(sd_cmd), .sd_dat(sd_dat)
     );
 
@@ -66,6 +93,9 @@ module tqtt_sd_native_engine_probe (
     reg [31:0] result_crc = 0;
     reg [31:0] cycles = 0;
     reg [31:0] result_cycles = 0;
+    reg [31:0] sd_rising_edges = 0;
+    reg [31:0] result_sd_rising_edges = 0;
+    reg sd_clk_q = 0;
     reg [14:0] byte_count = 0;
     reg running = 0;
     reg done_toggle = 0;
@@ -80,11 +110,15 @@ module tqtt_sd_native_engine_probe (
             result_crc <= 0;
             cycles <= 0;
             result_cycles <= 0;
+            sd_rising_edges <= 0;
+            result_sd_rising_edges <= 0;
+            sd_clk_q <= 0;
             byte_count <= 0;
             running <= 0;
             done_toggle <= 0;
             last_error <= 0;
         end else begin
+            sd_clk_q <= sd_clk;
             block_go <= 0;
             if (init_ready && !block_busy && !block_go &&
                 vio_control[6] != request_seen) begin
@@ -94,10 +128,13 @@ module tqtt_sd_native_engine_probe (
                 crc <= 32'hffffffff;
                 byte_count <= 0;
                 cycles <= 0;
+                sd_rising_edges <= 0;
                 running <= 1;
                 block_go <= 1;
             end
             if (running) cycles <= cycles + 1'b1;
+            if (running && sd_clk && !sd_clk_q)
+                sd_rising_edges <= sd_rising_edges + 1'b1;
             if (block_rd_valid) begin
                 crc <= crc32_byte(crc, block_rd_data);
                 byte_count <= byte_count + 1'b1;
@@ -107,6 +144,7 @@ module tqtt_sd_native_engine_probe (
                 last_error <= block_error;
                 result_crc <= crc ^ 32'hffffffff;
                 result_cycles <= cycles;
+                result_sd_rising_edges <= sd_rising_edges;
                 done_toggle <= ~done_toggle;
             end
         end
@@ -122,7 +160,9 @@ module tqtt_sd_native_engine_probe (
         .clk(clk),
         .probe_in0(card_num_lbas), .probe_in1(rca),
         .probe_in2(status), .probe_in3(result_crc),
-        .probe_in4(result_cycles),
+        .probe_in4(vio_control[10:8] == 0 ? result_cycles :
+                   vio_control[10:8] == 5 ? result_sd_rising_edges :
+                   block_timing_cycles),
         .probe_out0(vio_lba), .probe_out1(vio_control),
         .probe_out2(), .probe_out3()
     );

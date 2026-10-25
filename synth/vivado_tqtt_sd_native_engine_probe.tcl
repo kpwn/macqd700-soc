@@ -7,6 +7,13 @@ if {[info exists ::env(TQTT_NATIVE_SD_HS)]} {
     set high_speed $::env(TQTT_NATIVE_SD_HS)
 }
 if {$high_speed ni {0 1}} {error "TQTT_NATIVE_SD_HS must be 0 or 1"}
+set overclock_100 0
+if {[info exists ::env(TQTT_NATIVE_SD_OVERCLOCK_100)]} {
+    set overclock_100 $::env(TQTT_NATIVE_SD_OVERCLOCK_100)
+}
+if {$overclock_100 ni {0 1} || ($overclock_100 && !$high_speed)} {
+    error "100 MHz experiment requires TQTT_NATIVE_SD_HS=1 and TQTT_NATIVE_SD_OVERCLOCK_100=1"
+}
 set_param general.maxThreads 16
 file mkdir $output_dir
 file mkdir $output_dir/ip
@@ -53,6 +60,7 @@ read_ip $ip_dir/native_sd_vio/native_sd_vio.xci
 read_xdc $proj_root/synth/tqtt_sd_native_probe.xdc
 set synth_args [list -top tqtt_sd_native_engine_probe -part $part]
 if {$high_speed} {lappend synth_args -verilog_define TQTT_NATIVE_SD_HS}
+if {$overclock_100} {lappend synth_args -verilog_define TQTT_NATIVE_SD_OVERCLOCK_100}
 synth_design {*}$synth_args
 write_checkpoint -force $output_dir/checkpoints/synth.dcp
 opt_design
@@ -68,7 +76,8 @@ puts $f "part=$part"
 puts $f "board=tqtt"
 puts $f "top=tqtt_sd_native_engine_probe"
 puts $f "core=LiteSDCard-2024.12"
-puts $f "clock_hz=100000000"
+puts $f "clock_hz=[expr {$overclock_100 ? 200000000 : 100000000}]"
 puts $f "high_speed=$high_speed"
+puts $f "experimental_sd100=$overclock_100"
 puts $f "generated_utc=[clock format [clock seconds] -gmt 1 -format {%Y-%m-%dT%H:%M:%SZ}]"
 close $f

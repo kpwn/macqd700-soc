@@ -6,6 +6,8 @@ module sd_native_init_controller #(
     parameter integer INIT_WAIT_CYCLES = 500000,
     parameter integer RETRY_WAIT_CYCLES = 100000,
     parameter integer CMD_GAP_CYCLES = 4096,
+    parameter integer INIT_DIVIDER = 256,
+    parameter integer RUN_DIVIDER = 4,
     parameter integer OCR_RETRIES = 1000,
     parameter integer EVENT_TIMEOUT_CYCLES = 100000000,
     parameter integer CSR_TIMEOUT_CYCLES = 1024
@@ -46,6 +48,8 @@ module sd_native_init_controller #(
         .INIT_WAIT_CYCLES(INIT_WAIT_CYCLES),
         .RETRY_WAIT_CYCLES(RETRY_WAIT_CYCLES),
         .CMD_GAP_CYCLES(CMD_GAP_CYCLES),
+        .INIT_DIVIDER(INIT_DIVIDER),
+        .RUN_DIVIDER(RUN_DIVIDER),
         .OCR_RETRIES(OCR_RETRIES)
     ) u_init (
         .clk(clk), .rst(rst), .ready(ready), .error(error),

@@ -3379,6 +3379,7 @@ TQTT_HDMI_AUDIO ?= $(if $(filter tqtt,$(BOARD)),1,0)
 TQTT_FAN_AUTO ?= $(if $(filter tqtt,$(BOARD)),1,0)
 TQTT_NATIVE_SD ?= 0
 TQTT_NATIVE_SD_HS ?= 0
+TQTT_NATIVE_SD_OVERCLOCK_100 ?= 0
 TQTT_USB_HOST ?= 0
 ifneq ($(filter $(BOARD),rk tqtt),$(BOARD))
 $(error BOARD must be rk or tqtt, got '$(BOARD)')
@@ -3900,10 +3901,10 @@ fpga-tqtt-sd-native-autoinit-probe-bitstream:
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — native SD autoinit probe pending"; fi; exit $$status; }
 
 .PHONY: fpga-tqtt-sd-native-engine-probe-bitstream
-TQTT_SD_NATIVE_ENGINE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_sd_native_engine_probe$(if $(filter 1,$(TQTT_NATIVE_SD_HS)),_hs,)
+TQTT_SD_NATIVE_ENGINE_BUILD_DIR ?= $(BUILD_DIR)/tqtt_sd_native_engine_probe$(if $(filter 1,$(TQTT_NATIVE_SD_HS)),_hs,)$(if $(filter 1,$(TQTT_NATIVE_SD_OVERCLOCK_100)),_oc100,)
 fpga-tqtt-sd-native-engine-probe-bitstream:
 	@mkdir -p $(TQTT_SD_NATIVE_ENGINE_BUILD_DIR)
-	flock -n -E 75 $(VIVADO_LOCK) -c 'TQTT_NATIVE_SD_HS=$(TQTT_NATIVE_SD_HS) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_sd_native_engine_probe.tcl -tclargs $(TQTT_SD_NATIVE_ENGINE_BUILD_DIR)' \
+	flock -n -E 75 $(VIVADO_LOCK) -c 'TQTT_NATIVE_SD_HS=$(TQTT_NATIVE_SD_HS) TQTT_NATIVE_SD_OVERCLOCK_100=$(TQTT_NATIVE_SD_OVERCLOCK_100) $(VIVADO) -mode batch -source $(SYNTH_DIR)/vivado_tqtt_sd_native_engine_probe.tcl -tclargs $(TQTT_SD_NATIVE_ENGINE_BUILD_DIR)' \
 	  || { status=$$?; if [ $$status -eq 75 ]; then echo "ERROR: another Vivado run holds $(VIVADO_LOCK) — native SD engine probe pending"; fi; exit $$status; }
 
 .PHONY: fpga-tqtt-eth-probe-bitstream

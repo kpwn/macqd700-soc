@@ -8,7 +8,8 @@ module sd_native_block_engine #(
     parameter integer POLL_TIMEOUT_CYCLES = 100000000,
     parameter integer EVENT_TIMEOUT_CYCLES = 100000000,
     parameter integer CSR_TIMEOUT_CYCLES = 1024,
-    parameter integer STOP_GAP_CYCLES = 4096
+    parameter integer STOP_GAP_CYCLES = 4096,
+    parameter integer DEBUG_TIMING = 0
 ) (
     input  wire        clk,
     input  wire        rst,
@@ -32,6 +33,8 @@ module sd_native_block_engine #(
     output reg  [15:0] debug_dma_words,
     output wire [3:0]  debug_cmd_event,
     output reg  [3:0]  debug_failure_state,
+    input  wire [2:0]  debug_timing_select,
+    output wire [31:0] debug_timing_cycles,
 
     output wire [29:0] wb_ctrl_adr,
     output wire [1:0]  wb_ctrl_bte,
@@ -189,6 +192,34 @@ module sd_native_block_engine #(
     reg [31:0] direct_csr_wdata;
     wire direct_csr_ready, direct_csr_rsp_valid, direct_csr_rsp_error;
     wire [31:0] direct_csr_rsp_rdata;
+    generate if (DEBUG_TIMING != 0) begin : g_debug_timing
+        reg [31:0] elapsed, command_end, data_end, dma_end, stop_end;
+        always @(posedge clk) begin
+            if (rst || (go && state == S_IDLE)) begin
+                elapsed <= 0;
+                command_end <= 0;
+                data_end <= 0;
+                dma_end <= 0;
+                stop_end <= 0;
+            end else if (state != S_IDLE) begin
+                elapsed <= elapsed + 1'b1;
+                if (state == S_CMD_WAIT && command_done)
+                    command_end <= elapsed;
+                if (state == S_DATA_WAIT && direct_csr_rsp_valid &&
+                    direct_csr_rsp_rdata[0]) data_end <= elapsed;
+                if (state == S_DMA_WAIT && direct_csr_rsp_valid &&
+                    direct_csr_rsp_rdata[0]) dma_end <= elapsed;
+                if (state == S_STOP_WAIT && command_done)
+                    stop_end <= elapsed;
+            end
+        end
+        assign debug_timing_cycles = debug_timing_select == 3'd1 ? command_end :
+                                     debug_timing_select == 3'd2 ? data_end :
+                                     debug_timing_select == 3'd3 ? dma_end :
+                                     debug_timing_select == 3'd4 ? stop_end : elapsed;
+    end else begin : g_no_debug_timing
+        assign debug_timing_cycles = 32'b0;
+    end endgenerate
     always @(*) begin
         direct_csr_valid = 0;
         direct_csr_write = 0;
