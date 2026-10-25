@@ -614,3 +614,24 @@ System 7 software can perform this copy; the FPGA's Mac-visible data path
 remains unqualified. MAME's DAFB data-in DMA is not visible as CPU pseudo-DMA
 register reads in that trace, so the MAME and FPGA payload read counts are
 not directly comparable.
+
+The failed `MacTCP DNR` copy exposed an early 53C96 completion. Its final
+one-sector WRITE(10) sent 512 pseudo-DMA bytes; the trace then shows
+`R4=0x90`/`R5=0x10` (I_BUS while the bus still reports DATA OUT), followed
+by `W2=0xEE`, `W3=0x10`, and a three-byte FIFO at CI_COMPLETE. The Mac reads
+`0xEE` ahead of the target's GOOD status `0x00`, which explains Finder's
+disk-error dialog without a target CHECK CONDITION. The status trace is
+`/var/tmp/tqtt_mactcp_dup_scsi_trace.csv`. The card readback at **raw** SD
+LBA 1,150,987 (Mac disk LBA 1,142,795 plus `RAW_BASE_LBA=8192`) matches all
+512 traced write bytes exactly, SHA-256
+`10df0311726e04407ab16317ee61afb9f1bbc11a34720027c0827cac6242b91a`.
+Ten four-sector samples spread from Mac disk LBA 100,000 through 2,250,000
+also match `shd.hda` exactly. An initial comparison omitted the 8,192-sector
+raw base and was invalid; no card-corruption conclusion follows from it.
+
+`scsi.v` now holds the final DMA OUT `I_BUS` completion while the native SD
+provider is in `S_VH_WAIT_WR`, then raises it after STATUS is visible. The
+end-to-end test checks for an interrupt in DATA OUT after the final payload,
+using a one-command, 512-byte write like Finder. The same test fails against
+the previous RTL (`status=0x90`) and passes with the fix: 27/27 native FIFO
+and 27/27 legacy bridge cases. Hardware Finder retest is still required.

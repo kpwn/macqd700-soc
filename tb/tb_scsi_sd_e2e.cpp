@@ -1385,6 +1385,20 @@ static bool c96_write10_multi(uint32_t lba, int blocks, int chunk,
         }
     }
 
+    // The last payload byte can leave the target waiting for SD to finish
+    // its write.  In that interval the bus still reports DATA OUT.  An
+    // I_BUS interrupt here makes the System 7 driver send an extra FIFO
+    // byte as though the target wanted more payload; CI_COMPLETE then
+    // returns that byte ahead of the real GOOD status.  Completion must
+    // wait for STATUS (or for the backend to finish before this read).
+    run_ns(200);  // allow the C96 completion hook to settle, not the SD write
+    const uint8_t post_payload = reg_r(0x4);
+    if ((post_payload & 0x07) == 0x00 && (post_payload & C96_INTR)) {
+        std::printf("  FAIL %s: premature I_BUS in DATA OUT after final payload "
+                    "(status=0x%02x)\n", tag, post_payload);
+        return false;
+    }
+
     uint8_t status = 0xFF, msg = 0xFF;
     if (!c96_finish(status, msg)) return false;
 
@@ -2041,7 +2055,8 @@ static bool c14_c96_write10_14blocks() {
 //       being fixed, so it is an explicit scenario rather than an
 //       assumption.
 static bool c15_c96_write10_1block_control() {
-    return c96_write10_multi(10147, 1, 16, -1, 0, "c15");
+    // One DMA command for the whole sector matches the failing Finder write.
+    return c96_write10_multi(10147, 1, 512, -1, 0, "c15");
 }
 
 // c18 — transaction-cadence stress.  Every earlier write scenario resets the

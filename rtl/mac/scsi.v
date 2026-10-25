@@ -6346,9 +6346,16 @@ module scsi #(
                       ? (!c96_drq_fifo_in_live && !c96_xfr_recv_pend &&
                          vh_ring_staged)
                       // OUT (:648 `fifo_pos == 0`): everything pushed
-                      // has been sent; fires whether the target still
-                      // sits in DATA_OUT or already moved to STATUS
-                      : (c96_fifo_pos == 5'd0))) begin
+                      // has been sent.  The final sector can spend a long
+                      // time in our off-bus S_VH_WAIT_WR while SD commits
+                      // it.  Do not interrupt the initiator in that state:
+                      // the held bus phase still reads DATA OUT, and the
+                      // System 7 driver responds to I_BUS by sending a
+                      // spurious FIFO byte.  Once the provider finishes,
+                      // S_STATUS exposes the real phase and this same TC0
+                      // completion can safely fire.
+                      : ((c96_fifo_pos == 5'd0) &&
+                         (phase != S_VH_WAIT_WR)))) begin
                 c96_xfr_armed   <= 1'b0;
                 c96_dma_dir     <= C96_DIR_NONE;
                 c96_drq_stale   <= 1'b0;  // completion check_drq (MAME :772-799)
