@@ -3314,6 +3314,7 @@ BOARD ?= rk
 TQTT_HDMI_AUDIO ?= $(if $(filter tqtt,$(BOARD)),1,0)
 TQTT_FAN_AUTO ?= 0
 TQTT_NATIVE_SD ?= 0
+TQTT_NATIVE_SD_HS ?= 0
 ifneq ($(filter $(BOARD),rk tqtt),$(BOARD))
 $(error BOARD must be rk or tqtt, got '$(BOARD)')
 endif
@@ -3322,6 +3323,7 @@ VIVADO_RUN_ENV += BOARD=$(BOARD)
 VIVADO_RUN_ENV += TQTT_HDMI_AUDIO=$(TQTT_HDMI_AUDIO)
 VIVADO_RUN_ENV += TQTT_FAN_AUTO=$(TQTT_FAN_AUTO)
 VIVADO_RUN_ENV += TQTT_NATIVE_SD=$(TQTT_NATIVE_SD)
+VIVADO_RUN_ENV += TQTT_NATIVE_SD_HS=$(TQTT_NATIVE_SD_HS)
 # CPU socket select for synth/impl — same CPU=stub|m68k knob as the
 # Verilator flow (see "CPU build select" above); consumed by vivado.tcl.
 VIVADO_RUN_ENV += CPU=$(CPU)
@@ -4972,6 +4974,27 @@ $(SD_NATIVE_INIT_CTRL_BUILD)/Vsd_native_init_controller: $(RTL_DIR)/soc/sd_nativ
 		-CFLAGS "-std=c++17"
 
 SD_NATIVE_BLOCK_BUILD := $(BUILD_DIR)/sd_native_block_engine
+SD_NATIVE_HS_BUILD := $(BUILD_DIR)/sd_native_hs_switch
+
+.PHONY: tb-sd-native-hs
+tb-sd-native-hs: $(SD_NATIVE_HS_BUILD)/Vsd_native_hs_switch
+	$(SD_NATIVE_HS_BUILD)/Vsd_native_hs_switch
+
+$(SD_NATIVE_HS_BUILD)/Vsd_native_hs_switch: $(RTL_DIR)/soc/sd_native_hs_switch.v $(RTL_DIR)/soc/sd_native_command.v $(RTL_DIR)/soc/sd_native_csr_master.v $(TB_DIR)/tb_sd_native_hs_switch.cpp
+	@mkdir -p $(SD_NATIVE_HS_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Mdir $(SD_NATIVE_HS_BUILD) \
+		--top-module sd_native_hs_switch \
+		-GPOLL_TIMEOUT_CYCLES=128 -GEVENT_TIMEOUT_CYCLES=64 \
+		-GCSR_TIMEOUT_CYCLES=16 \
+		$(RTL_DIR)/soc/sd_native_hs_switch.v \
+		$(RTL_DIR)/soc/sd_native_command.v \
+		$(RTL_DIR)/soc/sd_native_csr_master.v \
+		$(TB_DIR)/tb_sd_native_hs_switch.cpp \
+		-CFLAGS "-std=c++17"
 
 # Full TQTT native-SD source composition with physical board clock/pin RTL.
 # The HDMI-audio branch uses a SystemVerilog constant cast that this Verilator
@@ -4980,6 +5003,7 @@ SD_NATIVE_BLOCK_BUILD := $(BUILD_DIR)/sd_native_block_engine
 lint-tqtt-native-sd:
 	$(VERILATOR) --lint-only --bbox-unsup --top-module fpga_top \
 		-DTQTT_BOARD -DTQTT_GMII -DTQTT_NATIVE_SD -DETH_ENABLE \
+		$(if $(filter 1,$(TQTT_NATIVE_SD_HS)),-DTQTT_NATIVE_SD_HS,) \
 		-DVIO_ENABLE -DJTAG_AXI_ENABLE \
 		-DSCSI_TRACE_ENABLE -DCORE_MMCM -DDEBUG_CTRL_NO_LOCAL_FALLBACK \
 		-GTQTT_HDMI_AUDIO=0 -GTQTT_FAN_AUTO=1 -GETH_ICMP_RESPONDER=0 \

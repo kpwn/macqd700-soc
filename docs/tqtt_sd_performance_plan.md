@@ -256,8 +256,16 @@ an isolated write-path reproduction and HFS consistency check.
    The SPI-only PRAM persistence and JTAG card writer are terminated in
    this variant until their native equivalents exist; the default SPI
    variant still has them. A reset guard defers controller reset while
-   an on-card command is active (`make tb-sd-native-reset`). The negotiated 50 MHz CMD6
-   switch must wait until its 64-byte status can be checked through DMA.
+   an on-card command is active (`make tb-sd-native-reset`). The negotiated
+   50 MHz CMD6 switch now has an opt-in `TQTT_NATIVE_SD_HS=1` implementation.
+   After four-bit initialization at 25 MHz, `sd_native_hs_switch` sends CMD6
+   with a 64-byte DMA transfer, verifies the support and selected-function
+   bytes, and only then writes the divider for 50 MHz. A card declining High
+   Speed stays at 25 MHz. `make tb-sd-native-hs` checks confirmed selection,
+   fallback, missing status data, command/CSR errors, and timeout. Full-top
+   native+HDMI-audio+fan+Ethernet Vivado RTL elaboration passed with the
+   option on; no 50 MHz full-SoC bitstream or card test exists yet. The
+   default remains 25 MHz until physical card integrity tests pass.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,

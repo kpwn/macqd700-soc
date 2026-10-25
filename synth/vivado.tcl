@@ -558,6 +558,9 @@ if {$tqtt_fan_auto && $board ne "tqtt"} {error "TQTT_FAN_AUTO requires BOARD=tqt
 set tqtt_native_sd [parse_int_env TQTT_NATIVE_SD 0]
 if {$tqtt_native_sd ni {0 1}} {error "TQTT_NATIVE_SD must be 0 or 1"}
 if {$tqtt_native_sd && $board ne "tqtt"} {error "TQTT_NATIVE_SD requires BOARD=tqtt"}
+set tqtt_native_sd_hs [parse_int_env TQTT_NATIVE_SD_HS 0]
+if {$tqtt_native_sd_hs ni {0 1}} {error "TQTT_NATIVE_SD_HS must be 0 or 1"}
+if {$tqtt_native_sd_hs && !$tqtt_native_sd} {error "TQTT_NATIVE_SD_HS requires TQTT_NATIVE_SD=1"}
 if {$sd_safe_cmd25 && [info exists ::env(ENABLE_SD_JTAG_WRITER)]} {
     error "SD_SAFE_CMD25 requires the preemptive provisioning writer to be disabled"
 }
@@ -822,6 +825,7 @@ proc read_all_rtl {rtl_dir} {
         read_verilog $rtl_dir/soc/sd_native_command.v
         read_verilog $rtl_dir/soc/sd_native_init.v
         read_verilog $rtl_dir/soc/sd_native_init_controller.v
+        read_verilog $rtl_dir/soc/sd_native_hs_switch.v
         read_verilog $rtl_dir/soc/sd_native_block_engine.v
         read_verilog $rtl_dir/soc/sd_native_backend.v
         read_verilog $rtl_dir/soc/sd_native_reset_guard.v
@@ -1208,6 +1212,7 @@ if {$mode eq "ddr_pincheck"} {
     if {$eth_enable} { lappend pincheck_def_args -verilog_define ETH_ENABLE }
     if {$board eq "tqtt"} { lappend pincheck_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
     if {$tqtt_native_sd} { lappend pincheck_def_args -verilog_define TQTT_NATIVE_SD }
+    if {$tqtt_native_sd_hs} { lappend pincheck_def_args -verilog_define TQTT_NATIVE_SD_HS }
     if {$eth_debug_enable} { lappend pincheck_def_args -verilog_define ETH_DEBUG_ENABLE }
     # debug_ctrl.v's local cycle/inst-count fallback is for unit testing only;
     # the integrated bitstream always feeds real 64-bit external counters.
@@ -1248,6 +1253,7 @@ if {$mode eq "dry_run"} {
     if {$eth_enable} { lappend dry_def_args -verilog_define ETH_ENABLE }
     if {$board eq "tqtt"} { lappend dry_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
     if {$tqtt_native_sd} { lappend dry_def_args -verilog_define TQTT_NATIVE_SD }
+    if {$tqtt_native_sd_hs} { lappend dry_def_args -verilog_define TQTT_NATIVE_SD_HS }
     if {$eth_debug_enable} { lappend dry_def_args -verilog_define ETH_DEBUG_ENABLE }
     if {$core_mmcm} { lappend dry_def_args -verilog_define CORE_MMCM }
     lappend dry_def_args -verilog_define DEBUG_CTRL_NO_LOCAL_FALLBACK
@@ -1286,6 +1292,7 @@ if {$mode eq "clock_report"} {
     if {$eth_enable} { lappend clock_def_args -verilog_define ETH_ENABLE }
     if {$board eq "tqtt"} { lappend clock_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
     if {$tqtt_native_sd} { lappend clock_def_args -verilog_define TQTT_NATIVE_SD }
+    if {$tqtt_native_sd_hs} { lappend clock_def_args -verilog_define TQTT_NATIVE_SD_HS }
     if {$eth_debug_enable} { lappend clock_def_args -verilog_define ETH_DEBUG_ENABLE }
     lappend clock_def_args -verilog_define DEBUG_CTRL_NO_LOCAL_FALLBACK
     synth_design \
@@ -1353,6 +1360,7 @@ if {$enable_pcie_xdma} { lappend synth_def_args -verilog_define PCIE_XDMA_ENABLE
 if {$eth_enable} { lappend synth_def_args -verilog_define ETH_ENABLE }
 if {$board eq "tqtt"} { lappend synth_def_args -verilog_define TQTT_BOARD -verilog_define TQTT_GMII }
 if {$tqtt_native_sd} { lappend synth_def_args -verilog_define TQTT_NATIVE_SD }
+if {$tqtt_native_sd_hs} { lappend synth_def_args -verilog_define TQTT_NATIVE_SD_HS }
 if {$eth_debug_enable} { lappend synth_def_args -verilog_define ETH_DEBUG_ENABLE }
 if {$core_mmcm} { lappend synth_def_args -verilog_define CORE_MMCM }
 # debug_ctrl.v's local cycle/inst-count fallback is unit-tb only; the
@@ -3464,6 +3472,7 @@ puts $buildinfo_fh "eth_enable=$eth_enable"
 puts $buildinfo_fh "eth_icmp_responder=$eth_icmp_responder"
 puts $buildinfo_fh "eth_debug_enable=$eth_debug_enable"
 puts $buildinfo_fh "tqtt_native_sd=$tqtt_native_sd"
+puts $buildinfo_fh "tqtt_native_sd_hs=$tqtt_native_sd_hs"
 puts $buildinfo_fh "build_id=$build_id"
 # The artifact's own timing verdict, all three check classes.  Without these the
 # only record of whether a shipped .bit met timing lives in a report file next to
