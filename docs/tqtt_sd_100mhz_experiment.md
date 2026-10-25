@@ -1,7 +1,7 @@
 # TQTT 100 MHz SD read-only experiment (Samsung EVO, 2026-10-25)
 
-This branch keeps the validated 50 MHz native-SD implementation on its own
-branch. The TQTT socket, pull-ups, and FPGA bank are fixed at 3.3 V. This
+This branch keeps the 50 MHz native-SD implementation on its own branch.
+The TQTT socket, pull-ups, and FPGA bank are fixed at 3.3 V. This
 experiment selects the card's High Speed function with CMD6, then clocks it
 at 100 MHz at 3.3 V. It is an overclock, not a negotiated UHS mode. The
 probe cannot issue a card write.
@@ -33,7 +33,19 @@ the CMD12 safety gap about 42 us, and RAM streaming about 82 us. Logs are
 `/var/tmp/tqtt_sd_oc100_edges_500000.log`.
 
 This sparse read-only matrix does not qualify the overclock for writes or
-normal Mac storage. Use the validated 50 MHz mode as the integration default
+normal Mac storage. Use 50 MHz as the integration default
 until a longer read stress test, write/readback test on backed-up media, and
 full-Mac test pass. Larger multi-block requests are the next throughput
 target: they amortize the observed per-command card latency.
+
+## Byte-order qualification update
+
+The 50 and 100 MHz matrices used the same native block engine, which emitted
+each four-byte DMA word in reverse card-byte order. This was discovered when
+the full Mac's copied ROM did not match the working SPI image: LBA 0's old
+CRC32 `0x1df5ba99` matches the saved ROM's first sector only after reversing
+each four-byte group; the correct-order CRC32 is `0x575b1d17`. The timing
+and 50-vs-100 MHz comparisons above remain useful, but the old CRC checks
+showed repeatability rather than correct byte order. The integration branch
+fixes the byte lanes at commit `97b64f9`; this experimental branch has not
+been retested with that fix.
