@@ -2682,7 +2682,8 @@
     wire [15:0] asc_audio_pcm_r_w;
     wire        asc_audio_sample_valid_w;
     /* verilator lint_on UNUSEDSIGNAL */
-    asc #(.PB_CLK_HZ(PB_CLK_HZ), .FIFO_SAMPLE_HZ(44_100)) u_asc (
+    asc #(.PB_CLK_HZ(PB_CLK_HZ), .FIFO_SAMPLE_HZ(0),
+          .ORIGINAL_ASC_FIFO(1)) u_asc (
         // pb_full_rst — ASC FIFO + sample-rate divider rewind on
         // debug-full-reset; pending half-empty IRQ clears.  pb-bank [3].
         .clk(pb_clk), .rst(pb_full_rst_bank[3]),

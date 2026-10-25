@@ -5547,6 +5547,22 @@ $(ASC_FIFO_RATE_BUILD)/Vasc: $(ASC_RTL) $(TB_DIR)/tb_asc_fifo_rate.cpp
 		--top-module asc $(ASC_RTL) $(TB_DIR)/tb_asc_fifo_rate.cpp \
 		-CFLAGS "-std=c++17"
 
+ASC_ORIGINAL_BUILD := $(BUILD_DIR)/asc_original
+.PHONY: tb-asc-original
+tb-asc-original: $(ASC_ORIGINAL_BUILD)/Vasc
+	$(ASC_ORIGINAL_BUILD)/Vasc
+
+$(ASC_ORIGINAL_BUILD)/Vasc: $(ASC_RTL) $(TB_DIR)/tb_asc_original.cpp
+	@mkdir -p $(ASC_ORIGINAL_BUILD)
+	$(VERILATOR) --cc --exe --build --assert \
+		--x-assign fast --x-initial fast -O3 \
+		-Wall -Wno-UNUSED -Wno-UNDRIVEN -Wno-PINCONNECTEMPTY \
+		-Wno-DECLFILENAME -Wno-CASEINCOMPLETE -Wno-WIDTHTRUNC \
+		-Wno-WIDTHEXPAND -GORIGINAL_ASC_FIFO=1 \
+		-I$(RTL_DIR)/mac -I$(RTL_DIR) -Mdir $(ASC_ORIGINAL_BUILD) \
+		--top-module asc $(ASC_RTL) $(TB_DIR)/tb_asc_original.cpp \
+		-CFLAGS "-std=c++17"
+
 # ──────────────────────────────────────────────────────────────────────────────
 # ASC MAME-trace replay harness — drives the same Vasc model with a
 # bus-trace TSV captured from MAME via tools/mame_asc_capture.lua, and
