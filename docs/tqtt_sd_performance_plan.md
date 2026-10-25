@@ -662,6 +662,8 @@ throughput/integrity workload remain open.
 Speedometer 4.02's on-screen result after that reboot reports a **Disk
 rating of 3.444** with "Quadra 605 = 1.0" as its reference. The result
 frame is `/var/tmp/tqtt_c96_waitfix_finder3.jpg`. This is a Mac-visible
-relative benchmark improvement over the reference; it is not a bytes/s
-measurement and does not replace a post-benchmark card readback or an
-independently timed sustained-transfer workload.
+relative benchmark improvement over the reference. Relative to the earlier
+~0.45 disk rating reported by the user, 3.444 is approximately 7.7 times
+higher; the earlier value is rounded, so this ratio is approximate. It is
+not a bytes/s measurement and does not replace a post-benchmark card
+readback or an independently timed sustained-transfer workload.
