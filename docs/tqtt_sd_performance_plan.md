@@ -238,13 +238,20 @@ an isolated write-path reproduction and HFS consistency check.
    implementation with HDMI audio, automatic fan control, Ethernet, reduced
    CPU debug, and native SD completed on 2026-10-25. The routed checkpoint is
    `/var/tmp/tqtt_native_easc_100/vivado/checkpoints/route.dcp` (SHA-256
-   `ca3962c2af20d4a7a382d1f1c515889198ba21115fc98688dcaa8789eb384100`).
+   `c4bdbe9c32556bebcaa22bf662bb7c5971dd3345f451a86b79f6d93f9a42697b`).
    Its blank bitstream is `/var/tmp/tqtt_native_easc_100/vivado/fpga_top.blank.bit`
-   (SHA-256 `3cac8b977920132ef714c71b99327ede568a6e187608647a5981aec90c137cf5`).
+   (SHA-256 `36cc7206e8f1e6b791403a29dab15cd0b281e5731a6e36f3ee188c1f9ebc30cd`).
    Final WNS/WHS/WPWS were +0.005/+0.005/+0.053 ns with zero failing endpoints
    and zero bitstream DRC errors. The source RTL was staging commit `7540ebe`
    with CPU commit `4736fadf`; the later build-flow correction changed no RTL.
-   This is an unpatched, unprogrammed image. It still needs native-card
+   A local ADB-patched image is at `fpga_top.local.bit` in the same directory
+   (SHA-256 `c535770b58f16cb06a169bbbfe2a1136e9438fbbbdd8ce9bc386ce6d35fef458`).
+   The original 25 MHz route checkpoint was inadvertently replaced while
+   using it as the incremental reference for the 50 MHz build; it was
+   regenerated from its saved place checkpoint with identical timing and
+   zero DRC errors. The earlier blank/local bitstreams are retained under
+   `/var/tmp/tqtt_native_easc_100/pre_recovery_artifacts/`. The current
+   bitstream has not been programmed. It still needs native-card
    read/write integrity tests and 200 MHz timing before replacing the SPI
    path.
    The full-top Vivado RTL dry-run passed with HDMI audio, fan control, and
@@ -264,8 +271,18 @@ an isolated write-path reproduction and HFS consistency check.
    Speed stays at 25 MHz. `make tb-sd-native-hs` checks confirmed selection,
    fallback, missing status data, command/CSR errors, and timeout. Full-top
    native+HDMI-audio+fan+Ethernet Vivado RTL elaboration passed with the
-   option on; no 50 MHz full-SoC bitstream or card test exists yet. The
-   default remains 25 MHz until physical card integrity tests pass.
+   option on. A full 100 MHz CPU / negotiated 50 MHz SD candidate then routed
+   on 2026-10-25 from staging commit `faa4e3a` and CPU commit `4736fadf`:
+   `/var/tmp/tqtt_native_hs_easc_100/vivado/checkpoints/route.dcp` (SHA-256
+   `75de7a8960b62f09c087d612caf69444a1caeaa5479bef398ec4fa572ec5e074`),
+   blank bitstream SHA-256
+   `263f93135f43c6efb4a0cbc427c55bcde334dc1f7207e057285a387e2601c133`,
+   and local ADB-patched bitstream SHA-256
+   `cf3faf6af073e087e07e97f5e4a0ccdb81387f8c97ecc049a2a912b35aa96a27`.
+   Final WNS/WHS/WPWS were +0.020/+0.005/+0.053 ns, with zero failing
+   endpoints and zero bitstream DRC errors. No 50 MHz card test or board load
+   exists yet. The default remains 25 MHz until physical card integrity
+   tests pass.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
