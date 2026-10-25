@@ -202,7 +202,16 @@ an isolated write-path reproduction and HFS consistency check.
    `build/tqtt_sd_native_engine_probe_backend` output directory, SHA-256
    `88d70d4bf4fe48dc38e69cc79df65e755d791e2fe8887ffadf988f8a781f40a2`.
    It is not the image loaded in SRAM. The engine is not in the full Mac top.
-   The negotiated 50 MHz CMD6
+   `boot_fsm` now has an optional `TQTT_NATIVE_SD` byte-stream source that
+   retains its existing AXI ROM writer and RAM/VRAM zeroing. It requests the
+   ROM in at most 32-sector chunks, back-pressures the byte stream when its
+   AXI word queue fills, and refuses to boot on native initialization or
+   capacity failure. `make tb-sd-boot-native` checks a 40-sector two-chunk
+   copy under AXI response delay, all 5,120 output words, byte-stream stalls,
+   and both failure guards. The existing SPI boot suite still passes 12/12.
+   The native boot interface is not yet connected to the full SoC; it needs
+   the 100 MHz storage-to-core CDC and exclusive access to the one card
+   backend during ROM load. The negotiated 50 MHz CMD6
    switch must wait until its 64-byte status can be checked through DMA.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.

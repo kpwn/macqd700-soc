@@ -835,6 +835,20 @@ tb-sd-boot: $(SDBOOT_BUILD)/Vtb_sd_boot_top
 	@echo "Running sd boot FSM unit tb..."
 	$(SDBOOT_BUILD)/Vtb_sd_boot_top
 
+# Native SD reuses boot_fsm's AXI writer with 32-sector hardware DMA chunks.
+# This test slows the AXI response path until byte-stream back-pressure fires.
+SDBOOT_NATIVE_BUILD := $(BUILD_DIR)/tb_boot_native
+.PHONY: tb-sd-boot-native
+tb-sd-boot-native: $(SDBOOT_NATIVE_BUILD)/Vtb_boot_native
+	$(SDBOOT_NATIVE_BUILD)/Vtb_boot_native
+
+$(SDBOOT_NATIVE_BUILD)/Vtb_boot_native: $(RTL_DIR)/soc/boot_fsm.v $(TB_DIR)/tb_boot_native.sv
+	@mkdir -p $(SDBOOT_NATIVE_BUILD)
+	$(VERILATOR) --binary --timing --top-module tb_boot_native -DTQTT_NATIVE_SD \
+		-Wno-UNUSED -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC \
+		-Wno-PINMISSING -Wno-CASEINCOMPLETE -Wno-TIMESCALEMOD \
+		--Mdir $(SDBOOT_NATIVE_BUILD) $^
+
 $(SDBOOT_BUILD)/Vtb_sd_boot_top: $(SDBOOT_RTL) $(TB_DIR)/tb_sd_boot.cpp
 	@mkdir -p $(SDBOOT_BUILD)
 	$(VERILATOR) --cc --exe --build --assert \
