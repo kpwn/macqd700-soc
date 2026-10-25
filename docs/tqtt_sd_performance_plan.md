@@ -168,9 +168,18 @@ an isolated write-path reproduction and HFS consistency check.
    four-bit default-speed mode and decodes CSD v2 capacity. Its unit test
    exercises OCR retries and voltage, CSD, and CSR failures
    (`make tb-sd-native-init`). These modules are not yet connected to the
-   LiteSDCard core in a hardware image; DMA block commands are still
-   controlled only by the host probe script. The negotiated 50 MHz CMD6
-   switch must wait until its 64-byte status can be checked through DMA.
+   full Mac top. `sd_native_init_controller` connects the init FSM,
+   command engine, and CSR master to one LiteSDCard Wishbone port; its
+   integration test checks the real CSR transaction order and failure paths
+   (`make tb-sd-native-init-controller`). The small TQTT hardware image
+   `make fpga-tqtt-sd-native-autoinit-probe-bitstream` routed at 100 MHz with
+   WNS +6.541 ns, WHS +0.011 ns, and zero DRC errors on 2026-10-25. Its
+   VIO reports card capacity, RCA, init phase, and error, but it has not yet
+   run against the physical card. The existing manual read probe remains
+   loaded for the card's first native transfer test. DMA block commands
+   are still controlled only by the host probe script. The negotiated
+   50 MHz CMD6 switch must wait until its 64-byte status can be checked
+   through DMA.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
