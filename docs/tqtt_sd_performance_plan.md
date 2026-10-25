@@ -177,9 +177,13 @@ an isolated write-path reproduction and HFS consistency check.
    VIO reports card capacity, RCA, init phase, and error, but it has not yet
    run against the physical card. The existing manual read probe remains
    loaded for the card's first native transfer test. DMA block commands
-   are still controlled only by the host probe script. The negotiated
-   50 MHz CMD6 switch must wait until its 64-byte status can be checked
-   through DMA.
+   are now also sequenced by `sd_native_block_engine`, with a 16 KiB local
+   DMA RAM and byte-stream interfaces for one- or 32-sector reads/writes.
+   Its behavioral LiteSDCard test checks DMA register programming, byte
+   order, full transfer counts, CMD17/18/24/25 and CMD12 encodings, and
+   completion (`make tb-sd-native-block`). This engine has not been wired
+   into a physical card image or full Mac top. The negotiated 50 MHz CMD6
+   switch must wait until its 64-byte status can be checked through DMA.
    PRAM and JTAG provisioning also need native-mode paths before the SPI
    transport can be replaced in a full image. Keep the RK SPI board path.
 4. Test 25 MHz and 50 MHz four-bit modes separately. Verify long reads,
